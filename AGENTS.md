@@ -621,6 +621,56 @@ app.use(evlog({
 }))
 ```
 
+### Fastify
+
+```typescript
+import Fastify from 'fastify'
+import { initLogger } from 'evlog'
+import { evlog, useLogger } from 'evlog/fastify'
+
+initLogger({ env: { service: 'my-api' } })
+
+const app = Fastify()
+await app.register(evlog)
+
+app.get('/api/users', async (request) => {
+  request.log.set({ users: { count: 42 } })
+  return { users: [] }
+})
+```
+
+Use `useLogger()` to access the logger from anywhere in the call stack:
+
+```typescript
+import { useLogger } from 'evlog/fastify'
+
+function findUsers() {
+  const log = useLogger()
+  log.set({ db: { query: 'SELECT * FROM users' } })
+}
+```
+
+The plugin supports the full evlog pipeline — `drain`, `enrich`, and `keep` callbacks:
+
+```typescript
+import { createAxiomDrain } from 'evlog/axiom'
+
+await app.register(evlog, {
+  include: ['/api/**'],
+  drain: createAxiomDrain(),
+  enrich: (ctx) => { ctx.event.region = process.env.FLY_REGION },
+  keep: (ctx) => {
+    if (ctx.duration && ctx.duration > 2000) ctx.shouldKeep = true
+  },
+})
+```
+
+**Key Fastify specifics:**
+- `request.log` is the evlog wide-event logger (shadows Fastify's built-in pino logger on the request; plugin encapsulation is broken via `Symbol.for('skip-override')`, no extra dependency)
+- Fastify's built-in pino logger stays available via `fastify.log` — evlog complements it for wide events
+- Lifecycle: `onRequest` creates the logger → `onResponse` emits with status → `onError` captures errors and prevents double emit
+- `useLogger()` uses `AsyncLocalStorage` propagated via `storage.run(logger, () => done())` in `onRequest`
+
 ### Nitro v2
 
 ```typescript
