@@ -51,6 +51,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
 
+      - name: Push tags
+        if: steps.changesets.outputs.published == 'true'
+        run: git push --tags
+
       - name: Create GitHub Releases
         if: steps.changesets.outputs.published == 'true'
         run: |
