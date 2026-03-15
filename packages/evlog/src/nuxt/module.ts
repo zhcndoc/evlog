@@ -4,11 +4,14 @@ import {
   addServerHandler,
   addServerImports,
   addServerPlugin,
+  addVitePlugin,
   createResolver,
   defineNuxtModule,
 } from '@nuxt/kit'
 import type { NitroConfig } from 'nitropack'
-import type { EnvironmentContext, RouteConfig, SamplingConfig, TransportConfig } from '../types'
+import type { EnvironmentContext, LogLevel, RouteConfig, SamplingConfig, TransportConfig } from '../types'
+import { createStripPlugin } from '../vite/strip'
+import { createSourceLocationPlugin } from '../vite/source-location'
 import { name, version } from '../../package.json'
 
 interface ModuleAxiomBaseConfig {
@@ -227,6 +230,20 @@ export interface ModuleOptions {
   }
 
   /**
+   * Log levels to strip from production builds. Set to [] to disable.
+   * @default ['debug']
+   */
+  strip?: LogLevel[]
+
+  /**
+   * Inject source file:line into log calls.
+   * When true, active in both dev and prod.
+   * When 'dev', active only in development.
+   * @default 'dev'
+   */
+  sourceLocation?: boolean | 'dev'
+
+  /**
    * How long to retain events before cleanup (used by @evlog/nuxthub).
    * Supports "30d" (days), "24h" (hours), "60m" (minutes).
    * @default '30d'
@@ -318,5 +335,15 @@ export default defineNuxtModule<ModuleOptions>({
         from: resolver.resolve('../error'),
       },
     ])
+
+    const stripLevels = options.strip ?? ['debug']
+    if (stripLevels.length > 0) {
+      addVitePlugin(createStripPlugin(stripLevels))
+    }
+
+    const srcLoc = options.sourceLocation ?? 'dev'
+    if (srcLoc === true || (srcLoc === 'dev' && nuxt.options.dev)) {
+      addVitePlugin(createSourceLocationPlugin(true))
+    }
   },
 })
