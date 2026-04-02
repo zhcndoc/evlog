@@ -10,6 +10,10 @@ ogHeadline: Stop overthinking your logs
 
 # Just fucking use evlog.
 
+```bash [Terminal]
+npx skills add hugorcd/evlog
+```
+
 You've been told to "add more logs" until your stdout looks like a twitch chat. You've opened Sentry at 3am and stared at a stack trace with zero context. You've told a junior "correlate by request id" while knowing half your handlers never set one. That isn't observability. It's hope with a JSON formatter.
 
 **One log per operation. All the context. Zero scavenger hunt.** That's what evlog does. Not ten `INFO` lines that pretend to tell a story. Not "mystery meat" errors where the client sees `500` and the server sees `Error: undefined`. One structured event, with **why** it broke and **what to do next**.
@@ -71,6 +75,9 @@ Now imagine the same checkout, with evlog:
 
 One event. The full story. User, cart, error, reason, fix. You open your dashboard, you click the row, you *know* what happened. No stitching, no guessing.
 
+::landing-mid-cta
+::
+
 ---
 
 ## How it works: accumulate, then emit.
@@ -81,7 +88,7 @@ You don't build that JSON by hand. You call `log.set()` as your code runs, addin
 
 ## What the fuck is evlog, technically?
 
-TypeScript-first logger that works everywhere. In **Nuxt, Next.js, Nitro, Express, Fastify, Hono, Elysia, NestJS, TanStack Start**, framework hooks auto-create and auto-emit the logger at request boundaries. For scripts, jobs, and workflows, you create a logger, accumulate context, emit when done.
+TypeScript-first logger that works everywhere. Framework hooks auto-create and auto-emit the logger at request boundaries. For scripts, jobs, and workflows, you create a logger, accumulate context, emit when done.
 
 ::code-group
 
@@ -179,6 +186,9 @@ app.post('/api/checkout', async (request) => {
 
 Same code pattern, same output, every framework. Human-readable in dev, structured JSON in prod.
 
+::landing-stats
+::
+
 ---
 
 ## Why it's fucking great
@@ -227,7 +237,7 @@ Write NDJSON to disk. Your AI agents, scripts, and teammates query structured ev
 
 ### "I already use pino."
 
-pino gives you fast line-by-line JSON. evlog gives you that **plus** wide events, structured errors with `why`/`fix`/`link`, head + tail sampling, six drain adapters, AI SDK integration, and auto-instrumentation for eight frameworks. Zero transitive deps, lighter install, same job done better. pino was the standard. evlog is what comes next.
+pino gives you fast line-by-line JSON. evlog gives you that **plus** wide events, structured errors with `why`/`fix`/`link`, head + tail sampling, six drain adapters, AI SDK integration, and auto-instrumentation for nine frameworks. Zero transitive deps, lighter install, same job done better. pino was the standard. evlog is what comes next.
 
 ### "I already have Sentry / Datadog."
 
@@ -254,6 +264,9 @@ You've read this far, which means your logs are probably bad and you know it. He
 **Month 1**: Your AI routes have token usage and tool call data in every event. Your sampling config drops 90% of noise. Your on-call rotations get shorter. You stop writing "add better logging" in sprint retrospectives.
 
 This isn't aspirational. This is what structured wide events do when you stop treating logging as an afterthought.
+
+::landing-badges
+::
 
 ::landing-ctas
 ::

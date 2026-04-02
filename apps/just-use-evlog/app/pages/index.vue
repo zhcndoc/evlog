@@ -21,7 +21,7 @@ const { public: pub } = useRuntimeConfig()
 const docsUrl = pub.docsUrl || 'https://www.evlog.dev'
 const siteUrl = pub.siteUrl || 'https://www.justfuckinguseevlog.com'
 
-const fm = computed(() => page.value as Record<string, string>)
+const fm = page.value as unknown as Record<string, string>
 
 useHead({
   htmlAttrs: { lang: 'en' },
@@ -36,7 +36,7 @@ useHead({
         '@context': 'https://schema.org',
         '@type': 'SoftwareApplication',
         'name': 'evlog',
-        'description': 'Wide events and structured errors for TypeScript. One log per operation, all the context, zero scavenger hunt.',
+        'description': fm.description,
         'applicationCategory': 'DeveloperApplication',
         'operatingSystem': 'Any',
         'offers': { '@type': 'Offer', 'price': '0', 'priceCurrency': 'USD' },
@@ -49,12 +49,12 @@ useHead({
 })
 
 useSeoMeta({
-  title: 'evlog - Wide Events Logger for TypeScript',
-  description: () => fm.value.description,
+  title: fm.title,
+  description: fm.description,
   ogType: 'website',
   ogUrl: `${siteUrl}/`,
-  ogTitle: () => fm.value.ogTitle || fm.value.title,
-  ogDescription: () => fm.value.ogDescription || fm.value.description,
+  ogTitle: fm.ogTitle || fm.title,
+  ogDescription: fm.ogDescription || fm.description,
   ogImage: `${siteUrl}/og.jpg`,
   ogImageWidth: 1200,
   ogImageHeight: 630,
@@ -66,7 +66,7 @@ useSeoMeta({
 
 <template>
   <div class="relative min-h-dvh text-default">
-    <div class="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-white/[0.03] rounded-full blur-3xl" aria-hidden="true" />
+    <div class="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-white/3 rounded-full blur-3xl" aria-hidden="true" />
     <div class="relative z-10">
       <main class="mx-auto max-w-2xl px-6 pb-24 pt-14 md:px-8 md:pt-20 md:pb-32">
         <LandingComark v-if="tree" :tree />

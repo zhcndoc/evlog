@@ -41,6 +41,16 @@ export default defineNuxtConfig({
     },
   },
 
+  routeRules: {
+    '/': { prerender: true },
+  },
+
+  nitro: {
+    prerender: {
+      crawlLinks: true,
+    },
+  },
+
   icon: {
     provider: 'iconify',
     clientBundle: {
@@ -50,7 +60,11 @@ export default defineNuxtConfig({
 
   app: {
     head: {
-      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/evlog.svg' },],
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/evlog.svg' },
+        { rel: 'dns-prefetch', href: 'https://ungh.cc' },
+        { rel: 'preconnect', href: 'https://ungh.cc', crossorigin: '' },
+      ],
     },
   },
 })
