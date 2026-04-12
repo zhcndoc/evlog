@@ -20,6 +20,7 @@
     "motion-v": "^2.2.0",
     "nuxt": "^4.4.2",
     "nuxt-studio": "^1.6.0",
+    "vaul-vue": "0.4.1",
     "shaders": "^2.5.92",
     "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.2"

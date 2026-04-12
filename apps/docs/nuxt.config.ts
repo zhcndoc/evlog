@@ -1,5 +1,28 @@
+import { createRequire } from 'node:module'
+import { dirname } from 'node:path'
+
+/** Monorepo: ensure Rollup resolves `vaul-vue` the same way as dev. */
+const require = createRequire(import.meta.url)
+const vaulVueRoot = dirname(dirname(require.resolve('vaul-vue')))
+
 export default defineNuxtConfig({
   extends: ['docus'],
+
+  alias: {
+    'vaul-vue': vaulVueRoot,
+  },
+
+  vite: {
+    resolve: {
+      dedupe: ['vaul-vue'],
+    },
+    ssr: {
+      noExternal: ['vaul-vue'],
+    },
+    optimizeDeps: {
+      include: ['vaul-vue'],
+    },
+  },
 
   routeRules: {
     '/getting-started': { redirect: { to: '/getting-started/introduction', statusCode: 301 } },
@@ -81,7 +104,26 @@ export default defineNuxtConfig({
   mdc: {
     highlight: {
       noApiRoute: false,
-      langs: ['tsx'],
+      // Include every language used in `content/` — a narrow list (e.g. only `tsx`) breaks SSR
+      // on refresh when Shiki/MDC cannot load grammars for `bash`, `vue`, etc.
+      langs: [
+        'apl',
+        'bash',
+        'css',
+        'diff',
+        'html',
+        'js',
+        'json',
+        'md',
+        'mdc',
+        'shell',
+        'toml',
+        'ts',
+        'tsx',
+        'typescript',
+        'vue',
+        'yaml',
+      ],
     },
   },
 

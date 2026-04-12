@@ -91,6 +91,7 @@ A task is complete when **all** of the following pass:
 
 ## When Stuck
 
+- Docs site SSR / duplicate Vue (`vaul-vue`, `renderSlot` / `.ce`) → `patches/README.md` (Bun `patchedDependencies`)
 - Tests fail after 3 attempts → stop, report the failing test with full output
 - Missing dependency → check `package.json` first, then ask
 - Unsure about architecture → read the relevant SKILL.md or ask
@@ -103,6 +104,6 @@ A task is complete when **all** of the following pass:
 **Submit feedback mid-work.** Don't wait until the task is done or for the user to ask.
 
 **Update this file** when you encounter:
-- A recurring mistake or easy-to-get-wrong pattern
+- A recurring mistake or easy-to-get-wrong pattern (e.g. Bun `patch` that removes a line from `package.json` must not leave a **trailing comma** in the `dependencies` object — strict JSON parsers used by Vite/Rollup will fail the build)
 - Explicit guidance from the maintainer
 - A new convention that should be applied consistently
