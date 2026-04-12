@@ -1,11 +1,7 @@
 import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
 
-/**
- * Rollup (prod build) sometimes fails to resolve `vaul-vue` from `@nuxt/ui` on Vercel
- * (monorepo hoisting). Point the bare specifier at the real install path.
- * `package.json` is not exportable; resolve the main entry then walk up to package root.
- */
+/** Monorepo: ensure Rollup resolves `vaul-vue` the same way as dev. */
 const require = createRequire(import.meta.url)
 const vaulVueRoot = dirname(dirname(require.resolve('vaul-vue')))
 
