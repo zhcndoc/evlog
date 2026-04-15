@@ -52,7 +52,7 @@ function createMockSession(overrides?: {
 function createMockAuth(session: ReturnType<typeof createMockSession> | null = createMockSession()) {
   return {
     api: {
-      getSession: vi.fn(async () => session),
+      getSession: vi.fn(() => Promise.resolve(session)),
     },
   }
 }
@@ -83,7 +83,7 @@ describe('identifyUser', () => {
     identifyUser(log, session)
 
     expect(log.set).toHaveBeenCalledOnce()
-    const call = log.setCalls[0]
+    const [call] = log.setCalls
 
     expect(call.userId).toBe('usr_123')
 
@@ -201,7 +201,7 @@ describe('identifyUser', () => {
       }),
     })
 
-    const call = log.setCalls[0]
+    const [call] = log.setCalls
     expect(call.organization).toBe('org_42')
     expect(call.role).toBe('admin')
     expect(call.userId).toBe('usr_123')
@@ -274,7 +274,7 @@ describe('createAuthMiddleware', () => {
     const log = createMockLogger()
     const auth = {
       api: {
-        getSession: vi.fn(async () => { throw new Error('DB connection failed') }),
+        getSession: vi.fn(() => Promise.reject(new Error('DB connection failed'))),
       },
     }
     const identify = createAuthMiddleware(auth)
@@ -444,7 +444,7 @@ describe('createAuthIdentifier', () => {
     const log = createMockLogger()
     const auth = {
       api: {
-        getSession: vi.fn(async () => { throw new Error('DB error') }),
+        getSession: vi.fn(() => Promise.reject(new Error('DB error'))),
       },
     }
     const hook = createAuthIdentifier(auth)

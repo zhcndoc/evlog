@@ -103,7 +103,7 @@ export interface AuthMiddlewareOptions extends IdentifyOptions {
 /**
  * Options for `createAuthIdentifier`.
  */
-export interface AuthIdentifierOptions extends AuthMiddlewareOptions {}
+export type AuthIdentifierOptions = AuthMiddlewareOptions
 
 const DEFAULT_USER_FIELDS = ['id', 'name', 'email', 'image', 'emailVerified', 'createdAt']
 
