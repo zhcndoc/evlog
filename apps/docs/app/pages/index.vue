@@ -13,8 +13,8 @@ const { data: page } = await useAsyncData('landing', () => {
 })
 
 useSeoMeta({
-  title: page.value?.title || 'evlog - Stop grepping through chaos',
-  description: page.value?.description || 'Wide events and structured errors for TypeScript. One log per request, full context, errors that explain why and how to fix.',
+  title: 'evlog 中文文档 - 适用于 TypeScript 的结构化日志库',
+  description: page.value?.description || '适用于 TypeScript 的结构化日志库。简单日志、广泛事件和结构化错误，从快速的一行代码到全面的请求级事件。',
   ogImage: '/og.png',
   ogImageWidth: 1200,
   ogImageHeight: 630,

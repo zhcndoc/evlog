@@ -1,0 +1,6 @@
+{
+  "framework": null,
+  "buildCommand": "bun run build:docs",
+  "installCommand": "npm install -g bun@1.2.22 && bun install",
+  "outputDirectory": ".output/server"
+}

@@ -31,20 +31,20 @@ const logTemplates = [
 ]
 
 const sourcesLeft = [
-  { label: 'Frontend', icon: 'i-lucide-monitor', sublabel: 'Nuxt / Next.js' },
-  { label: 'API Server', icon: 'i-lucide-server', sublabel: 'Nitro / Express' },
+  { label: '前端', icon: 'i-lucide-monitor', sublabel: 'Nuxt / Next.js' },
+  { label: 'API 服务', icon: 'i-lucide-server', sublabel: 'Nitro / Express' },
 ]
 
 const sourcesRight = [
-  { label: 'Workers', icon: 'i-lucide-cpu', sublabel: 'Background jobs' },
-  { label: 'Database', icon: 'i-lucide-database', sublabel: 'Queries & events' },
+  { label: 'Workers', icon: 'i-lucide-cpu', sublabel: '后台任务' },
+  { label: '数据库', icon: 'i-lucide-database', sublabel: '查询与事件' },
 ]
 
 const questions = [
-  { text: 'What failed?', answer: 'POST /api/orders' },
-  { text: 'Why?', answer: 'new-pricing-engine flag' },
-  { text: 'Which users?', answer: 'pro plans only' },
-  { text: 'How to fix?', answer: 'Disable flag or update code' },
+  { text: '哪里失败了？', answer: 'POST /api/orders' },
+  { text: '为什么？', answer: 'new-pricing-engine flag' },
+  { text: '哪些用户？', answer: 'pro plans only' },
+  { text: '如何修复？', answer: 'Disable flag or update code' },
 ]
 
 const wideEventFields = [

@@ -6,9 +6,9 @@ export default defineAppConfig({
     rootDir: 'apps/docs',
   },
   seo: {
-    titleTemplate: '%s - evlog',
-    title: 'evlog',
-    description: 'Wide events and structured errors for TypeScript. One log per request, full context, errors that explain why and how to fix.',
+    titleTemplate: '%s - evlog 中文文档',
+    title: 'evlog 中文文档',
+    description: '适用于 TypeScript 的结构化日志库。简单日志、广泛事件和结构化错误，从快速的一行代码到全面的请求级事件。',
   },
   assistant: {
     icons: {
@@ -16,27 +16,27 @@ export default defineAppConfig({
     },
     faqQuestions: [
       {
-        category: 'Getting Started',
+        category: '开始使用',
         items: [
-          'What is evlog?',
-          'How do I install evlog?',
-          'How do I use useLogger?',
+          'evlog 是什么？',
+          '如何安装 evlog？',
+          '如何使用 useLogger？',
         ],
       },
       {
-        category: 'Core Features',
+        category: '核心功能',
         items: [
-          'What are wide events?',
-          'How do I create structured errors?',
-          'How do I use parseError?',
+          '什么是广泛事件？',
+          '如何创建结构化错误？',
+          '如何使用 parseError？',
         ],
       },
       {
-        category: 'Production',
+        category: '生产环境',
         items: [
-          'How do I configure sampling?',
-          'How do I send logs to Axiom?',
-          'How do I send logs to PostHog?',
+          '如何配置采样？',
+          '如何将日志发送到 Axiom？',
+          '如何将日志发送到 PostHog？',
         ],
       },
     ],
@@ -63,5 +63,8 @@ export default defineAppConfig({
         },
       },
     }
+  },
+  toc: {
+    title: '本页目录',
   },
 })

@@ -1,0 +1,8 @@
+{
+  "app_dir": "/",
+  "build_command": "NITRO_PRESET=node-server bun run build:docs",
+  "ignore_dockerfile": true,
+  "install_command": "npm install -g bun@1.2.22 && bun install",
+  "output_dir": "",
+  "start_command": "cd apps/docs && NITRO_HOST=0.0.0.0 node .output/server/index.mjs"
+}

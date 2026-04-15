@@ -10,23 +10,23 @@ const justUseEvlogUrl = computed(() =>
 
 const columns = computed<FooterColumn[]>(() => [
   {
-    label: 'Resources',
+    label: '资源',
     children: [
       {
-        label: 'Documentation',
+        label: '文档',
         to: '/getting-started/introduction'
       },
       ...(justUseEvlogUrl.value
         ? [
           {
-            label: 'Just fucking use evlog',
+            label: '直接用 evlog',
             to: justUseEvlogUrl.value,
             target: '_blank' as const,
           }
         ]
         : []),
       {
-        label: 'Releases',
+        label: '发布版本',
         to: 'https://github.com/hugorcd/evlog/releases',
         target: '_blank'
       },
@@ -38,7 +38,7 @@ const columns = computed<FooterColumn[]>(() => [
     ]
   },
   {
-    label: 'Community',
+    label: '社区',
     children: [
       {
         label: 'GitHub',
@@ -46,7 +46,7 @@ const columns = computed<FooterColumn[]>(() => [
         target: '_blank'
       },
       {
-        label: 'Contributing',
+        label: '参与贡献',
         to: 'https://github.com/hugorcd/evlog/blob/main/CONTRIBUTING.md',
         target: '_blank'
       }
@@ -64,11 +64,15 @@ const columns = computed<FooterColumn[]>(() => [
     </template>
 
     <template #left>
-      <div class="text-xs font-mono italic tracking-tight">
+      <div class="text-xs font-mono tracking-tight">
         <span class="text-muted">&copy; {{ new Date().getFullYear() }} - Made by </span>
         <ULink to="https://hrcd.fr/" target="_blank" class="hover:underline">
           HugoRCD
         </ULink>
+        <span class="text-muted"> | </span>
+        <a style="text-decoration: none;" target="_blank" href="https://www.zhcndoc.com">简中文档</a>
+        <span class="text-muted"> | </span>
+        <a style="text-decoration: none;" rel="nofollow" target="_blank" href="https://beian.miit.gov.cn">沪ICP备2024070610号-3</a>
       </div>
     </template>
 

@@ -4,121 +4,121 @@ const isHome = computed(() => route.path === '/')
 
 const landingItems = [
   {
-    label: 'Docs',
+    label: '文档',
     to: '/getting-started/introduction',
     children: [
       {
-        label: 'Introduction',
+        label: '介绍',
         icon: 'i-lucide-book-open',
-        description: 'What is evlog and why use it',
+        description: 'evlog 是什么，以及为什么要用它',
         to: '/getting-started/introduction'
       },
       {
-        label: 'Installation',
+        label: '安装',
         icon: 'i-lucide-download',
-        description: 'Install evlog in your project',
+        description: '在你的项目中安装 evlog',
         to: '/getting-started/installation'
       },
       {
-        label: 'Quick Start',
+        label: '快速开始',
         icon: 'i-lucide-zap',
-        description: 'Get up and running in minutes',
+        description: '几分钟内跑起来',
         to: '/getting-started/quick-start'
       },
       {
-        label: 'Agent Skills',
+        label: 'Agent 技能',
         icon: 'i-lucide-bot',
-        description: 'Use evlog with AI coding agents',
+        description: '让 AI 编程代理更好地使用 evlog',
         to: '/getting-started/agent-skills'
       }
     ]
   },
   {
-    label: 'Logging',
+    label: '日志',
     to: '/logging/overview',
     children: [
       {
-        label: 'Simple Logging',
+        label: '简单日志',
         icon: 'i-lucide-terminal',
-        description: 'Fire-and-forget structured logs',
+        description: '即写即走的结构化日志',
         to: '/logging/simple-logging'
       },
       {
-        label: 'Wide Events',
+        label: '宽事件',
         icon: 'i-lucide-rows-3',
-        description: 'Accumulate context, emit once',
+        description: '先聚合上下文，再一次性发出',
         to: '/logging/wide-events'
       },
       {
-        label: 'Structured Errors',
+        label: '结构化错误',
         icon: 'i-lucide-shield-alert',
-        description: 'Errors that explain why and how to fix',
+        description: '说清原因并给出修复方向的错误',
         to: '/logging/structured-errors'
       },
       {
-        label: 'Client Logging',
+        label: '客户端日志',
         icon: 'i-lucide-monitor',
-        description: 'Browser-side logging and transport',
+        description: '浏览器侧日志与传输',
         to: '/logging/client-logging'
       },
       {
         label: 'AI SDK',
         icon: 'i-simple-icons-vercel',
-        description: 'AI observability with token tracking',
+        description: '带 token 跟踪的 AI 可观测性',
         to: '/logging/ai-sdk'
       }
     ]
   },
   {
-    label: 'Adapters',
+    label: '适配器',
     to: '/adapters/overview',
     children: [
       {
         label: 'Axiom',
         icon: 'i-custom-axiom',
-        description: 'Send logs to Axiom',
+        description: '将日志发送到 Axiom',
         to: '/adapters/axiom'
       },
       {
         label: 'OpenTelemetry',
         icon: 'i-simple-icons-opentelemetry',
-        description: 'Export via OTLP protocol',
+        description: '通过 OTLP 协议导出',
         to: '/adapters/otlp'
       },
       {
         label: 'HyperDX',
         icon: 'i-custom-hyperdx',
-        description: 'Send logs to HyperDX via OTLP',
+        description: '通过 OTLP 发送日志到 HyperDX',
         to: '/adapters/hyperdx'
       },
       {
         label: 'PostHog',
         icon: 'i-simple-icons-posthog',
-        description: 'Send logs to PostHog',
+        description: '将日志发送到 PostHog',
         to: '/adapters/posthog'
       },
       {
         label: 'Sentry',
         icon: 'i-simple-icons-sentry',
-        description: 'Report errors to Sentry',
+        description: '把错误上报到 Sentry',
         to: '/adapters/sentry'
       },
       {
         label: 'Better Stack',
         icon: 'i-simple-icons-betterstack',
-        description: 'Stream logs to Better Stack',
+        description: '将日志流式发送到 Better Stack',
         to: '/adapters/better-stack'
       },
       {
         label: 'Datadog',
         icon: 'i-simple-icons-datadog',
-        description: 'Send logs to Datadog',
+        description: '将日志发送到 Datadog',
         to: '/adapters/datadog'
       }
     ]
   },
   {
-    label: 'Releases',
+    label: '发布版本',
     to: 'https://github.com/hugorcd/evlog/releases',
     target: '_blank',
   }

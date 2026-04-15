@@ -33,7 +33,7 @@ onMounted(() => {
 <template>
   <section class="relative overflow-hidden flex flex-col">
     <div
-      class="absolute inset-x-0 top-0 h-24 z-[1] pointer-events-none"
+      class="absolute inset-x-0 top-0 h-24 z-1 pointer-events-none"
       style="background: linear-gradient(180deg, #09090b 0%, transparent 100%)"
     />
 
@@ -72,11 +72,11 @@ onMounted(() => {
         <div>
           <div class="relative mb-6">
             <h2 class="section-title text-center text-shadow-lg text-shadow-black">
-              Better logging<br>by
+              更好的日志<br>今晚就能交付
               <ClientOnly>
                 <span class="tabular-nums">{{ shipByTime }}</span>
                 <template #fallback>
-                  <span>tonight</span>
+                  <span>今晚</span>
                 </template>
               </ClientOnly>
               <span class="cta-dot">.</span>
@@ -92,7 +92,7 @@ onMounted(() => {
               size="lg"
               class="bg-white hover:bg-white/90 text-black border-0"
             >
-              Get Started
+              开始使用
               <template #trailing>
                 <UIcon name="i-lucide-arrow-right" class="size-4" />
               </template>
@@ -107,7 +107,7 @@ onMounted(() => {
               <template #leading>
                 <UIcon name="i-lucide-megaphone" class="size-4" />
               </template>
-              Just fucking use evlog
+              别折腾，直接用 evlog
             </UButton>
             <UButton
               to="https://github.com/hugorcd/evlog"
@@ -118,7 +118,7 @@ onMounted(() => {
               <template #leading>
                 <UIcon name="i-simple-icons-github" class="size-4" />
               </template>
-              View on GitHub
+              在 GitHub 查看
             </UButton>
           </div>
         </div>
@@ -127,9 +127,13 @@ onMounted(() => {
 
     <div class="relative z-10 mt-auto pt-32 md:pt-44 pb-4">
       <div class="max-w-4xl mx-auto px-6 flex items-center justify-between">
-        <div class="text-xs font-mono italic tracking-tight text-dimmed">
+        <div class="text-xs font-mono tracking-tight text-dimmed">
           &copy; {{ new Date().getFullYear() }} - Made by
           <a href="https://hrcd.fr/" target="_blank" rel="noopener noreferrer" class="hover:underline text-dimmed">HugoRCD</a>
+          <span class="mx-2 text-dimmed">|</span>
+          <a style="text-decoration: none;" target="_blank" href="https://www.zhcndoc.com">简中文档</a>
+          <span class="mx-2 text-dimmed">|</span>
+          <a style="text-decoration: none;" rel="nofollow" target="_blank" href="https://beian.miit.gov.cn">沪ICP备2024070610号-3</a>
         </div>
         <div class="flex items-center gap-3">
           <a href="https://x.com/hugorcd" target="_blank" rel="noopener noreferrer" aria-label="X" class="text-muted hover:text-dimmed transition-colors">

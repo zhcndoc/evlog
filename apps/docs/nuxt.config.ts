@@ -1,6 +1,12 @@
 export default defineNuxtConfig({
   extends: ['docus'],
 
+  app: {
+    head: {
+      script: [{ async: true, src: 'https://www.zhcndoc.com/js/common.js' },],
+    },
+  },
+
   routeRules: {
     '/getting-started': { redirect: { to: '/getting-started/introduction', statusCode: 301 } },
     '/frameworks': { redirect: { to: '/frameworks/overview', statusCode: 301 } },
@@ -53,8 +59,8 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
 
   site: {
-    name: 'evlog',
-    url: 'https://www.evlog.dev',
+    name: 'evlog 中文文档',
+    url: 'https://evlog.zhcndoc.com',
   },
 
   studio: {
@@ -63,6 +69,7 @@ export default defineNuxtConfig({
     },
     repository: {
       owner: 'HugoRCD',
+      provider: 'github',
       repo: 'evlog',
       rootDir: 'apps/docs',
     },
