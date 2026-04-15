@@ -2,6 +2,21 @@ import type { RequestLogger } from '../types'
 import { matchesPattern } from '../utils'
 
 /**
+ * Minimal type for the Better Auth instance.
+ * Only requires `api.getSession` — compatible with any Better Auth configuration.
+ */
+export interface BetterAuthInstance {
+  api: {
+    getSession: (opts: {
+      headers: Headers | Record<string, string | string[] | undefined>
+    }) => Promise<{
+      user: Record<string, unknown>
+      session: Record<string, unknown>
+    } | null>
+  }
+}
+
+/**
  * User fields extracted from a Better Auth session.
  */
 export interface AuthUserData {
@@ -20,6 +35,7 @@ export interface AuthSessionData {
   id: string
   expiresAt?: string
   ipAddress?: string
+  userAgent?: string
   createdAt?: string
 }
 
@@ -42,12 +58,27 @@ export interface IdentifyOptions {
    * @default ['id', 'name', 'email', 'image', 'emailVerified', 'createdAt']
    */
   fields?: string[]
+  /**
+   * Extend the wide event with additional fields derived from the session.
+   * Useful for Better Auth plugins (organizations, roles, etc.).
+   *
+   * @example
+   * ```ts
+   * identifyUser(log, session, {
+   *   extend: (session) => ({
+   *     organization: session.user.activeOrganization,
+   *     role: session.user.role,
+   *   }),
+   * })
+   * ```
+   */
+  extend?: (session: { user: Record<string, unknown>, session: Record<string, unknown> }) => Record<string, unknown> | undefined
 }
 
 /**
- * Options for `createAuthIdentifier`.
+ * Options for `createAuthMiddleware`.
  */
-export interface AuthIdentifierOptions extends IdentifyOptions {
+export interface AuthMiddlewareOptions extends IdentifyOptions {
   /**
    * Route patterns to skip session resolution (glob).
    * @default ['/api/auth/**']
@@ -58,9 +89,25 @@ export interface AuthIdentifierOptions extends IdentifyOptions {
    * If set, only matching routes are resolved.
    */
   include?: string[]
+  /**
+   * Called after a user is successfully identified.
+   * Use to add conditional logic based on user data (e.g. force-keep logs for premium users).
+   */
+  onIdentify?: (log: RequestLogger, session: { user: Record<string, unknown>, session: Record<string, unknown> }) => void | Promise<void>
+  /**
+   * Called when no session is found (anonymous request).
+   */
+  onAnonymous?: (log: RequestLogger) => void | Promise<void>
 }
 
+/**
+ * Options for `createAuthIdentifier`.
+ */
+export interface AuthIdentifierOptions extends AuthMiddlewareOptions {}
+
 const DEFAULT_USER_FIELDS = ['id', 'name', 'email', 'image', 'emailVerified', 'createdAt']
+
+const isDev = typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
 /**
  * Mask an email address for safe logging: `hugo@example.com` -> `h***@example.com`.
@@ -105,6 +152,7 @@ function extractSessionData(
       : String(session.expiresAt)
   }
   if (typeof session.ipAddress === 'string') data.ipAddress = session.ipAddress
+  if (typeof session.userAgent === 'string') data.userAgent = session.userAgent
   if (session.createdAt) {
     data.createdAt = session.createdAt instanceof Date
       ? session.createdAt.toISOString()
@@ -119,6 +167,8 @@ function extractSessionData(
  *
  * Sets `userId`, `user`, and optionally `session` fields on the logger.
  * Safe by default — only extracts whitelisted fields and never logs passwords or tokens.
+ *
+ * Returns `true` if the user was identified, `false` if session data was missing.
  *
  * @example
  * ```ts
@@ -135,70 +185,46 @@ function extractSessionData(
  * identifyUser(log, session, { maskEmail: true })
  * // user.email → "h***@example.com"
  * ```
+ *
+ * @example With extend for Better Auth plugins
+ * ```ts
+ * identifyUser(log, session, {
+ *   extend: (s) => ({
+ *     organization: s.user.activeOrganization,
+ *     role: s.user.role,
+ *   }),
+ * })
+ * ```
  */
 export function identifyUser(
   log: RequestLogger,
   session: { user: Record<string, unknown>, session: Record<string, unknown> },
   options?: IdentifyOptions,
-): void {
+): boolean {
   const user = extractUserData(session.user, options)
+  if (!user.id) return false
+
   const includeSession = options?.session !== false
 
-  log.set({
+  const data: Record<string, unknown> = {
     userId: user.id,
     user,
-    ...(includeSession ? { session: extractSessionData(session.session) } : {}),
-  } as Record<string, unknown>)
-}
-
-/**
- * Create an async function that resolves a Better Auth session from headers
- * and identifies the user on the logger.
- *
- * Works with any framework — just pass the auth instance and call the returned
- * function with a logger and headers.
- *
- * @example Hono
- * ```ts
- * import { createAuthMiddleware } from 'evlog/better-auth'
- *
- * const identify = createAuthMiddleware(auth)
- *
- * app.get('/api/users', async (c) => {
- *   const log = c.get('log')
- *   await identify(log, c.req.raw.headers)
- *   log.set({ users: { count: 42 } })
- *   return c.json({ users: [] })
- * })
- * ```
- *
- * @example Express
- * ```ts
- * const identify = createAuthMiddleware(auth, { maskEmail: true })
- *
- * app.use(async (req, res, next) => {
- *   await identify(req.log, req.headers)
- *   next()
- * })
- * ```
- */
-export function createAuthMiddleware(
-  auth: { api: { getSession: (opts: { headers: Headers | Record<string, string | string[] | undefined> }) => Promise<{ user: Record<string, unknown>, session: Record<string, unknown> } | null> } },
-  options?: IdentifyOptions,
-): (log: RequestLogger, headers: Headers | Record<string, string | string[] | undefined>) => Promise<void> {
-  return async (log, headers) => {
-    try {
-      const session = await auth.api.getSession({ headers })
-      if (session) {
-        identifyUser(log, session, options)
-      }
-    } catch {
-      // Session resolution should never break the request
-    }
   }
+
+  if (includeSession) {
+    data.session = extractSessionData(session.session)
+  }
+
+  if (options?.extend) {
+    const extra = options.extend(session)
+    if (extra) Object.assign(data, extra)
+  }
+
+  log.set(data)
+  return true
 }
 
-function shouldResolve(path: string, options?: AuthIdentifierOptions): boolean {
+function shouldResolve(path: string, options?: { exclude?: string[], include?: string[] }): boolean {
   const exclude = options?.exclude ?? ['/api/auth/**']
   for (const pattern of exclude) {
     if (matchesPattern(path, pattern)) return false
@@ -212,6 +238,69 @@ function shouldResolve(path: string, options?: AuthIdentifierOptions): boolean {
   }
 
   return true
+}
+
+/**
+ * Create an async function that resolves a Better Auth session from headers
+ * and identifies the user on the logger.
+ *
+ * Works with any framework — just pass the auth instance and call the returned
+ * function with a logger and headers. Supports `include`/`exclude` route patterns
+ * and lifecycle hooks (`onIdentify`, `onAnonymous`).
+ *
+ * @example Nuxt server middleware
+ * ```ts
+ * import { createAuthMiddleware } from 'evlog/better-auth'
+ *
+ * const identify = createAuthMiddleware(auth, {
+ *   exclude: ['/api/auth/**', '/api/public/**'],
+ * })
+ *
+ * export default defineEventHandler(async (event) => {
+ *   if (!event.context.log) return
+ *   await identify(event.context.log, event.headers, event.path)
+ * })
+ * ```
+ *
+ * @example Express
+ * ```ts
+ * const identify = createAuthMiddleware(auth, { maskEmail: true })
+ *
+ * app.use(async (req, res, next) => {
+ *   await identify(req.log, req.headers, req.path)
+ *   next()
+ * })
+ * ```
+ */
+export function createAuthMiddleware(
+  auth: BetterAuthInstance,
+  options?: AuthMiddlewareOptions,
+): (log: RequestLogger, headers: Headers | Record<string, string | string[] | undefined>, path?: string) => Promise<boolean> {
+  return async (log, headers, path?) => {
+    if (path && !shouldResolve(path, options)) return false
+
+    const start = Date.now()
+    try {
+      const session = await auth.api.getSession({ headers })
+      const resolvedIn = Date.now() - start
+
+      if (session) {
+        const identified = identifyUser(log, session, options)
+        if (identified) {
+          log.set({ auth: { resolvedIn, identified: true } } as Record<string, unknown>)
+          if (options?.onIdentify) await options.onIdentify(log, session)
+          return true
+        }
+      }
+
+      log.set({ auth: { resolvedIn, identified: false } } as Record<string, unknown>)
+      if (options?.onAnonymous) await options.onAnonymous(log)
+      return false
+    } catch (err) {
+      if (isDev) console.warn('[evlog/better-auth] Session resolution failed:', err)
+      return false
+    }
+  }
 }
 
 /**
@@ -241,21 +330,13 @@ function shouldResolve(path: string, options?: AuthIdentifierOptions): boolean {
  * ```
  */
 export function createAuthIdentifier(
-  auth: { api: { getSession: (opts: { headers: Headers | Record<string, string | string[] | undefined> }) => Promise<{ user: Record<string, unknown>, session: Record<string, unknown> } | null> } },
+  auth: BetterAuthInstance,
   options?: AuthIdentifierOptions,
 ): (event: { path: string, headers: Headers | { get(name: string): string | null }, context: { log?: RequestLogger } }) => Promise<void> {
-  return async (event) => {
-    if (!shouldResolve(event.path, options)) return
-    if (!event.context.log) return
+  const middleware = createAuthMiddleware(auth, options)
 
-    try {
-      const { headers } = event
-      const session = await auth.api.getSession({ headers: headers as Headers })
-      if (session) {
-        identifyUser(event.context.log, session, options)
-      }
-    } catch {
-      // Session resolution should never break the request
-    }
+  return async (event) => {
+    if (!event.context.log) return
+    await middleware(event.context.log, event.headers as Headers, event.path)
   }
 }

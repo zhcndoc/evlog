@@ -40,10 +40,10 @@ function createMockSession(overrides?: {
       id: 'sess_abc',
       expiresAt: new Date('2024-01-22T10:00:00Z'),
       ipAddress: '192.168.1.1',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
       createdAt: new Date('2024-01-15T10:00:00Z'),
       token: 'secret_token_value',
       userId: 'usr_123',
-      userAgent: 'Mozilla/5.0',
       ...overrides?.session,
     },
   }
@@ -101,6 +101,18 @@ describe('identifyUser', () => {
     expect(sess.ipAddress).toBe('192.168.1.1')
   })
 
+  it('returns true when user is identified', () => {
+    const log = createMockLogger()
+    expect(identifyUser(log, createMockSession())).toBe(true)
+  })
+
+  it('returns false when user id is missing', () => {
+    const log = createMockLogger()
+    const session = createMockSession({ user: { id: '' } })
+    expect(identifyUser(log, session)).toBe(false)
+    expect(log.set).not.toHaveBeenCalled()
+  })
+
   it('does not include session token or userId in session data', () => {
     const log = createMockLogger()
     identifyUser(log, createMockSession())
@@ -108,7 +120,14 @@ describe('identifyUser', () => {
     const sess = log.setCalls[0].session as Record<string, unknown>
     expect(sess.token).toBeUndefined()
     expect(sess.userId).toBeUndefined()
-    expect(sess.userAgent).toBeUndefined()
+  })
+
+  it('includes userAgent in session data', () => {
+    const log = createMockLogger()
+    identifyUser(log, createMockSession())
+
+    const sess = log.setCalls[0].session as Record<string, unknown>
+    expect(sess.userAgent).toBe('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
   })
 
   it('masks email when maskEmail option is true', () => {
@@ -168,6 +187,35 @@ describe('identifyUser', () => {
     expect(user.name).toBeUndefined()
     expect(user.email).toBeUndefined()
   })
+
+  it('applies extend callback to add custom fields', () => {
+    const log = createMockLogger()
+    const session = createMockSession({
+      user: { id: 'usr_123', name: 'Hugo', role: 'admin', activeOrganization: 'org_42' },
+    })
+
+    identifyUser(log, session, {
+      extend: (s) => ({
+        organization: (s.user as Record<string, unknown>).activeOrganization,
+        role: (s.user as Record<string, unknown>).role,
+      }),
+    })
+
+    const call = log.setCalls[0]
+    expect(call.organization).toBe('org_42')
+    expect(call.role).toBe('admin')
+    expect(call.userId).toBe('usr_123')
+  })
+
+  it('handles extend returning undefined', () => {
+    const log = createMockLogger()
+    identifyUser(log, createMockSession(), {
+      extend: () => undefined,
+    })
+
+    expect(log.set).toHaveBeenCalledOnce()
+    expect(log.setCalls[0].userId).toBe('usr_123')
+  })
 })
 
 describe('createAuthMiddleware', () => {
@@ -180,21 +228,46 @@ describe('createAuthMiddleware', () => {
     const auth = createMockAuth()
     const identify = createAuthMiddleware(auth)
 
-    await identify(log, new Headers({ cookie: 'session=abc' }))
+    const result = await identify(log, new Headers({ cookie: 'session=abc' }))
 
+    expect(result).toBe(true)
     expect(auth.api.getSession).toHaveBeenCalledOnce()
-    expect(log.set).toHaveBeenCalledOnce()
     expect(log.setCalls[0].userId).toBe('usr_123')
   })
 
-  it('does nothing when session is null', async () => {
+  it('returns false when session is null', async () => {
+    const log = createMockLogger()
+    const auth = createMockAuth(null)
+    const identify = createAuthMiddleware(auth)
+
+    const result = await identify(log, new Headers())
+
+    expect(result).toBe(false)
+  })
+
+  it('sets auth.resolvedIn timing on identified request', async () => {
+    const log = createMockLogger()
+    const auth = createMockAuth()
+    const identify = createAuthMiddleware(auth)
+
+    await identify(log, new Headers())
+
+    const authData = log.setCalls.find(c => c.auth)?.auth as Record<string, unknown>
+    expect(authData).toBeDefined()
+    expect(authData.identified).toBe(true)
+    expect(typeof authData.resolvedIn).toBe('number')
+  })
+
+  it('sets auth.identified false on anonymous request', async () => {
     const log = createMockLogger()
     const auth = createMockAuth(null)
     const identify = createAuthMiddleware(auth)
 
     await identify(log, new Headers())
 
-    expect(log.set).not.toHaveBeenCalled()
+    const authData = log.setCalls.find(c => c.auth)?.auth as Record<string, unknown>
+    expect(authData).toBeDefined()
+    expect(authData.identified).toBe(false)
   })
 
   it('catches errors silently', async () => {
@@ -206,8 +279,8 @@ describe('createAuthMiddleware', () => {
     }
     const identify = createAuthMiddleware(auth)
 
-    await expect(identify(log, new Headers())).resolves.toBeUndefined()
-    expect(log.set).not.toHaveBeenCalled()
+    const result = await identify(log, new Headers())
+    expect(result).toBe(false)
   })
 
   it('passes identify options through', async () => {
@@ -220,6 +293,80 @@ describe('createAuthMiddleware', () => {
     const user = log.setCalls[0].user as Record<string, unknown>
     expect(user.email).toBe('h***@example.com')
     expect(log.setCalls[0].session).toBeUndefined()
+  })
+
+  it('skips excluded routes', async () => {
+    const log = createMockLogger()
+    const auth = createMockAuth()
+    const identify = createAuthMiddleware(auth, {
+      exclude: ['/api/auth/**', '/api/public/**'],
+    })
+
+    const result = await identify(log, new Headers(), '/api/auth/sign-in')
+    expect(result).toBe(false)
+    expect(auth.api.getSession).not.toHaveBeenCalled()
+  })
+
+  it('only resolves included routes', async () => {
+    const log = createMockLogger()
+    const auth = createMockAuth()
+    const identify = createAuthMiddleware(auth, {
+      exclude: [],
+      include: ['/api/protected/**'],
+    })
+
+    expect(await identify(log, new Headers(), '/api/public/health')).toBe(false)
+    expect(auth.api.getSession).not.toHaveBeenCalled()
+
+    expect(await identify(log, new Headers(), '/api/protected/dashboard')).toBe(true)
+    expect(auth.api.getSession).toHaveBeenCalledOnce()
+  })
+
+  it('resolves when no path is provided (backwards compat)', async () => {
+    const log = createMockLogger()
+    const auth = createMockAuth()
+    const identify = createAuthMiddleware(auth, { exclude: ['/api/auth/**'] })
+
+    const result = await identify(log, new Headers())
+    expect(result).toBe(true)
+    expect(auth.api.getSession).toHaveBeenCalled()
+  })
+
+  it('calls onIdentify hook when user is identified', async () => {
+    const log = createMockLogger()
+    const auth = createMockAuth()
+    const onIdentify = vi.fn()
+    const identify = createAuthMiddleware(auth, { onIdentify })
+
+    await identify(log, new Headers())
+
+    expect(onIdentify).toHaveBeenCalledOnce()
+    expect(onIdentify).toHaveBeenCalledWith(log, expect.objectContaining({
+      user: expect.objectContaining({ id: 'usr_123' }),
+    }))
+  })
+
+  it('calls onAnonymous hook when no session', async () => {
+    const log = createMockLogger()
+    const auth = createMockAuth(null)
+    const onAnonymous = vi.fn()
+    const identify = createAuthMiddleware(auth, { onAnonymous })
+
+    await identify(log, new Headers())
+
+    expect(onAnonymous).toHaveBeenCalledOnce()
+    expect(onAnonymous).toHaveBeenCalledWith(log)
+  })
+
+  it('does not call onAnonymous when user is identified', async () => {
+    const log = createMockLogger()
+    const auth = createMockAuth()
+    const onAnonymous = vi.fn()
+    const identify = createAuthMiddleware(auth, { onAnonymous })
+
+    await identify(log, new Headers())
+
+    expect(onAnonymous).not.toHaveBeenCalled()
   })
 })
 
