@@ -49,6 +49,7 @@ export default defineConfig({
     'client': 'src/client.ts',
     'toolkit': 'src/shared/index.ts',
     'ai/index': 'src/ai/index.ts',
+    'better-auth/index': 'src/better-auth/index.ts',
   },
   format: 'esm',
   dts: true,
@@ -86,6 +87,8 @@ export default defineConfig({
     'vite',
     'ai',
     '@ai-sdk/provider',
+    'better-auth',
+    'better-auth/api',
   ],
   inlineOnly: ['ufo', 'magic-string', '@jridgewell/sourcemap-codec']
 })

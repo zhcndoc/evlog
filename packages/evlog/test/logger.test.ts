@@ -252,6 +252,42 @@ describe('createRequestLogger', () => {
     expect(context.cart).toEqual({ items: ['item1'], total: 50 })
   })
 
+  it('concatenates arrays on the same key with set()', () => {
+    const logger = createRequestLogger({})
+
+    logger.set({ array: [1, 2] })
+    logger.set({ array: [3] })
+
+    expect(logger.getContext().array).toEqual([1, 2, 3])
+  })
+
+  it('concatenates nested arrays on the same key with set()', () => {
+    const logger = createRequestLogger({})
+
+    logger.set({ job: { steps: ['a'] } })
+    logger.set({ job: { steps: ['b', 'c'] } })
+
+    expect(logger.getContext().job).toEqual({ steps: ['a', 'b', 'c'] })
+  })
+
+  it('replaces array with non-array on the same key with set()', () => {
+    const logger = createRequestLogger({})
+
+    logger.set({ tags: ['a', 'b'] })
+    logger.set({ tags: 'done' })
+
+    expect(logger.getContext().tags).toBe('done')
+  })
+
+  it('does not drop prior array elements when appending an empty array', () => {
+    const logger = createRequestLogger({})
+
+    logger.set({ ids: [1, 2] })
+    logger.set({ ids: [] })
+
+    expect(logger.getContext().ids).toEqual([1, 2])
+  })
+
   it('records error with error()', () => {
     const logger = createRequestLogger({})
     const error = new Error('Payment failed')
@@ -552,6 +588,43 @@ describe('createRequestLogger', () => {
 
     expect(result).toBeNull()
     randomSpy.mockRestore()
+  })
+
+  it('seals logger after emit so set() warns and does not mutate context', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const logger = createRequestLogger({ method: 'GET', path: '/x', requestId: 'r1' })
+    logger.set({ before: true })
+    logger.emit()
+    logger.set({ after: true })
+    expect(warnSpy).toHaveBeenCalled()
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain('log.set()')
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain('after')
+    expect(logger.getContext().after).toBeUndefined()
+    warnSpy.mockRestore()
+  })
+
+  it('seals logger when emit returns null due to sampling', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    initLogger({
+      pretty: false,
+      sampling: { rates: { info: 0 } },
+    })
+    const logger = createRequestLogger({ method: 'GET', path: '/test' })
+    expect(logger.emit()).toBeNull()
+    logger.set({ lost: true })
+    expect(warnSpy).toHaveBeenCalled()
+    expect(logger.getContext().lost).toBeUndefined()
+    warnSpy.mockRestore()
+  })
+
+  it('warns on second emit()', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const logger = createRequestLogger({ method: 'GET', path: '/x' })
+    logger.emit()
+    expect(logger.emit()).toBeNull()
+    expect(warnSpy).toHaveBeenCalled()
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain('log.emit()')
+    warnSpy.mockRestore()
   })
 })
 

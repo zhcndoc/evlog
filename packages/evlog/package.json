@@ -1,6 +1,6 @@
 {
   "name": "evlog",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "description": "Wide event logging library with structured error handling. Inspired by LoggingSucks.",
   "author": "HugoRCD <contact@hrcd.fr>",
   "homepage": "https://evlog.dev",
@@ -28,7 +28,8 @@
     "react-router",
     "vite",
     "typescript",
-    "datadog"
+    "datadog",
+    "better-auth"
   ],
   "license": "MIT",
   "type": "module",
@@ -188,6 +189,11 @@
       "types": "./dist/ai/index.d.mts",
       "import": "./dist/ai/index.mjs",
       "default": "./dist/ai/index.mjs"
+    },
+    "./better-auth": {
+      "types": "./dist/better-auth/index.d.mts",
+      "import": "./dist/better-auth/index.mjs",
+      "default": "./dist/better-auth/index.mjs"
     }
   },
   "main": "./dist/index.mjs",
@@ -286,6 +292,9 @@
       ],
       "ai": [
         "./dist/ai/index.d.mts"
+      ],
+      "better-auth": [
+        "./dist/better-auth/index.d.mts"
       ]
     }
   },
@@ -355,7 +364,8 @@
     "react-router": ">=7.14.0",
     "vite": "^7.0.0 || ^8.0.0",
     "ai": ">=6.0.154",
-    "@tanstack/start-client-core": "^1.167.9"
+    "@tanstack/start-client-core": "^1.167.9",
+    "better-auth": ">=1.2.0"
   },
   "peerDependenciesMeta": {
     "@nuxt/kit": {
@@ -404,6 +414,9 @@
       "optional": true
     },
     "@tanstack/start-client-core": {
+      "optional": true
+    },
+    "better-auth": {
       "optional": true
     }
   }
