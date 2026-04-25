@@ -59,7 +59,7 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
 
   site: {
-    name: 'evlog 中文文档',
+    name: 'Evlog 中文文档',
     url: 'https://evlog.zhcndoc.com',
   },
 

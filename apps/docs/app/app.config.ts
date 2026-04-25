@@ -6,8 +6,8 @@ export default defineAppConfig({
     rootDir: 'apps/docs',
   },
   seo: {
-    titleTemplate: '%s - evlog 中文文档',
-    title: 'evlog 中文文档',
+    titleTemplate: '%s - Evlog 中文文档',
+    title: 'Evlog 中文文档',
     description: '适用于 TypeScript 的结构化日志库。简单日志、广泛事件和结构化错误，从快速的一行代码到全面的请求级事件。',
   },
   assistant: {
