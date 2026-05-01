@@ -6,24 +6,93 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to fill out this bug report!
+        Thanks for the report. The more context (version, environment, **expected vs actual**), the faster we can reproduce and fix.
+  - type: input
+    id: evlog_version
+    attributes:
+      label: evlog version
+      description: "From `package.json` or `npm ls evlog` (e.g. 1.2.3)."
+      placeholder: e.g. 0.45.0
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime & OS
+      description: "Bun or Node version, and OS (e.g. `bun 1.2.3` / macOS 15)."
+      placeholder: e.g. bun 1.2.3, Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: integration
+    attributes:
+      label: Framework / integration
+      description: Where you use evlog (pick the closest match).
+      options:
+        - Nuxt
+        - Nitro
+        - Vite
+        - Next.js
+        - TanStack Start
+        - Hono
+        - Fastify
+        - Express
+        - Elysia
+        - NestJS
+        - SvelteKit
+        - React Router
+        - Cloudflare Workers
+        - No framework (Node/Bun only)
+        - Other
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: adapter
+    attributes:
+      label: Adapter or drain (optional)
+      description: "If the bug involves shipping logs (Axiom, Datadog, Sentry, file system, etc.), name it here."
+      placeholder: e.g. axiom, otlp, console
+    validations:
+      required: false
   - type: textarea
     id: description
     attributes:
       label: Description
-      description: Describe the bug
+      description: What went wrong, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead.
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
       label: Reproduction
-      description: Steps to reproduce the behavior or a minimal reproduction
+      description: Steps to reproduce, or a link to a minimal repository / gist. If you cannot isolate it, say what you already tried.
+      placeholder: |
+        1. …
+        2. …
+
+        Or: minimal repo: https://github.com/…
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Logs
-      description: |
-        Include any relevant logs or error messages
+      label: Logs or structured output (optional)
+      description: Relevant log lines, wide-event JSON, or stack traces. Redact secrets and tokens.
+      placeholder: Paste logs or one representative JSON event
+    validations:
+      required: false

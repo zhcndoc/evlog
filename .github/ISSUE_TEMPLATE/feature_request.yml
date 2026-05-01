@@ -3,17 +3,35 @@ description: Suggest an idea for this project
 title: "[feature] "
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        **Brainstorming or “what if?” ideas** are welcome in [Discussions](https://github.com/HugoRCD/evlog/discussions) first. Use this template when you have a **concrete** proposal the maintainers can evaluate.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What user or system problem does this solve? Why is it important?
+    validations:
+      required: true
   - type: textarea
     id: description
     attributes:
-      label: Description
-      description: Describe the feature you would like to see
+      label: Proposed feature
+      description: Describe the behavior, API, or experience you want (be specific).
     validations:
       required: true
   - type: textarea
     id: solution
     attributes:
-      label: Proposed Solution
-      description: Describe how you would implement this feature (optional)
+      label: Possible implementation (optional)
+      description: If you have ideas on API shape, defaults, or integration points, outline them here.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you’ve considered (optional)
+      description: Workarounds, other tools, or smaller changes that would partly help.
     validations:
       required: false
