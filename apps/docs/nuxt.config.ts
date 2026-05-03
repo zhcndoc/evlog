@@ -148,4 +148,14 @@ export default defineNuxtConfig({
       include: ['shaders/vue'],
     },
   },
+
+  // Vercel/Nitro tracing misses `minimark/stringify` (used by @nuxt/content's
+  // raw markdown route, nuxt-studio, mdc-syntax) when deploying with pnpm,
+  // breaking /mcp, /.well-known/oauth-protected-resource, and the assistant.
+  // See https://github.com/comarkdown/comark/commit/ccf6051 for the same fix.
+  nitro: {
+    externals: {
+      traceInclude: ['node_modules/minimark/**'],
+    },
+  },
 })
