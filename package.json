@@ -67,5 +67,10 @@
     "apps/*",
     "packages/*",
     "examples/*"
-  ]
+  ],
+  "pnpm": {
+    "overrides": {
+      "minimark": "0.2.0"
+    }
+  }
 }
