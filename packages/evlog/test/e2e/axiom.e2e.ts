@@ -16,7 +16,7 @@
 import { randomUUID } from 'node:crypto'
 import { beforeAll, expect, it } from 'vitest'
 import { sendBatchToAxiom } from '../../src/adapters/axiom'
-import { describeIfEnv, itWithCorrelationId, makeEvent } from './_shared'
+import { describeIfEnv, itWithCorrelationId, makeEvent, readEnv } from './_shared'
 
 const AXIOM_API_BASE = 'https://api.axiom.co'
 
@@ -65,9 +65,9 @@ function rowCount(response: AplResponse): number {
 }
 
 describeIfEnv('axiom e2e', ['AXIOM_TOKEN', 'AXIOM_DATASET'], () => {
-  const apiKey = process.env.AXIOM_TOKEN ?? process.env.AXIOM_API_KEY!
-  const dataset = process.env.AXIOM_DATASET!
-  const orgId = process.env.AXIOM_ORG_ID
+  const apiKey = (readEnv('AXIOM_TOKEN') ?? readEnv('AXIOM_API_KEY'))!
+  const dataset = readEnv('AXIOM_DATASET')!
+  const orgId = readEnv('AXIOM_ORG_ID')
   let canQuery = false
 
   beforeAll(async () => {

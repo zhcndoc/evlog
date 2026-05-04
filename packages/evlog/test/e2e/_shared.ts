@@ -76,6 +76,18 @@ export function makeEvent(
 }
 
 /**
+ * Read an env var and trim it. GitHub Actions can leak trailing whitespace
+ * when secrets are piped through certain shells, and an unparseable URL
+ * value is much harder to diagnose than a "missing" suite.
+ */
+export function readEnv(key: string): string | undefined {
+  const value = process.env[key]
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
+
+/**
  * `describe.skipIf` wrapper that prints why a suite was skipped — important so
  * a missing token in CI is visible in the logs instead of silently green.
  */
@@ -84,7 +96,7 @@ export function describeIfEnv(
   envVars: string[],
   fn: () => void,
 ): void {
-  const missing = envVars.filter(key => !process.env[key])
+  const missing = envVars.filter(key => !readEnv(key))
   if (missing.length > 0) {
     describe.skip(`${name} (skipped: missing ${missing.join(', ')})`, fn)
     return

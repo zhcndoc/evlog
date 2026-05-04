@@ -16,11 +16,11 @@ import {
   sendBatchToPostHog,
   sendBatchToPostHogEvents,
 } from '../../src/adapters/posthog'
-import { describeIfEnv, itWithCorrelationId, makeEvent } from './_shared'
+import { describeIfEnv, itWithCorrelationId, makeEvent, readEnv } from './_shared'
 
 describeIfEnv('posthog e2e (smoke)', ['POSTHOG_API_KEY'], () => {
-  const apiKey = process.env.POSTHOG_API_KEY!
-  const host = process.env.POSTHOG_HOST
+  const apiKey = readEnv('POSTHOG_API_KEY')!
+  const host = readEnv('POSTHOG_HOST')
 
   itWithCorrelationId('PostHog Logs (OTLP mode) accepts our payload', async () => {
     const events = (['info', 'warn', 'error'] as const).map(level =>

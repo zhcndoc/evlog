@@ -15,15 +15,17 @@ import {
   sendBatchToBetterStack,
   toBetterStackEvent,
 } from '../../src/adapters/better-stack'
-import { describeIfEnv, itWithCorrelationId, makeEvent } from './_shared'
+import { describeIfEnv, itWithCorrelationId, makeEvent, readEnv } from './_shared'
 
 describeIfEnv(
   'better-stack e2e (smoke)',
   ['BETTER_STACK_SOURCE_TOKEN'],
   () => {
-    const apiKey = process.env.BETTER_STACK_SOURCE_TOKEN
-      ?? process.env.BETTER_STACK_API_KEY!
-    const endpoint = process.env.BETTER_STACK_ENDPOINT
+    const apiKey = (
+      readEnv('BETTER_STACK_SOURCE_TOKEN')
+      ?? readEnv('BETTER_STACK_API_KEY')
+    )!
+    const endpoint = readEnv('BETTER_STACK_ENDPOINT')
 
     itWithCorrelationId('ingest endpoint accepts info / warn / error logs', async () => {
       const events = (['info', 'warn', 'error'] as const).map(level =>

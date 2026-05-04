@@ -11,10 +11,10 @@
  */
 import { expect } from 'vitest'
 import { sendBatchToSentry, toSentryLog } from '../../src/adapters/sentry'
-import { describeIfEnv, itWithCorrelationId, makeEvent } from './_shared'
+import { describeIfEnv, itWithCorrelationId, makeEvent, readEnv } from './_shared'
 
 describeIfEnv('sentry e2e (smoke)', ['SENTRY_DSN'], () => {
-  const dsn = process.env.SENTRY_DSN!
+  const dsn = readEnv('SENTRY_DSN')!
 
   itWithCorrelationId('Sentry envelope endpoint accepts info / warn / error logs', async () => {
     const events = (['info', 'warn', 'error'] as const).map(level =>
