@@ -6,6 +6,6 @@
     size="sm"
     variant="solid"
     trailing-icon="i-lucide-arrow-right"
-    class="text-white"
+    class="hidden text-white sm:inline-flex"
   />
 </template>

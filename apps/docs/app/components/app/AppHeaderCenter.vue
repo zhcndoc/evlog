@@ -65,7 +65,19 @@ const landingItems = [
         label: 'AI SDK',
         icon: 'i-simple-icons-vercel',
         description: 'AI observability with token tracking',
-        to: '/logging/ai-sdk'
+        to: '/logging/ai-sdk/overview'
+      },
+      {
+        label: 'Better Auth',
+        icon: 'i-simple-icons-betterauth',
+        description: 'Auto-identify users on every request',
+        to: '/logging/better-auth/overview'
+      },
+      {
+        label: 'Audit Logs',
+        icon: 'i-lucide-shield-check',
+        description: 'Tamper-evident who-did-what trails',
+        to: '/logging/audit/overview'
       }
     ]
   },

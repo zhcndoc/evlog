@@ -758,7 +758,7 @@ export default defineEventHandler(async (event) => {
 
 `AuditFields` is exported and merges with `BaseWideEvent` — augment it with `declare module` if you need extra typed fields. Audit events are always force-kept by tail sampling and get a deterministic `idempotencyKey` so retries are safe across drains.
 
-See [the Audit Logs guide](https://evlog.dev/logging/audit) for compliance, GDPR, and recipe details.
+See [the Audit Logs guide](https://evlog.dev/logging/audit/overview) for compliance, GDPR, and recipe details.
 
 ## AI SDK Integration
 

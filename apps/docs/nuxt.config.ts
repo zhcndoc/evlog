@@ -41,7 +41,10 @@ export default defineNuxtConfig({
     '/core-concepts/wide-events': { redirect: { to: '/logging/wide-events', statusCode: 301 } },
     '/core-concepts/structured-errors': { redirect: { to: '/logging/structured-errors', statusCode: 301 } },
     '/core-concepts/client-logging': { redirect: { to: '/logging/client-logging', statusCode: 301 } },
-    '/core-concepts/ai-sdk': { redirect: { to: '/logging/ai-sdk', statusCode: 301 } },
+    '/core-concepts/ai-sdk': { redirect: { to: '/logging/ai-sdk/overview', statusCode: 301 } },
+    '/logging/ai-sdk': { redirect: { to: '/logging/ai-sdk/overview', statusCode: 301 } },
+    '/logging/better-auth': { redirect: { to: '/logging/better-auth/overview', statusCode: 301 } },
+    '/logging/audit': { redirect: { to: '/logging/audit/overview', statusCode: 301 } },
   },
 
   modules: [
