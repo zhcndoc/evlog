@@ -325,14 +325,14 @@ const recentAudit = computed(() =>
             <span class="font-mono text-lg sm:text-xl text-emerald-400">{{ mainCount }}</span>
             <span class="font-mono text-[10px] text-dimmed">events ingested</span>
           </div>
-          <ul class="space-y-1 font-mono text-[10px]">
+          <ul class="space-y-1 font-mono text-[10px] min-h-[60px]">
             <li
               v-for="event in recentMain"
               :key="`m-${event.id}`"
-              class="flex items-center gap-1.5 text-muted truncate"
+              class="flex items-center gap-1.5 text-muted min-w-0"
             >
               <UIcon name="i-lucide-check" class="size-2.5 text-emerald-400 shrink-0" />
-              <span :class="methodColor(event.method)">{{ event.method }}</span>
+              <span class="shrink-0" :class="methodColor(event.method)">{{ event.method }}</span>
               <span class="text-dimmed truncate">{{ event.path }}</span>
             </li>
           </ul>
@@ -358,11 +358,11 @@ const recentAudit = computed(() =>
             <span class="font-mono text-lg sm:text-xl text-primary">{{ auditCount }}</span>
             <span class="font-mono text-[10px] text-dimmed">audits sealed</span>
           </div>
-          <ul class="space-y-1 font-mono text-[10px]">
+          <ul class="space-y-1 font-mono text-[10px] min-h-[60px]">
             <li
               v-for="event in recentAudit"
               :key="`a-${event.id}`"
-              class="flex items-center gap-1.5 text-muted truncate"
+              class="flex items-center gap-1.5 text-muted min-w-0"
             >
               <UIcon name="i-lucide-link-2" class="size-2.5 text-primary shrink-0" />
               <span class="text-primary truncate">{{ event.auditAction ?? event.path }}</span>
