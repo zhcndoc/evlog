@@ -1,27 +1,23 @@
 /**
- * evlog Toolkit — building blocks for custom framework integrations.
- *
- * @beta This API is stable but marked as beta while the first community
- * integrations validate the surface. Breaking changes will follow semver.
- *
- * @example
- * ```ts
- * import type { RequestLogger } from 'evlog'
- * import {
- *   createMiddlewareLogger,
- *   extractSafeHeaders,
- *   createLoggerStorage,
- *   attachForkToLogger,
- *   forkBackgroundLogger,
- *   type BaseEvlogOptions,
- * } from 'evlog/toolkit'
- * ```
+ * evlog Toolkit — building blocks for custom adapters, enrichers, plugins,
+ * and framework integrations.
  *
  * @see https://evlog.dev/frameworks/custom-integration
  */
+
+export * from './compose'
+export * from './config'
+export * from './define'
+export * from './drain'
+export * from './enricher'
 export * from './errors'
+export * from './event'
 export * from './fork'
 export * from './headers'
+export * from './http'
+export * from './integration'
 export * from './middleware'
+export * from './plugin'
 export * from './routes'
+export * from './severity'
 export * from './storage'

@@ -1,59 +1,43 @@
 import type { DrainContext, EnrichContext, RedactConfig, RequestLogger, RouteConfig, TailSamplingContext, WideEvent } from '../types'
-import { createRequestLogger, getGlobalDrain, isEnabled, shouldKeep } from '../logger'
+import { createRequestLogger, getGlobalDrain, getGlobalPluginRunner, isEnabled, shouldKeep } from '../logger'
 import { redactEvent, resolveRedactConfig } from '../redact'
 import { extractErrorStatus } from './errors'
+import type { EvlogPlugin, PluginRunner } from './plugin'
+import { createPluginRunner, getEmptyPluginRunner } from './plugin'
 import { shouldLog, getServiceForPath } from './routes'
 
 /**
- * Base options shared by all framework integrations.
- *
- * Every framework-specific options interface (e.g. `EvlogExpressOptions`)
- * extends this type. If a framework needs extra fields it can add them
- * on top; otherwise the base is used as-is.
- *
- * @beta Part of `evlog/toolkit` — the public API for building custom integrations.
+ * Base options shared by every framework integration. Re-exported via
+ * `evlog/toolkit` so custom integrations can extend it.
  */
 export interface BaseEvlogOptions {
-  /** Route patterns to include in logging (glob). If not set, all routes are logged */
+  /** Route glob patterns to include. If unset, all routes are logged. */
   include?: string[]
-  /** Route patterns to exclude from logging. Exclusions take precedence over inclusions */
+  /** Route glob patterns to exclude. Takes precedence over `include`. */
   exclude?: string[]
-  /** Route-specific service configuration */
+  /** Per-route service overrides. */
   routes?: Record<string, RouteConfig>
-  /**
-   * Drain callback called with every emitted event.
-   * Use with drain adapters (Axiom, OTLP, Sentry, etc.) or custom endpoints.
-   */
+  /** Drain callback invoked with every emitted event. */
   drain?: (ctx: DrainContext) => void | Promise<void>
-  /**
-   * Enrich callback called after emit, before drain.
-   * Use to add derived context (geo, deployment info, user agent, etc.).
-   */
+  /** Enrich callback invoked after emit, before drain. */
   enrich?: (ctx: EnrichContext) => void | Promise<void>
-  /**
-   * Custom tail sampling callback.
-   * Set `ctx.shouldKeep = true` to force-keep the log regardless of head sampling.
-   */
+  /** Tail sampling callback. Set `ctx.shouldKeep = true` to force-keep. */
   keep?: (ctx: TailSamplingContext) => void | Promise<void>
   /**
-   * Auto-redaction configuration for PII protection.
-   * `true` enables all built-in PII patterns. Pass an object for fine-grained control.
-   * Applied before enrich/drain. Also applied at the core `emitWideEvent` level
-   * when configured via `initLogger()`.
+   * PII auto-redaction. `true` enables built-in patterns; pass an object for
+   * fine-grained control. Applied before enrich/drain.
    */
   redact?: boolean | RedactConfig
+  /** Plugins for this middleware, merged with globally-registered ones. */
+  plugins?: EvlogPlugin[]
 }
 
-/**
- * Internal options consumed by `createMiddlewareLogger`.
- * Extends `BaseEvlogOptions` with the request-specific fields
- * that framework adapters must provide.
- */
+/** Internal options accepted by `createMiddlewareLogger`. */
 export interface MiddlewareLoggerOptions extends BaseEvlogOptions {
   method: string
   path: string
   requestId?: string
-  /** Pre-filtered safe request headers (used for enrich/drain context) */
+  /** Pre-filtered safe request headers used for enrich/drain context. */
   headers?: Record<string, string>
 }
 
@@ -80,67 +64,105 @@ const noopResult: MiddlewareLoggerResult = {
   skipped: true,
 }
 
+// Memoizes the merged runner per local plugins array (stable across requests
+// because it lives in the middleware factory closure). Invalidated when
+// `initLogger` swaps the global runner, so the merge cost is paid once.
+const runnerCache = new WeakMap<EvlogPlugin[], { global: PluginRunner; merged: PluginRunner }>()
+
 /**
- * Apply redact, enrich, and drain to an emitted wide event — same pipeline as
- * {@link createMiddlewareLogger}'s `finish`.
- *
- * @beta Part of `evlog/toolkit` — used by framework integrations and `fork()`.
+ * Resolve the plugin runner for a middleware invocation by merging local
+ * plugins with the globally-registered ones (deduplicated by `name`).
  */
+export function resolveMiddlewarePluginRunner(options: { plugins?: EvlogPlugin[] }): PluginRunner {
+  const global = getGlobalPluginRunner()
+  const local = options.plugins
+  if (!local || local.length === 0) return global
+
+  const cached = runnerCache.get(local)
+  if (cached && cached.global === global) return cached.merged
+
+  const merged = new Map<string, EvlogPlugin>()
+  for (const plugin of global.plugins) merged.set(plugin.name, plugin)
+  for (const plugin of local) merged.set(plugin.name, plugin)
+  if (merged.size === 0) return getEmptyPluginRunner()
+
+  const runner = createPluginRunner(Array.from(merged.values()))
+  runnerCache.set(local, { global, merged: runner })
+  return runner
+}
+
+/**
+ * Apply redact, enrich, and drain to an emitted wide event — the same
+ * pipeline used by {@link createMiddlewareLogger}'s `finish`.
+ */
+// eslint-disable-next-line max-params
 export async function runEnrichAndDrain(
   emittedEvent: WideEvent,
   options: MiddlewareLoggerOptions,
   requestInfo: { method: string; path: string; requestId?: string },
   responseStatus?: number,
+  plugins?: PluginRunner,
 ): Promise<void> {
+  const runner = plugins ?? resolveMiddlewarePluginRunner(options)
   const resolvedRedact = resolveRedactConfig(options.redact)
   if (resolvedRedact) {
     redactEvent(emittedEvent, resolvedRedact)
   }
 
-  if (options.enrich) {
+  if (options.enrich || runner.hasEnrich) {
     const enrichCtx: EnrichContext = {
       event: emittedEvent,
       request: requestInfo,
       headers: options.headers,
       response: { status: responseStatus },
     }
-    try {
-      await options.enrich(enrichCtx)
-    } catch (err) {
-      console.error('[evlog] enrich failed:', err)
+    if (options.enrich) {
+      try {
+        await options.enrich(enrichCtx)
+      } catch (err) {
+        console.error('[evlog] enrich failed:', err)
+      }
+    }
+    if (runner.hasEnrich) {
+      await runner.runEnrich(enrichCtx)
     }
   }
 
   const drain = options.drain ?? getGlobalDrain()
-  if (drain) {
+  const hasUserDrain = !!drain
+  const hasPluginDrain = runner.hasDrain
+  if (hasUserDrain || hasPluginDrain) {
     const drainCtx: DrainContext = {
       event: emittedEvent,
       request: requestInfo,
       headers: options.headers,
     }
-    try {
-      await drain(drainCtx)
-    } catch (err) {
-      console.error('[evlog] drain failed:', err)
+    const tasks: Array<Promise<unknown>> = []
+    if (hasUserDrain) {
+      tasks.push(
+        (async () => {
+          try {
+            await drain!(drainCtx)
+          } catch (err) {
+            console.error('[evlog] drain failed:', err)
+          }
+        })(),
+      )
     }
+    if (hasPluginDrain) {
+      tasks.push(runner.runDrain(drainCtx))
+    }
+    await Promise.all(tasks)
   }
 }
 
 /**
- * Create a middleware-aware request logger with full lifecycle management.
+ * Create a request logger with the full middleware pipeline: route filtering,
+ * service overrides, duration tracking, tail sampling, emit, enrich, drain.
  *
- * Handles the complete pipeline shared across all framework integrations:
- * route filtering, logger creation, service overrides, duration tracking,
- * tail sampling evaluation, event emission, enrichment, and draining.
- *
- * Framework adapters only need to:
- * 1. Extract method/path/requestId/headers from the framework request
- * 2. Call `createMiddlewareLogger()` with those + user options
- * 3. Check `skipped` — if true, skip to next middleware
- * 4. Store `logger` in framework-specific context (e.g., `c.set('log', logger)`)
- * 5. Call `finish({ status })` or `finish({ error })` at response end
- *
- * @beta Part of `evlog/toolkit` — the public API for building custom integrations.
+ * Framework adapters extract method/path/requestId/headers, call this once
+ * per request, and call `finish({ status | error })` when the response ends.
+ * If `skipped` is `true`, the route was filtered out — bypass logging.
  */
 export function createMiddlewareLogger(options: MiddlewareLoggerOptions): MiddlewareLoggerResult {
   if (!isEnabled()) return noopResult
@@ -164,8 +186,21 @@ export function createMiddlewareLogger(options: MiddlewareLoggerOptions): Middle
     logger.set({ service: routeService })
   }
 
+  const pluginRunner = resolveMiddlewarePluginRunner(options)
+  if (pluginRunner.hasExtendLogger) {
+    pluginRunner.applyExtendLogger(logger)
+  }
+
   const startTime = Date.now()
   const requestInfo = { method, path, requestId: resolvedRequestId }
+
+  if (pluginRunner.hasRequestLifecycle) {
+    pluginRunner.runOnRequestStart({
+      logger,
+      request: requestInfo,
+      headers: options.headers,
+    })
+  }
 
   const finish = async (opts?: { status?: number; error?: Error }): Promise<WideEvent | null> => {
     const { status, error } = opts ?? {}
@@ -196,12 +231,30 @@ export function createMiddlewareLogger(options: MiddlewareLoggerOptions): Middle
     if (keep) {
       await keep(tailCtx)
     }
+    if (pluginRunner.hasKeep) {
+      await pluginRunner.runKeep(tailCtx)
+    }
 
     const forceKeep = tailCtx.shouldKeep || shouldKeep(tailCtx)
     const emittedEvent = logger.emit({ _forceKeep: forceKeep })
 
-    if (emittedEvent && (options.enrich || options.drain || getGlobalDrain())) {
-      await runEnrichAndDrain(emittedEvent, options, requestInfo, resolvedStatus)
+    if (
+      emittedEvent
+      && (options.enrich || options.drain || pluginRunner.hasEnrich || pluginRunner.hasDrain || getGlobalDrain())
+    ) {
+      await runEnrichAndDrain(emittedEvent, options, requestInfo, resolvedStatus, pluginRunner)
+    }
+
+    if (pluginRunner.hasRequestLifecycle) {
+      pluginRunner.runOnRequestFinish({
+        logger,
+        request: requestInfo,
+        headers: options.headers,
+        event: emittedEvent,
+        status: resolvedStatus,
+        durationMs,
+        error,
+      })
     }
 
     return emittedEvent
