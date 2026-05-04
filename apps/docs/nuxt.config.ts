@@ -79,6 +79,15 @@ export default defineNuxtConfig({
     url: 'https://www.evlog.dev',
   },
 
+  ogImage: {
+    // Custom OgImageDocs.satori.vue has complex shadow/blur effects that slow Satori down.
+    // 15s default makes some pages timeout during prerender, which means Vercel hits the
+    // zero-runtime route at runtime and returns 500 ("Not supported in zeroRuntime mode").
+    security: {
+      renderTimeout: 60_000,
+    },
+  },
+
   studio: {
     development: {
       sync: false,

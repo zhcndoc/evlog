@@ -13,6 +13,7 @@
   "dependencies": {
     "@nuxt/fonts": "0.14.0",
     "@nuxt/ui": "^4.7.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "better-sqlite3": "^12.9.0",
