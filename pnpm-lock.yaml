@@ -6,7 +6,7 @@ settings:
 
 overrides:
   minimark: 0.2.0
-  '@nuxtjs/mcp-toolkit': ^0.16.0
+  '@nuxtjs/mcp-toolkit': ^0.16.1
 
 importers:
 
