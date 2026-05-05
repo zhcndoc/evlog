@@ -25,3 +25,25 @@ export function extractSafeNodeHeaders(headers: Record<string, string | string[]
   }
   return filterSafeHeaders(raw)
 }
+
+/**
+ * Case-insensitive header lookup against the safe-filtered shape produced by
+ * {@link extractSafeHeaders} / {@link extractSafeNodeHeaders}.
+ */
+export function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
+  if (!headers) return undefined
+  if (headers[name] !== undefined) return headers[name]
+  const lowerName = name.toLowerCase()
+  if (headers[lowerName] !== undefined) return headers[lowerName]
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lowerName) return value
+  }
+  return undefined
+}
+
+/** Parse a header-derived numeric string. Returns `undefined` for empty/invalid input. */
+export function normalizeNumber(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}

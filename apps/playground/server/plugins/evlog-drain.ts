@@ -1,4 +1,4 @@
-// import { createAxiomDrain } from 'evlog/axiom'
+import { createAxiomDrain } from 'evlog/axiom'
 // import { createPostHogDrain } from 'evlog/posthog'
 // import { createSentryDrain } from 'evlog/sentry'
 // import { createBetterStackDrain } from 'evlog/better-stack'
@@ -10,6 +10,7 @@ export default defineNitroPlugin((nitroApp) => {
   // Main drain: every wide event lands here. In a real app this would be Axiom,
   // Datadog, PostHog, etc. — observability storage with sampling and 30-90 day retention.
   const main = createFsDrain()
+  const axiom = createAxiomDrain()
 
   // Audit sink: tamper-evident, append-only, only receives events that carry an
   // `audit` field. `signed({ strategy: 'hash-chain' })` adds prevHash + hash so
@@ -21,6 +22,6 @@ export default defineNitroPlugin((nitroApp) => {
   )
 
   nitroApp.hooks.hook('evlog:drain', async (ctx) => {
-    await Promise.all([main(ctx), auditSink(ctx)])
+    await Promise.all([main(ctx), axiom(ctx), auditSink(ctx)])
   })
 })

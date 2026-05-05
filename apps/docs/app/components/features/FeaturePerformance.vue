@@ -24,22 +24,22 @@ interface Benchmark {
 
 const benchmarks: Benchmark[][] = [
   [
-    { lib: 'evlog', ops: 1750000, color: 'primary' },
-    { lib: 'consola', ops: 1040000, color: 'amber-500' },
-    { lib: 'pino', ops: 508000, color: 'emerald-500' },
-    { lib: 'winston', ops: 202500, color: 'muted' },
+    { lib: 'evlog', ops: 1550000, color: 'primary' },
+    { lib: 'consola', ops: 1010000, color: 'amber-500' },
+    { lib: 'pino', ops: 465000, color: 'emerald-500' },
+    { lib: 'winston', ops: 164000, color: 'muted' },
   ],
   [
-    { lib: 'evlog', ops: 1850000, color: 'primary' },
-    { lib: 'pino', ops: 871000, color: 'emerald-500' },
-    { lib: 'winston', ops: 568500, color: 'muted' },
-    { lib: 'consola', ops: 272200, color: 'amber-500' },
+    { lib: 'evlog', ops: 1700000, color: 'primary' },
+    { lib: 'pino', ops: 845000, color: 'emerald-500' },
+    { lib: 'winston', ops: 430000, color: 'muted' },
+    { lib: 'consola', ops: 280000, color: 'amber-500' },
   ],
   [
-    { lib: 'evlog', ops: 20520000, color: 'primary' },
-    { lib: 'pino', ops: 7360000, color: 'emerald-500' },
-    { lib: 'winston', ops: 5430000, color: 'muted' },
-    { lib: 'consola', ops: 299300, color: 'amber-500' },
+    { lib: 'evlog', ops: 16850000, color: 'primary' },
+    { lib: 'pino', ops: 7500000, color: 'emerald-500' },
+    { lib: 'winston', ops: 5380000, color: 'muted' },
+    { lib: 'consola', ops: 310000, color: 'amber-500' },
   ],
 ]
 
@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
               <span class="text-white font-medium tabular-nums">0</span>
               <span class="text-dimmed ml-1">deps</span>
               <span class="text-muted mx-3">/</span>
-              <span class="text-white font-medium tabular-nums">5.2 kB</span>
+              <span class="text-white font-medium tabular-nums">~6 kB</span>
               <span class="text-dimmed ml-1">gzip</span>
               <span class="text-muted mx-3">/</span>
               <span class="text-white font-medium tabular-nums">12</span>

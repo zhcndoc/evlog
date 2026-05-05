@@ -1,8 +1,8 @@
-# Test Template
+# 测试模板
 
-Complete test template for `packages/evlog/test/adapters/{name}.test.ts`.
+`packages/evlog/test/adapters/{name}.test.ts` 的完整测试模板。
 
-Replace `{Name}`, `{name}` with the actual service name.
+将 `{Name}`、`{name}` 替换为实际的服务名称。
 
 ```typescript
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,7 +12,7 @@ import { sendBatchTo{Name}, sendTo{Name} } from '../../src/adapters/{name}'
 describe('{name} adapter', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>
 
-  // --- Setup: mock globalThis.fetch to return 200 ---
+  // --- 设置：模拟 globalThis.fetch 返回 200 ---
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(null, { status: 200 }),
@@ -23,7 +23,7 @@ describe('{name} adapter', () => {
     vi.restoreAllMocks()
   })
 
-  // --- Test event factory ---
+  // --- 测试事件工厂 ---
   const createTestEvent = (overrides?: Partial<WideEvent>): WideEvent => ({
     timestamp: '2024-01-01T12:00:00.000Z',
     level: 'info',
@@ -32,9 +32,9 @@ describe('{name} adapter', () => {
     ...overrides,
   })
 
-  // --- 1. URL Construction ---
+  // --- 1. URL 构造 ---
   describe('sendTo{Name}', () => {
-    it('sends event to correct URL', async () => {
+    it('发送事件到正确的 URL', async () => {
       const event = createTestEvent()
 
       await sendTo{Name}(event, {
@@ -43,11 +43,11 @@ describe('{name} adapter', () => {
 
       expect(fetchSpy).toHaveBeenCalledTimes(1)
       const [url] = fetchSpy.mock.calls[0] as [string, RequestInit]
-      // Verify the default endpoint URL
+      // 验证默认端点 URL
       expect(url).toBe('https://api.{name}.com/v1/ingest')
     })
 
-    it('uses custom endpoint when provided', async () => {
+    it('在提供自定义端点时使用自定义端点', async () => {
       const event = createTestEvent()
 
       await sendTo{Name}(event, {
@@ -59,8 +59,8 @@ describe('{name} adapter', () => {
       expect(url).toBe('https://custom.{name}.com/v1/ingest')
     })
 
-    // --- 2. Headers ---
-    it('sets correct Authorization header', async () => {
+    // --- 2. 请求头 ---
+    it('设置正确的 Authorization 请求头', async () => {
       const event = createTestEvent()
 
       await sendTo{Name}(event, {
@@ -73,7 +73,7 @@ describe('{name} adapter', () => {
       }))
     })
 
-    it('sets Content-Type to application/json', async () => {
+    it('将 Content-Type 设置为 application/json', async () => {
       const event = createTestEvent()
 
       await sendTo{Name}(event, {
@@ -86,11 +86,11 @@ describe('{name} adapter', () => {
       }))
     })
 
-    // Add service-specific header tests here
-    // Example: orgId, project header, region header, etc.
+    // 在此添加服务特定的请求头测试
+    // 示例：orgId、project 请求头、region 请求头等。
 
-    // --- 3. Request Body ---
-    it('sends event in correct format', async () => {
+    // --- 3. 请求体 ---
+    it('以正确的格式发送事件', async () => {
       const event = createTestEvent({ action: 'test-action', userId: '123' })
 
       await sendTo{Name}(event, {
@@ -99,14 +99,17 @@ describe('{name} adapter', () => {
 
       const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit]
       const body = JSON.parse(options.body as string)
-      // Verify the body matches the expected format
-      // Adapt this to match the service's expected payload structure
+      // 验证请求体符合预期格式
+      // 根据服务的预期负载结构进行调整
       expect(body).toBeInstanceOf(Array)
       expect(body).toHaveLength(1)
     })
 
-    // --- 4. Error Handling ---
-    it('throws error on non-OK response', async () => {
+    // --- 4. 错误处理（只有直接辅助函数会抛出错误——
+    //      drain 本身会通过 `defineHttpDrain` 吞掉错误，
+    //      因此请求流水线永远不会被中断；这一契约由
+    //      `test/toolkit.test.ts` 覆盖。）
+    it('在非 OK 响应时抛出错误', async () => {
       fetchSpy.mockResolvedValueOnce(
         new Response('Bad Request', { status: 400, statusText: 'Bad Request' }),
       )
@@ -119,9 +122,9 @@ describe('{name} adapter', () => {
     })
   })
 
-  // --- 5. Batch Operations ---
+  // --- 5. 批量操作 ---
   describe('sendBatchTo{Name}', () => {
-    it('sends multiple events in a single request', async () => {
+    it('在单个请求中发送多个事件', async () => {
       const events = [
         createTestEvent({ requestId: '1' }),
         createTestEvent({ requestId: '2' }),
@@ -138,7 +141,7 @@ describe('{name} adapter', () => {
       expect(body).toHaveLength(3)
     })
 
-    it('skips fetch when events array is empty', async () => {
+    it('当事件数组为空时跳过 fetch', async () => {
       await sendBatchTo{Name}([], {
         apiKey: 'test-key',
       })
@@ -147,9 +150,9 @@ describe('{name} adapter', () => {
     })
   })
 
-  // --- 6. Timeout Handling ---
+  // --- 6. 超时处理 ---
   describe('timeout handling', () => {
-    it('uses default timeout of 5000ms', async () => {
+    it('使用默认 5000ms 超时', async () => {
       const event = createTestEvent()
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
 
@@ -160,7 +163,7 @@ describe('{name} adapter', () => {
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5000)
     })
 
-    it('uses custom timeout when provided', async () => {
+    it('在提供自定义超时时使用自定义超时', async () => {
       const event = createTestEvent()
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
 
@@ -175,11 +178,11 @@ describe('{name} adapter', () => {
 })
 ```
 
-## Customization Notes
+## 自定义说明
 
-- **URL assertions**: Update the expected URLs to match the actual service API.
-- **Auth headers**: If the service uses a custom auth header (e.g., `X-API-Key` instead of `Authorization: Bearer`), update the header assertions.
-- **Body format**: Adapt body assertions to match the service's expected payload. Some services wrap events in an object (PostHog: `{ api_key, batch }`), others accept raw arrays (Axiom).
-- **Empty batch**: The template asserts `fetchSpy` is NOT called for empty arrays. If your adapter sends empty arrays (like Axiom does), change this to match.
-- **Event transformation**: If you export a `to{Name}Event()` converter, add dedicated tests for it (see `otlp.test.ts` for `toOTLPLogRecord` tests as a reference).
-- **Service-specific tests**: Add tests for any service-specific features (e.g., Axiom's `orgId` header, OTLP's severity mapping, PostHog's `distinct_id`).
+- **URL 断言**：更新预期 URL 以匹配实际服务 API。
+- **认证请求头**：如果服务使用自定义认证请求头（例如 `X-API-Key` 而不是 `Authorization: Bearer`），请更新请求头断言。
+- **请求体格式**：调整请求体断言以匹配服务的预期负载。有些服务会将事件包装在对象中（PostHog：`{ api_key, batch }`），其他服务则接受原始数组（Axiom）。
+- **空批次**：该模板断言对空数组时 `fetchSpy` 不会被调用。如果你的适配器会发送空数组（如 Axiom），请将其改为匹配实际行为。
+- **事件转换**：如果你导出了 `to{Name}Event()` 转换器，请为其添加专门测试（可参考 `otlp.test.ts` 中的 `toOTLPLogRecord` 测试）。
+- **服务特定测试**：为任何服务特定功能添加测试（例如：Axiom 的 `orgId` 请求头、OTLP 的严重级别映射、PostHog 的 `distinct_id`）。

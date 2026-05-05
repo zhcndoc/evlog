@@ -1,79 +1,80 @@
-# Enricher Source Template
+# Enricher 源模板
 
-Template for adding a new enricher to `packages/evlog/src/enrichers/index.ts`.
+用于使用 `defineEnricher` 向 `packages/evlog/src/enrichers/index.ts` 添加新的 enricher 的模板。
 
-Replace `{Name}`, `{name}`, and `{DISPLAY}` with the actual enricher name.
+将 `{Name}`、`{name}` 和 `{DISPLAY}` 替换为实际的 enricher 名称。
 
-## Info Interface
+## 信息接口
 
-Define the output shape of the enricher:
+定义输出形状：
 
 ```typescript
 export interface {Name}Info {
-  /** Description of field */
+  /** 字段的描述 */
   field1?: string
-  /** Description of field */
+  /** 字段的描述 */
   field2?: number
 }
 ```
 
-## Factory Function
+## 工厂函数
 
 ```typescript
+import type { EnrichContext } from '../types'
+import { defineEnricher, type EnricherOptions } from '../shared/enricher'
+import { getHeader, normalizeNumber } from '../shared/headers'
+
 /**
- * Enrich events with {DISPLAY} data.
- * Sets `event.{name}` with `{Name}Info` shape: `{ field1?, field2? }`.
+ * 使用 {DISPLAY} 数据丰富事件。
+ * 使用 `{Name}Info` 形状设置 `event.{name}`：`{ field1?, field2? }`。
  */
 export function create{Name}Enricher(options: EnricherOptions = {}): (ctx: EnrichContext) => void {
-  return (ctx) => {
-    // 1. Extract data from headers (case-insensitive)
-    const value = getHeader(ctx.headers, 'x-my-header')
-    if (!value) return  // Early return if no data available
-
-    // 2. Compute the enriched data
-    const info: {Name}Info = {
-      field1: value,
-      field2: Number(value),
-    }
-
-    // 3. Merge with existing event field (respects overwrite option)
-    ctx.event.{name} = mergeEventField<{Name}Info>(ctx.event.{name}, info, options.overwrite)
-  }
+  return defineEnricher<{Name}Info>({
+    name: '{name}',
+    field: '{name}',
+    compute: ({ headers }) => {
+      const value = getHeader(headers, 'x-my-header')
+      if (!value) return undefined
+      return {
+        field1: value,
+        field2: normalizeNumber(value),
+      }
+    },
+  }, options)
 }
 ```
 
-## Architecture Rules
+## 架构规则
 
-1. **Use existing helpers** -- `getHeader()` for case-insensitive header lookup, `mergeEventField()` for safe merging, `normalizeNumber()` for parsing numeric strings
-2. **Single event field** -- each enricher sets one top-level field on `ctx.event`
-3. **Factory pattern** -- always return a function, never execute directly
-4. **EnricherOptions** -- accept `{ overwrite?: boolean }` for merge control
-5. **Early return** -- skip if required data is missing
-6. **No side effects** -- never throw, never log, only mutate `ctx.event`
-7. **Clean undefined values** -- skip the enricher entirely if all computed values are `undefined`
+1. **使用工具包原语**：来自 `../shared/enricher` 的 `defineEnricher<T>({ name, field, compute }, options)`（重新导出为 `evlog/toolkit`）。
+2. **使用工具包辅助函数**：用于大小写不敏感请求头查找的 `getHeader()`，以及用于数字字符串的 `normalizeNumber()` —— 二者都来自 `../shared/headers`。
+3. **单个事件字段** —— 每个 enricher 在 `ctx.event` 上写入一个顶级字段（通过 `field` 选项声明）。
+4. **返回 `undefined` 以跳过** —— `compute` 返回 `undefined` 会使该 enricher 对该事件不执行任何操作（不合并字段，也不报错）。
+5. **工厂模式** —— 始终将 `defineEnricher` 包装在 `create{Name}Enricher(options?)` 工厂中并返回其结果。
+6. **不要使用 try/catch** —— `defineEnricher` 已经隔离了错误（记录为 `[evlog/{name}]`，且不会向管道抛出异常）。
+7. **不要在 `compute` 之外进行修改** —— 让 `defineEnricher` 通过 `mergeEventField` 处理合并。
 
-## Available Helpers
+## 可用辅助函数
 
-These helpers are already defined in the enrichers file:
+这些辅助函数从 `../shared/headers`（以及 `evlog/toolkit`）导出：
 
 ```typescript
-// Case-insensitive header lookup
+// 不区分大小写的请求头查找
 function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined
 
-// Merge computed data with existing event fields, respecting overwrite
-function mergeEventField<T extends object>(existing: unknown, computed: T, overwrite?: boolean): T
-
-// Parse string to number, returning undefined for non-finite values
+// 将字符串解析为数字，对非有限值返回 undefined
 function normalizeNumber(value: string | undefined): number | undefined
 ```
 
-## Data Sources
+对于更底层的合并（很少需要），工具包还从 `../shared/event` 导出 `mergeEventField`。
 
-Enrichers typically read from:
+## 数据源
 
-- **`ctx.headers`** -- HTTP request headers (sensitive headers already filtered)
-- **`ctx.response?.headers`** -- HTTP response headers
-- **`ctx.response?.status`** -- HTTP response status code
-- **`ctx.request`** -- Request metadata (method, path, requestId)
-- **`process.env`** -- Environment variables (for deployment metadata)
-- **`ctx.event`** -- The event itself (for computed/derived fields)
+Enricher 通常从 `ctx` 中读取：
+
+- **`ctx.headers`** — HTTP 请求头（敏感请求头已被过滤）
+- **`ctx.response?.headers`** — HTTP 响应头
+- **`ctx.response?.status`** — HTTP 响应状态码
+- **`ctx.request`** — 请求元数据（方法、路径、requestId）
+- **`process.env`** — 环境变量（用于部署元数据）
+- **`ctx.event`** — 事件本身（用于计算/派生字段）

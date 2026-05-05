@@ -1,15 +1,15 @@
-Contributions are welcome! Feel free to open an issue or submit a pull request.
+欢迎贡献！欢迎随时提交 issue 或发起 pull request。
 
 ```bash
-# Install dependencies
-bun install
+# 安装依赖
+pnpm install
 
-# Generate type stubs
-bun run dev:prepare
+# 生成类型存根
+pnpm run dev:prepare
 
-# Start the playground
-bun run dev
+# 启动 playground
+pnpm run dev
 
-# Run tests
-bun run test
+# 运行测试
+pnpm run test
 ```

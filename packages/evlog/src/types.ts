@@ -378,6 +378,31 @@ export interface LoggerConfig {
    * ```
    */
   drain?: (ctx: DrainContext) => void | Promise<void>
+  /**
+   * Plugins registered globally with the logger.
+   *
+   * Plugins are the canonical extension contract for evlog: they can opt into
+   * `enrich`, `drain`, `keep`, lifecycle hooks (`onRequestStart`, `onRequestFinish`),
+   * client-log observation, and per-request logger decoration. See
+   * {@link import('./shared/plugin').EvlogPlugin} for the full surface.
+   *
+   * Plugin drains run alongside the standalone `drain` callback (composed with
+   * `Promise.allSettled`), so you can mix one-off drains and plugin-shaped
+   * extensions safely.
+   *
+   * @example
+   * ```ts
+   * import { initLogger, definePlugin } from 'evlog'
+   * import { createAxiomDrain } from 'evlog/axiom'
+   *
+   * initLogger({
+   *   plugins: [
+   *     definePlugin({ name: 'axiom', drain: createAxiomDrain() }),
+   *   ],
+   * })
+   * ```
+   */
+  plugins?: Array<import('./shared/plugin').EvlogPlugin>
   /** @internal Suppress the "silent without drain" warning (used by hook-based frameworks like Nitro/Nuxt) */
   _suppressDrainWarning?: boolean
 }
@@ -720,6 +745,12 @@ export interface Log {
 export interface ErrorOptions {
   /** What actually happened */
   message: string
+  /**
+   * Stable, machine-readable identifier for this error (e.g. `'PAYMENT_DECLINED'`,
+   * `'auth/invalid-token'`). Surfaces in HTTP responses, `parseError`, and wide
+   * events so clients can branch on `err.code` and dashboards can group by code.
+   */
+  code?: string
   /** HTTP status code (default: 500) */
   status?: number
   /** Why this error occurred */
@@ -798,6 +829,11 @@ export interface ServerEvent {
 export interface ParsedError {
   message: string
   status: number
+  /**
+   * Stable, machine-readable identifier copied from `EvlogError.code`,
+   * h3-style `data.code`, or a Node-style `Error.code` (e.g. `'ENOENT'`).
+   */
+  code?: string
   why?: string
   fix?: string
   link?: string

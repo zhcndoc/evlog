@@ -64,8 +64,20 @@ const landingItems = [
       {
         label: 'AI SDK',
         icon: 'i-simple-icons-vercel',
-        description: '带 token 跟踪的 AI 可观测性',
-        to: '/logging/ai-sdk'
+        description: '带 token 追踪的 AI 可观测性',
+        to: '/logging/ai-sdk/overview'
+      },
+      {
+        label: 'Better Auth',
+        icon: 'i-simple-icons-betterauth',
+        description: '在每个请求中自动识别用户',
+        to: '/logging/better-auth/overview'
+      },
+      {
+        label: 'Audit Logs',
+        icon: 'i-lucide-shield-check',
+        description: '防篡改的操作审计轨迹',
+        to: '/logging/audit/overview'
       }
     ]
   },
@@ -77,43 +89,43 @@ const landingItems = [
         label: 'Axiom',
         icon: 'i-custom-axiom',
         description: '将日志发送到 Axiom',
-        to: '/adapters/axiom'
+        to: '/adapters/cloud/axiom'
       },
       {
         label: 'OpenTelemetry',
         icon: 'i-simple-icons-opentelemetry',
         description: '通过 OTLP 协议导出',
-        to: '/adapters/otlp'
+        to: '/adapters/cloud/otlp'
       },
       {
         label: 'HyperDX',
         icon: 'i-custom-hyperdx',
-        description: '通过 OTLP 发送日志到 HyperDX',
-        to: '/adapters/hyperdx'
+        description: '通过 OTLP 将日志发送到 HyperDX',
+        to: '/adapters/cloud/hyperdx'
       },
       {
         label: 'PostHog',
         icon: 'i-simple-icons-posthog',
         description: '将日志发送到 PostHog',
-        to: '/adapters/posthog'
+        to: '/adapters/cloud/posthog'
       },
       {
         label: 'Sentry',
         icon: 'i-simple-icons-sentry',
-        description: '把错误上报到 Sentry',
-        to: '/adapters/sentry'
+        description: '将错误上报到 Sentry',
+        to: '/adapters/cloud/sentry'
       },
       {
         label: 'Better Stack',
         icon: 'i-simple-icons-betterstack',
         description: '将日志流式发送到 Better Stack',
-        to: '/adapters/better-stack'
+        to: '/adapters/cloud/better-stack'
       },
       {
         label: 'Datadog',
         icon: 'i-simple-icons-datadog',
         description: '将日志发送到 Datadog',
-        to: '/adapters/datadog'
+        to: '/adapters/cloud/datadog'
       }
     ]
   },
