@@ -1,9 +1,15 @@
+import { existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const distDir = join(dirname(fileURLToPath(import.meta.url)), '../dist')
+const distExists = existsSync(join(distDir, 'index.mjs'))
+
+if (!distExists) {
+  console.warn('[evlog test] Skipping dist import audit: dist/ not found. Run `pnpm --filter evlog run build` first.')
+}
 
 async function collectMjsFiles(dir: string, out: string[] = []): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true })
@@ -15,7 +21,7 @@ async function collectMjsFiles(dir: string, out: string[] = []): Promise<string[
   return out
 }
 
-describe('published dist avoids static nitro virtual imports', () => {
+describe.skipIf(!distExists)('published dist avoids static nitro virtual imports', () => {
   it('no .mjs file contains a resolvable nitro/runtime-config module specifier', async () => {
     const files = await collectMjsFiles(distDir)
     expect(files.length).toBeGreaterThan(0)
