@@ -272,7 +272,25 @@ const result = streamText({
 
 服务端 `createError({ why, fix, link })`。客户端 `parseError()`。你的错误提示框终于告诉用户 *出了什么问题* 以及 *该怎么做*。你的值班人员终于停止逆向工程堆栈跟踪。
 
-### 用于代理和脚本的文件系统输出端
+### 类型化错误与审计目录
+
+停止在代码库中散落魔法字符串。一次将错误和审计动作分组到类型化目录中，随处获得 `code` 的自动补全，在 catch 块中进行可重构安全的比较，并为每个有限上下文提供一个会携带自身类型增强的 npm 包。从单个 `errors.ts` 文件扩展到多包 monorepo，无需更改 API。
+
+```ts [errors/billing.ts]
+export const billingErrors = defineErrorCatalog('billing', {
+  PAYMENT_DECLINED: { status: 402, message: 'Card declined', why: '...', fix: '...' },
+  INSUFFICIENT_FUNDS: {
+    status: 402,
+    message: ({ available, required }: { available: number, required: number }) =>
+      `Insufficient funds: $${available}/$${required}`,
+  },
+})
+
+throw billingErrors.PAYMENT_DECLINED({ cause: stripeErr })
+throw billingErrors.INSUFFICIENT_FUNDS({ available: 5, required: 100 })
+```
+
+### 面向代理和脚本的文件系统 drain
 
 写入 NDJSON 到磁盘。你的 AI 代理、脚本和队友查询结构化事件 **无需 Datadog 订阅**。宽事件适用于事故和评估。
 
