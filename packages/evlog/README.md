@@ -528,6 +528,38 @@ log.set({ users: { count: 42 } })
 
 See the full [nestjs example](https://github.com/HugoRCD/evlog/tree/main/examples/nestjs) for a complete working project.
 
+## oRPC
+
+```typescript
+// server/orpc.ts
+import { os } from '@orpc/server'
+import { RPCHandler } from '@orpc/server/fetch'
+import { initLogger } from 'evlog'
+import { evlog, withEvlog, type EvlogOrpcContext } from 'evlog/orpc'
+
+initLogger({ env: { service: 'orpc-api' } })
+
+const base = os.$context<EvlogOrpcContext>().use(evlog())
+
+const router = {
+  ping: base.handler(({ context }) => {
+    context.log.set({ pinged: true })
+    return { ok: true }
+  }),
+}
+
+const handler = withEvlog(new RPCHandler(router))
+
+export default async function fetch(request: Request) {
+  const { matched, response } = await handler.handle(request, { prefix: '/rpc' })
+  return matched ? response : new Response('Not Found', { status: 404 })
+}
+```
+
+`withEvlog()` wraps the handler and emits one wide event per request; `os.use(evlog())` exposes `context.log` to procedures and tags each event with the procedure path as `operation`. Use `useLogger()` from `evlog/orpc` to access the logger off-context.
+
+See the full [orpc example](https://github.com/HugoRCD/evlog/tree/main/examples/orpc) for a complete working project.
+
 ## Browser
 
 Use the `log` API on the client side for structured browser logging:
@@ -821,7 +853,7 @@ export default defineNitroPlugin((nitroApp) => {
 Set environment variables:
 
 ```bash
-NUXT_AXIOM_TOKEN=xaat-your-token
+NUXT_AXIOM_API_KEY=xaat-your-token
 NUXT_AXIOM_DATASET=your-dataset
 ```
 
@@ -916,8 +948,68 @@ export default defineNitroPlugin((nitroApp) => {
 Set environment variables:
 
 ```bash
-NUXT_BETTER_STACK_SOURCE_TOKEN=your-source-token
+NUXT_BETTER_STACK_API_KEY=your-source-token
 ```
+
+### HyperDX
+
+```typescript
+// server/plugins/evlog-drain.ts
+import { createHyperDXDrain } from 'evlog/hyperdx'
+
+export default defineNitroPlugin((nitroApp) => {
+  nitroApp.hooks.hook('evlog:drain', createHyperDXDrain())
+})
+```
+
+Set environment variables:
+
+```bash
+NUXT_HYPERDX_API_KEY=your-api-key
+# Optional — defaults to https://in-otel.hyperdx.io
+NUXT_HYPERDX_ENDPOINT=https://in-otel.hyperdx.io
+```
+
+### File System
+
+Write wide events to local NDJSON files (`.evlog/logs/` by default):
+
+```typescript
+// server/plugins/evlog-drain.ts
+import { createFsDrain } from 'evlog/fs'
+
+export default defineNitroPlugin((nitroApp) => {
+  nitroApp.hooks.hook('evlog:drain', createFsDrain())
+})
+```
+
+Set environment variables:
+
+```bash
+NUXT_EVLOG_FS_DIR=.evlog/logs
+```
+
+### Memory
+
+In-memory ring buffer — works in any runtime, including Cloudflare Workers:
+
+```typescript
+// server/plugins/evlog-drain.ts
+import { createMemoryDrain } from 'evlog/memory'
+
+export default defineNitroPlugin((nitroApp) => {
+  nitroApp.hooks.hook('evlog:drain', createMemoryDrain())
+})
+```
+
+Optional environment variables:
+
+```bash
+NUXT_EVLOG_MEMORY_STORE=default
+NUXT_EVLOG_MEMORY_MAX_EVENTS=1000
+```
+
+Pair with `readMemoryLogs()` for dev-only agent access over HTTP. See the [Memory adapter docs](https://www.evlog.dev/integrate/adapters/self-hosted/memory).
 
 ### Multiple Destinations
 
@@ -1297,6 +1389,7 @@ try {
 | **Hono** | `app.use(evlog())` with `import { evlog } from 'evlog/hono'` ([example](./examples/hono)) |
 | **Fastify** | `app.register(evlog)` with `import { evlog } from 'evlog/fastify'` ([example](./examples/fastify)) |
 | **Elysia** | `.use(evlog())` with `import { evlog } from 'evlog/elysia'` ([example](./examples/elysia)) |
+| **oRPC** | `withEvlog(handler)` + `os.use(evlog())` with `import { evlog, withEvlog } from 'evlog/orpc'` ([example](./examples/orpc)) |
 | **Cloudflare Workers** | Manual setup with `import { initWorkersLogger, createWorkersLogger } from 'evlog/workers'` ([example](./examples/workers)) |
 | **Custom** | Build your own with `import { createMiddlewareLogger } from 'evlog/toolkit'` ([guide](https://evlog.dev/extend/custom-framework)) |
 | **Analog** | Nitro v2 module setup |

@@ -7,17 +7,25 @@ export type { NitroModuleOptions }
 
 const _dir = dirname(fileURLToPath(import.meta.url))
 
+// Nitro raw-interpolates these paths into JS string literals when generating
+// the #nitro/virtual/plugins and #nitro/virtual/error-handler modules, so
+// Windows backslashes would be parsed as escape sequences (\n, \v, …) and
+// break module resolution. Normalize to POSIX separators.
+function resolveModulePath(name: string): string {
+  return resolve(_dir, name).replace(/\\/g, '/')
+}
+
 export default function evlog(options?: NitroModuleOptions) {
   return {
     name: 'evlog',
     setup(nitro: Nitro) {
       // Push the plugin (no extension — Nitro's bundler resolves it)
       nitro.options.plugins = nitro.options.plugins || []
-      nitro.options.plugins.push(resolve(_dir, 'plugin'))
+      nitro.options.plugins.push(resolveModulePath('plugin'))
 
       // Set error handler only if not already configured by user
       if (!nitro.options.errorHandler) {
-        nitro.options.errorHandler = resolve(_dir, 'errorHandler')
+        nitro.options.errorHandler = resolveModulePath('errorHandler')
       }
 
       // explicitly tell nitro to bundle evlog's files to correctly resolve nitro dependencies
@@ -30,6 +38,14 @@ export default function evlog(options?: NitroModuleOptions) {
       // runtime-config module resolves correctly.
       nitro.options.runtimeConfig = nitro.options.runtimeConfig || {}
       nitro.options.runtimeConfig.evlog = options || {}
+
+      // Bake the config into the bundle as a literal so the plugin never has
+      // to do a runtime `import('nitropack/runtime/internal/config')` to
+      // discover it. The dynamic probe transitively imports a build-only
+      // virtual module; on Vercel + Bun the missing virtual triggers Bun's
+      // auto-installer and crashes with `ReadOnlyFileSystem` (issue #312).
+      nitro.options.replace = nitro.options.replace || {}
+      nitro.options.replace.__EVLOG_CONFIG__ = JSON.stringify(options || {})
 
       // In dev mode, Nitro loads plugins externally (not bundled), so the
       // virtual runtime-config module is unreachable and useRuntimeConfig()

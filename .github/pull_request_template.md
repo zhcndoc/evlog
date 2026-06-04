@@ -1,76 +1,75 @@
 <!---
-☝️ PR title should follow conventional commits (https://conventionalcommits.org)
-Here are the available types and scopes:
+☝️ PR 标题应遵循 conventional commits（https://conventionalcommits.org）
+以下是可用的类型和范围：
 
 
-### Types
-- breaking (fix or feature that would cause existing functionality to change) 💥
-- feat (a non-breaking change that adds functionality) ✨
-- fix (a non-breaking change that fixes an issue) 🐞
-- build (changes that affect the build system or external dependencies) 🏗
-- ci (changes to our CI configuration files and scripts) 🚀
-- docs (updates to the documentation or readme) 📖
-- enhancement (improving an existing functionality) 🌈
-- chore (updates to the build process or auxiliary tools and libraries) 📦
-- perf (a code change that improves performance) ⚡️
-- style (changes that do not affect the meaning of the code) 💅
-- test (adding or updating tests) 🧪
-- refactor (a code change that neither fixes a bug nor adds a feature) 🛠
-- revert (reverts a previous commit) 🔄
+### 类型
+- breaking（会导致现有功能发生变化的修复或功能）💥
+- feat（添加功能的非破坏性变更）✨
+- fix（修复问题的非破坏性变更）🐞
+- build（影响构建系统或外部依赖的变更）🏗
+- ci（更改我们的 CI 配置文件和脚本）🚀
+- docs（更新文档或 readme）📖
+- enhancement（改进现有功能）🌈
+- chore（更新构建流程或辅助工具和库）📦
+- perf（提升性能的代码变更）⚡️
+- style（不影响代码含义的变更）💅
+- test（新增或更新测试）🧪
+- refactor（既不修复 bug 也不添加功能的代码变更）🛠
+- revert（撤销之前的提交）🔄
 
-### Scopes
-Omit the scope when the change is cross-cutting or repo-wide. Use a scope only
-to point at one subsystem; the whole monorepo is `evlog`, so `evlog` is not a
-scope.
+### 范围
+当变更具有跨切面影响或影响整个仓库时，请省略范围。仅在指向某一个子系统时使用范围；整个 monorepo 是 `evlog`，因此 `evlog` 不是一个范围。
 
-- ai (AI SDK integration)
-- axiom (Axiom drain adapter)
-- bench (benchmarks)
-- better-auth (Better Auth integration)
-- better-stack (Better Stack drain adapter)
-- core (logger, pipeline, error, redact, catalog internals)
-- datadog (Datadog drain adapter)
-- deps (the dependencies)
-- docs (the documentation site)
-- dx (developer experience improvements)
-- elysia (Elysia plugin)
-- express (Express middleware)
-- fastify (Fastify plugin)
-- fs (File System drain adapter)
-- hono (Hono middleware)
-- hyperdx (HyperDX drain adapter)
-- nestjs (NestJS middleware)
-- next (Next.js integration)
-- nitro (Nitro plugin)
-- nuxt (Nuxt module)
-- otlp (OTLP drain adapter)
-- playground (the playground app)
-- posthog (PostHog drain adapter)
-- react-router (React Router integration)
-- release (release workflow / publishing)
-- repo (the repository: tooling, CI, scripts, root config)
-- sentry (Sentry drain adapter)
-- stream (in-process stream + stream server)
-- sveltekit (SvelteKit integration)
-- tanstack-start (TanStack Start integration)
-- vite (Vite plugin)
-- workers (Cloudflare Workers adapter)
+- ai（AI SDK 集成）
+- axiom（Axiom drain 适配器）
+- bench（基准测试）
+- better-auth（Better Auth 集成）
+- better-stack（Better Stack drain 适配器）
+- core（logger、pipeline、error、redact、catalog 内部）
+- datadog（Datadog drain 适配器）
+- deps（依赖项）
+- docs（文档站点）
+- dx（开发者体验改进）
+- elysia（Elysia 插件）
+- express（Express 中间件）
+- fastify（Fastify 插件）
+- fs（文件系统 drain 适配器）
+- hono（Hono 中间件）
+- hyperdx（HyperDX drain 适配器）
+- nestjs（NestJS 中间件）
+- next（Next.js 集成）
+- nitro（Nitro 插件）
+- nuxt（Nuxt 模块）
+- orpc（oRPC 集成）
+- otlp（OTLP drain 适配器）
+- playground（playground 应用）
+- posthog（PostHog drain 适配器）
+- react-router（React Router 集成）
+- release（发布流程 / 发行）
+- repo（仓库：工具、CI、脚本、根配置）
+- sentry（Sentry drain 适配器）
+- stream（进程内 stream + stream server）
+- sveltekit（SvelteKit 集成）
+- tanstack-start（TanStack Start 集成）
+- vite（Vite 插件）
+- workers（Cloudflare Workers 适配器）
 -->
 
-### 🔗 Linked issue
+### 🔗 关联 issue
 
-<!-- If it resolves an open issue, please link the issue here. For example "Resolves #123" -->
+<!-- 如果它解决了一个未关闭的 issue，请在此处链接该 issue。例如 "Resolves #123" -->
 
-### 📚 Description
+### 📚 描述
 
-<!-- Describe your changes in detail -->
-<!-- Why is this change required? What problem does it solve? -->
+<!-- 详细描述你的更改 -->
+<!-- 为什么需要这次更改？它解决了什么问题？ -->
 
-### 📝 Checklist
+### 📝 清单
 
-<!-- Put an `x` in all the boxes that apply. -->
-<!-- If your change requires a documentation PR, please link it appropriately -->
-<!-- If you're unsure about any of these, don't hesitate to ask. We're here to help! -->
+<!-- 请在所有适用的复选框中打上 `x`。 -->
+<!-- 如果你的更改需要文档 PR，请以适当方式链接。 -->
+<!-- 如果你对其中任何一项不确定，请随时提问。我们随时乐意帮助！ -->
 
-- [ ] I have linked an issue or discussion.
-- [ ] I have updated the documentation accordingly.
+- [ ] 我已关联一个 issue 或讨论。
+- [ ] 我已相应更新文档。

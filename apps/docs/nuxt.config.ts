@@ -10,6 +10,7 @@ export default defineNuxtConfig({
   },
 
   routeRules: {
+    '/': { prerender: true },
     ...redirects,
   },
 
@@ -19,7 +20,18 @@ export default defineNuxtConfig({
     'nuxt-studio',
     '@vercel/analytics',
     '@vercel/speed-insights',
+    '@databuddy/nuxt',
   ],
+
+  databuddy: {
+    clientId: '389b5a41-31cb-4ea4-a5e8-8ec3ac4ffccc',
+    trackWebVitals: true,
+    trackErrors: true,
+    trackHashChanges: true,
+    trackOutgoingLinks: true,
+    trackInteractions: true,
+    trackAttributes: true,
+  },
 
   colorMode: {
     preference: 'dark',
@@ -31,8 +43,8 @@ export default defineNuxtConfig({
       { name: 'Geist Mono', weights: [400, 500, 600, 700], global: true },
       {
         name: 'Geist Pixel Line',
-        src: '/fonts/GeistPixel-Line.ttf',
-        weights: [400, 500, 600],
+        src: '/fonts/GeistPixel-Line.woff2',
+        weights: [400],
         global: true,
       },
     ],
