@@ -1,6 +1,6 @@
 {
+  "buildCommand": "pnpm build:docs",
   "framework": null,
-  "buildCommand": "bun run build:docs",
-  "installCommand": "npm install -g bun@1.2.22 && bun install",
+  "installCommand": "npm install -g pnpm && pnpm install",
   "outputDirectory": ".output/server"
 }
