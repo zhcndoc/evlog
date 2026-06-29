@@ -1,31 +1,16 @@
-import type { AuditActor, AuditActionDefinition, AuditFields, AuditPatchOp, AuditTarget, DrainContext, EnrichContext, FieldContext, RedactConfig, RequestLogger, WideEvent } from './types'
+import type { AuditActor, AuditFields, AuditPatchOp, AuditTarget, DrainContext, EnrichContext, FieldContext, RedactConfig, RequestLogger, WideEvent } from './types'
 import { createLogger } from './logger'
+import { compileRedactPathMatchers, redactValueByPaths } from './redact'
 import { getHeader as getSharedHeader } from './shared/headers'
+import type { AuditInput } from './audit-action'
+
+export { defineAuditAction, type AuditInput, type DefineAuditActionOptions, type DefinedAuditAction } from './audit-action'
 
 /**
  * Current version of the audit envelope. Bumped when `AuditFields` evolves
  * in a backward-incompatible way so downstream pipelines can branch on it.
  */
 export const AUDIT_SCHEMA_VERSION = 1
-
-/**
- * Input accepted by `log.audit()`, `audit()`, and `withAudit()`.
- *
- * `outcome` defaults to `'success'`. Internal fields populated by the audit
- * pipeline (`idempotencyKey`, `context`, `signature`, `prevHash`, `hash`) are
- * stripped — pass them through `log.set({ audit })` if you really need to.
- */
-export interface AuditInput {
-  action: string
-  actor: AuditActor
-  target?: AuditTarget
-  outcome?: AuditFields['outcome']
-  reason?: string
-  changes?: AuditFields['changes']
-  causationId?: string
-  correlationId?: string
-  version?: number
-}
 
 /**
  * @internal Stable JSON stringification with deterministic key order.
@@ -39,12 +24,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || value.constructor === Object
 }
 
-function stableStringify(value: unknown): string {
+function stableStringify(value: unknown, ancestors = new WeakSet<object>()): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
-  if (!isPlainObject(value)) return JSON.stringify(value)
-  const keys = Object.keys(value).sort()
-  return `{${keys.map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`
+  // Track only the current recursion path: shared (diamond) references are fine, true cycles are not.
+  if (ancestors.has(value)) return '"[Circular]"'
+  if (!Array.isArray(value) && !isPlainObject(value)) return JSON.stringify(value)
+  ancestors.add(value)
+  const out = Array.isArray(value)
+    ? `[${value.map(v => stableStringify(v, ancestors)).join(',')}]`
+    : `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${stableStringify(value[k], ancestors)}`).join(',')}}`
+  ancestors.delete(value)
+  return out
 }
 
 /**
@@ -303,8 +293,8 @@ export interface WithAuditContext {
  * `changes` field. Output is a JSON Patch-style array (RFC 6902 subset:
  * `add`, `remove`, `replace`) — small enough to ship over the wire.
  *
- * Object keys whose name matches one of the `redactPaths` (dot-notation, e.g.
- * `'user.password'`, `'card.cvv'`) are replaced with `'[REDACTED]'` so PII
+ * Fields matching `redactPaths` glob patterns (e.g. `'password'`, `'**.password'`,
+ * `'*_token'`, `'user.email'`) are replaced with `'[REDACTED]'` so PII
  * never leaks through the diff.
  *
  * @example
@@ -323,17 +313,13 @@ export function auditDiff(
   options: AuditDiffOptions = {},
 ): { before?: unknown, after?: unknown, patch: AuditPatchOp[] } {
   const replacement = options.replacement ?? '[REDACTED]'
-  const redactSet = new Set((options.redactPaths ?? []).map(p => p))
-  const patch: AuditPatchOp[] = []
-
-  function isRedacted(path: string): boolean {
-    if (redactSet.size === 0) return false
-    if (redactSet.has(path)) return true
-    for (const p of redactSet) {
-      if (path.endsWith(`.${p}`)) return true
-    }
-    return false
+  const pathMatchers = compileRedactPathMatchers(options.redactPaths) ?? {
+    exactPaths: new Set<string>(),
+    pathGlobs: [],
+    keyGlobs: [],
+    caseInsensitiveLeaves: new Set<string>(),
   }
+  const patch: AuditPatchOp[] = []
 
   function diff(a: unknown, b: unknown, path: string): void {
     if (a === b) return
@@ -363,20 +349,7 @@ export function auditDiff(
   }
 
   function redactValue(value: unknown, path: string): unknown {
-    if (value === null || typeof value !== 'object') {
-      const segs = path.split('/').filter(Boolean)
-      const last = segs[segs.length - 1]
-      if (last && isRedacted(last)) return replacement
-      return value
-    }
-    if (Array.isArray(value)) {
-      return value.map((v, i) => redactValue(v, `${path}/${i}`))
-    }
-    const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = isRedacted(k) ? replacement : redactValue(v, `${path}/${k}`)
-    }
-    return out
+    return redactValueByPaths(value, pathMatchers, replacement, path)
   }
 
   diff(before, after, '')
@@ -390,7 +363,7 @@ export type { AuditPatchOp } from './types'
 
 /** Options for {@link auditDiff}. */
 export interface AuditDiffOptions {
-  /** Object keys (dot-notation) whose values should be replaced with `[REDACTED]`. */
+  /** Path globs (same syntax as `RedactConfig.paths`) whose values are replaced with `[REDACTED]`. */
   redactPaths?: string[]
   /** Custom replacement string. @default '[REDACTED]' */
   replacement?: string
@@ -399,85 +372,6 @@ export interface AuditDiffOptions {
   /** Include the full redacted `after` snapshot alongside the patch. */
   includeAfter?: boolean
 }
-
-/** Options for {@link defineAuditAction}. Same shape as {@link AuditCatalogEntry}. */
-export type DefineAuditActionOptions = AuditActionDefinition
-
-/**
- * Define a typed audit action with optional fixed target type and catalog metadata.
- *
- * Returns a curried helper that fills in the action name (and target shape
- * if provided) so call sites stay terse and the action set is discoverable
- * in one place. Metadata (`description`, `severity`, `requiresChanges`, …)
- * is exposed on the factory for introspection, docs, and review tooling.
- *
- * @example
- * ```ts
- * const refund = defineAuditAction('invoice.refund', {
- *   target: 'invoice',
- *   severity: 'high',
- *   requiresChanges: true,
- *   redactPaths: ['cardNumber'],
- * })
- *
- * log.audit(refund({
- *   actor: { type: 'user', id: user.id },
- *   target: { id: 'inv_889' }, // type inferred as 'invoice'
- *   outcome: 'success',
- * }))
- * ```
- */
-export function defineAuditAction<
-  const TAction extends string,
-  const TOptions extends DefineAuditActionOptions = DefineAuditActionOptions,
->(action: TAction, options?: TOptions): DefinedAuditAction<TAction, TOptions> {
-  const targetType = options?.target
-  const factory = ((input) => {
-    const merged: AuditInput = {
-      ...(input as AuditInput),
-      action,
-    }
-    if (targetType && input.target && !input.target.type) {
-      merged.target = { ...input.target, type: targetType } as AuditTarget
-    }
-    return merged
-  }) as DefinedAuditAction<TAction, TOptions>
-
-  Object.defineProperties(factory, {
-    action: { value: action, enumerable: true },
-    target: { value: options?.target, enumerable: true },
-    description: { value: options?.description, enumerable: true },
-    severity: { value: options?.severity, enumerable: true },
-    requiresChanges: { value: options?.requiresChanges, enumerable: true },
-    requiresReason: { value: options?.requiresReason, enumerable: true },
-    redactPaths: { value: options?.redactPaths, enumerable: true },
-  })
-
-  return factory
-}
-
-/**
- * Return type of {@link defineAuditAction}. Accepts a partial input (no
- * `action`, target type pre-filled when provided).
- */
-export type DefinedAuditAction<
-  TAction extends string = string,
-  TOptions extends DefineAuditActionOptions = DefineAuditActionOptions,
-> =
-  & ((
-    input: TOptions['target'] extends string
-      ? Omit<AuditInput, 'action' | 'target'> & { target?: Omit<AuditTarget, 'type'> & { type?: TOptions['target'] } }
-      : Omit<AuditInput, 'action'>,
-  ) => AuditInput)
-  & {
-    readonly action: TAction
-    readonly target: TOptions['target']
-    readonly description: TOptions['description']
-    readonly severity: TOptions['severity']
-    readonly requiresChanges: TOptions['requiresChanges']
-    readonly requiresReason: TOptions['requiresReason']
-    readonly redactPaths: TOptions['redactPaths']
-  }
 
 /**
  * Test helper that captures every audit event emitted while it is active.
@@ -805,15 +699,17 @@ export function signed(drain: DrainFn, options: SignedOptions): DrainFn {
 
 /**
  * @internal Resolve the Web Crypto SubtleCrypto interface. Available natively
- * in browsers, Node 19+, Bun, Deno, and Cloudflare Workers. Falls back to
- * Node's `webcrypto` for Node 18 (where `globalThis.crypto` is gated behind
- * a flag). The dynamic import keeps `node:crypto` out of browser bundles.
+ * in browsers, Node 19+, Bun, Deno, Cloudflare Workers, and Convex. Requires
+ * `globalThis.crypto.subtle` — no `node:crypto` fallback so non-Node bundlers
+ * can import the main entrypoint without resolving Node built-ins (#387).
  */
-async function getSubtle(): Promise<SubtleCrypto> {
-  const c = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto
-  if (c?.subtle) return c.subtle
-  const mod = await import(/* @vite-ignore */ 'node:crypto') as { webcrypto: { subtle: SubtleCrypto } }
-  return mod.webcrypto.subtle
+function getSubtle(): SubtleCrypto {
+  const subtle = globalThis.crypto?.subtle
+  if (subtle) return subtle
+  throw new Error(
+    '[evlog/audit] Web Crypto is not available. signed() requires globalThis.crypto.subtle '
+    + '(Node 19+, modern browsers, Cloudflare Workers, Convex, Bun, Deno).',
+  )
 }
 
 function normalizeAlgo(algorithm: string): string {
@@ -842,13 +738,12 @@ function bufToHex(buf: ArrayBuffer): string {
 }
 
 async function digestHex(algorithm: string, data: string): Promise<string> {
-  const subtle = await getSubtle()
-  const buf = await subtle.digest(normalizeAlgo(algorithm), new TextEncoder().encode(data))
+  const buf = await getSubtle().digest(normalizeAlgo(algorithm), new TextEncoder().encode(data))
   return bufToHex(buf)
 }
 
 async function hmacHex(algorithm: string, secret: string, data: string): Promise<string> {
-  const subtle = await getSubtle()
+  const subtle = getSubtle()
   const hash = normalizeAlgo(algorithm)
   const key = await subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash }, false, ['sign'])
   const sig = await subtle.sign('HMAC', key, new TextEncoder().encode(data))
@@ -881,30 +776,18 @@ function stripIntegrity(event: WideEvent): WideEvent {
  */
 export const auditRedactPreset: RedactConfig = {
   paths: [
-    'audit.changes.before.password',
-    'audit.changes.before.passwordHash',
-    'audit.changes.before.token',
-    'audit.changes.before.apiKey',
-    'audit.changes.before.secret',
-    'audit.changes.before.accessToken',
-    'audit.changes.before.refreshToken',
-    'audit.changes.before.cardNumber',
-    'audit.changes.before.cvv',
-    'audit.changes.before.ssn',
-    'audit.changes.after.password',
-    'audit.changes.after.passwordHash',
-    'audit.changes.after.token',
-    'audit.changes.after.apiKey',
-    'audit.changes.after.secret',
-    'audit.changes.after.accessToken',
-    'audit.changes.after.refreshToken',
-    'audit.changes.after.cardNumber',
-    'audit.changes.after.cvv',
-    'audit.changes.after.ssn',
-    'headers.authorization',
-    'headers.cookie',
-    'headers.set-cookie',
-    'audit.context.headers.authorization',
-    'audit.context.headers.cookie',
+    'password',
+    'passwordHash',
+    'token',
+    'apiKey',
+    'secret',
+    'accessToken',
+    'refreshToken',
+    'cardNumber',
+    'cvv',
+    'ssn',
+    'authorization',
+    'cookie',
+    'set-cookie',
   ],
 }

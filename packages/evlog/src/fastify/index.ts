@@ -1,5 +1,6 @@
 import type { FastifyPluginCallback, FastifyRequest } from 'fastify'
-import type { RequestLogger } from '../types'
+import type { AuditableLogger } from '../audit'
+import { registerDiskPrettyErrorSnippetReader } from '../shared/register-disk-snippet'
 import { defineFrameworkIntegration } from '../shared/integration'
 import type { BaseEvlogOptions } from '../shared/middleware'
 import { createLoggerStorage } from '../shared/storage'
@@ -8,14 +9,16 @@ const { storage, useLogger } = createLoggerStorage(
   'plugin context. Make sure app.register(evlog) is called before your routes.',
 )
 
+void registerDiskPrettyErrorSnippetReader()
+
 export type EvlogFastifyOptions = BaseEvlogOptions
 
 export { useLogger }
 
 declare module 'fastify' {
   interface FastifyRequest {
-    // @ts-expect-error intentionally overrides Fastify's built-in pino logger with evlog's RequestLogger
-    log: RequestLogger
+    // @ts-expect-error intentionally overrides Fastify's built-in pino logger with evlog's AuditableLogger
+    log: AuditableLogger
   }
 }
 

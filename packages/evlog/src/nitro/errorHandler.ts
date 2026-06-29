@@ -1,8 +1,32 @@
 // Import from specific subpath — the barrel 'nitropack/runtime' re-exports from
 // internal/app.mjs which imports virtual modules that crash outside rollup builds.
 import { defineNitroErrorHandler } from 'nitropack/runtime/internal/error/utils'
-import { getRequestURL, setResponseHeader, setResponseStatus, send } from 'h3'
-import { resolveEvlogError, extractErrorStatus, serializeEvlogErrorResponse } from '../nitro'
+import { getRequestHeader, getRequestURL, setResponseHeader, setResponseStatus } from 'h3'
+import type { H3Event } from 'h3'
+import {
+  resolveEvlogError,
+  extractErrorStatus,
+  buildPlainNitroErrorBody,
+  serializeEvlogErrorResponse,
+  markH3ErrorHandled,
+  shouldSerializeNitroErrorAsJson,
+  shouldSuppressNitroDevOverlay,
+  suppressNitroDevOverlay,
+} from '../nitro'
+
+/**
+ * Flush the error response by ending the Node response directly.
+ *
+ * h3 v1's `send()` is a no-op once the event is marked handled, and the event
+ * must be marked handled *before* responding so Nitro's chained dev handler
+ * (Youch overlay) does not run after us. Ending the Node response directly
+ * resolves that tension: the flush is synchronous and unconditional (#374).
+ */
+function endNodeResponse(event: H3Event, body: string): void {
+  if (!event.node.res.writableEnded) {
+    event.node.res.end(body)
+  }
+}
 
 /**
  * Custom Nitro error handler that properly serializes EvlogError.
@@ -12,38 +36,38 @@ import { resolveEvlogError, extractErrorStatus, serializeEvlogErrorResponse } fr
  * For non-EvlogError, it preserves Nitro's default response shape while
  * sanitizing internal error details in production for 5xx errors.
  */
-export default defineNitroErrorHandler((error, event) => {
+export default defineNitroErrorHandler(async (error, event, ctx) => {
   const evlogError = resolveEvlogError(error)
+  const requestUrl = getRequestURL(event, { xForwardedHost: true })
+
+  if (!shouldSerializeNitroErrorAsJson({
+    pathname: requestUrl.pathname,
+    getHeader: name => getRequestHeader(event, name),
+  }, evlogError)) {
+    return
+  }
+
+  const suppressOverlay = shouldSuppressNitroDevOverlay()
+
+  // Nitro v2 always passes `ctx`, but a missing context (e.g. the handler
+  // invoked directly) must degrade to a flushed response, not a crash.
+  if (!suppressOverlay && ctx?.defaultHandler) {
+    await ctx.defaultHandler(error, event, { silent: false })
+  }
+
+  markH3ErrorHandled(event)
+  if (suppressOverlay) {
+    suppressNitroDevOverlay(error)
+  }
 
   const isDev = process.env.NODE_ENV === 'development'
-  const url = getRequestURL(event, { xForwardedHost: true }).pathname
+  const url = requestUrl.pathname
 
-  // For non-EvlogError, preserve Nitro's default response shape
   if (!evlogError) {
-    const status = extractErrorStatus(error)
-
-    // Derive message from statusText/statusMessage/message for cross-version compatibility
-    const rawMessage = ((error as { statusText?: string }).statusText
-      ?? (error as { statusMessage?: string }).statusMessage
-      ?? error.message) || 'Internal Server Error'
-
-    // Sanitize internal error details in production for 5xx errors
-    const message = isDev
-      ? rawMessage
-      : (status >= 500 ? 'Internal Server Error' : rawMessage)
-
-    setResponseStatus(event, status)
+    const body = buildPlainNitroErrorBody(error, url, isDev)
+    setResponseStatus(event, body.status as number)
     setResponseHeader(event, 'Content-Type', 'application/json')
-
-    return send(event, JSON.stringify({
-      url,
-      status,
-      statusCode: status,
-      statusText: message,
-      statusMessage: message,
-      message,
-      error: true,
-    }))
+    return endNodeResponse(event, JSON.stringify(body))
   }
 
   const status = extractErrorStatus(evlogError)
@@ -51,5 +75,5 @@ export default defineNitroErrorHandler((error, event) => {
   setResponseStatus(event, status)
   setResponseHeader(event, 'Content-Type', 'application/json')
 
-  return send(event, JSON.stringify(serializeEvlogErrorResponse(evlogError, url)))
+  return endNodeResponse(event, JSON.stringify(serializeEvlogErrorResponse(evlogError, url)))
 })

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getHeaders } from 'h3'
 import type { DrainContext, RouteConfig, ServerEvent, WideEvent } from '../../src/types'
 import { defined } from '../helpers/defined'
+import { createDeferredStream } from '../helpers/stream'
 import { filterSafeHeaders } from '../../src/utils'
 import { getServiceForPath, shouldLog } from '../../src/shared/routes'
 import { createRequestLogger, initLogger } from '../../src/logger'
@@ -846,7 +847,7 @@ describe('nitro plugin - middleware compatibility (#210)', () => {
    * Replicates the plugin's `afterResponse` hook logic.
    */
   function simulateAfterResponseHook(event: ServerEvent): { emitted: boolean } {
-    if (event.context._evlogEmitted || !event.context._evlogShouldEmit) {
+    if (event.context._evlogEmitted || event.context._evlogEmitting || !event.context._evlogShouldEmit) {
       return { emitted: false }
     }
     const { log } = event.context
@@ -863,11 +864,16 @@ describe('nitro plugin - middleware compatibility (#210)', () => {
     if (!event.context._evlogShouldEmit) return { emitted: false }
     const { log } = event.context
     if (!log) return { emitted: false }
-    log.error(error)
-    log.set({ status: 500 })
-    event.context._evlogEmitted = true
-    const result = log.emit()
-    return { emitted: result !== null }
+    event.context._evlogEmitting = true
+    try {
+      log.error(error)
+      log.set({ status: 500 })
+      const result = log.emit()
+      if (result) event.context._evlogEmitted = true
+      return { emitted: result !== null }
+    } finally {
+      delete event.context._evlogEmitting
+    }
   }
 
   beforeEach(() => {
@@ -972,5 +978,52 @@ describe('nitro plugin - middleware compatibility (#210)', () => {
     expect(pageEvent.context._evlogShouldEmit).toBe(true)
     expect(apiEvent.context.log).toBeDefined()
     expect(apiEvent.context._evlogShouldEmit).toBe(true)
+  })
+})
+
+describe('nitro plugin - streaming emit defer (#321)', () => {
+  beforeEach(() => {
+    initLogger({ env: { service: 'test-app' }, pretty: false, silent: true, _suppressDrainWarning: true })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('defers afterResponse emit until a streaming body completes', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const event: ServerEvent = { method: 'POST', path: '/api/chat', context: {} }
+    event.context._evlogShouldEmit = true
+    event.context._evlogStartTime = Date.now()
+    event.context.log = createRequestLogger(
+      { method: 'POST', path: '/api/chat', requestId: 'req-1' },
+      { _deferDrain: true },
+    )
+
+    const { stream, close } = createDeferredStream()
+    event.response = new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+
+    queueMicrotask(() => {
+      defined(event.context.log, 'request logger').set({ ai: { calls: 1, totalTokens: 42 } })
+    })
+
+    const { bindStreamingResponseLifecycle } = await import('../../src/shared/streamResponse')
+    let emitCount = 0
+    event.response = bindStreamingResponseLifecycle(event.response, () => {
+      emitCount++
+      defined(event.context.log, 'request logger').emit({ status: 200 })
+    })
+
+    expect(emitCount).toBe(0)
+    close()
+    await expect(event.response.text()).resolves.toBe('hello world')
+    await vi.waitFor(() => {
+      expect(emitCount).toBe(1)
+    })
+    expect(warnSpy.mock.calls.some(([message]) => String(message).includes('Keys dropped: ai'))).toBe(false)
+    expect(defined(event.context.log, 'request logger').getContext().ai).toEqual({ calls: 1, totalTokens: 42 })
   })
 })

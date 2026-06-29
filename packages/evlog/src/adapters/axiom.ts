@@ -1,6 +1,6 @@
 import type { WideEvent } from '../types'
 import type { ConfigField } from '../shared/config'
-import { resolveAdapterConfig } from '../shared/config'
+import { applyDeprecatedAlias, formatPublicEnvKeys, resolveAdapterConfig } from '../shared/config'
 import { defineHttpDrain } from '../shared/drain'
 import { httpPost } from '../shared/http'
 
@@ -63,17 +63,12 @@ const AXIOM_FIELDS: ConfigField<ResolvedAxiomConfig>[] = [
   { key: 'retries' },
 ]
 
-let warnedAboutToken = false
-
 function applyApiKeyAlias(config: Partial<ResolvedAxiomConfig>): Partial<ResolvedAxiomConfig> {
-  if (!config.apiKey && config.token) {
-    if (!warnedAboutToken) {
-      warnedAboutToken = true
-      console.warn('[evlog/axiom] `token` is deprecated, use `apiKey` instead. (Env: NUXT_AXIOM_TOKEN/AXIOM_TOKEN → NUXT_AXIOM_API_KEY/AXIOM_API_KEY.)')
-    }
-    config.apiKey = config.token
-  }
-  return config
+  return applyDeprecatedAlias(config, {
+    adapter: 'axiom',
+    from: 'token',
+    to: 'apiKey',
+  })
 }
 
 /**
@@ -83,11 +78,11 @@ function applyApiKeyAlias(config: Partial<ResolvedAxiomConfig>): Partial<Resolve
  * 1. Overrides passed to createAxiomDrain()
  * 2. runtimeConfig.evlog.axiom
  * 3. runtimeConfig.axiom
- * 4. Environment variables: NUXT_AXIOM_API_KEY, AXIOM_API_KEY (or legacy `*_TOKEN`)
+ * 4. Environment variables: AXIOM_API_KEY, AXIOM_DATASET (or legacy `AXIOM_TOKEN`)
  *
  * @example
  * ```ts
- * // Zero config — set NUXT_AXIOM_API_KEY and NUXT_AXIOM_DATASET
+ * // Zero config — set AXIOM_API_KEY and AXIOM_DATASET
  * initLogger({ drain: createAxiomDrain() })
  *
  * // With overrides
@@ -105,7 +100,7 @@ export function createAxiomDrain(overrides?: Partial<AxiomConfig>) {
       )
       const config = applyApiKeyAlias(resolved)
       if (!config.dataset || !config.apiKey) {
-        console.error('[evlog/axiom] Missing dataset or apiKey. Set NUXT_AXIOM_API_KEY/NUXT_AXIOM_DATASET env vars or pass to createAxiomDrain()')
+        console.error(`[evlog/axiom] Missing dataset or apiKey. Set ${formatPublicEnvKeys(['NUXT_AXIOM_API_KEY', 'AXIOM_API_KEY'], ['NUXT_AXIOM_DATASET', 'AXIOM_DATASET'])} env vars or pass to createAxiomDrain()`)
         return null
       }
       if (config.edgeUrl && config.baseUrl) {

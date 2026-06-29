@@ -1,4 +1,5 @@
 import type { RequestLogger } from '../types'
+import { registerDiskPrettyErrorSnippetReader } from '../shared/register-disk-snippet'
 import { createMiddlewareLogger, type BaseEvlogOptions } from '../shared/middleware'
 import { attachForkToLogger } from '../shared/fork'
 import { extractSafeHeaders } from '../shared/headers'
@@ -9,6 +10,8 @@ import { EvlogError } from '../error'
 const { storage, useLogger } = createLoggerStorage(
   'handle context. Make sure evlog() handle is added to your hooks.server.ts.',
 )
+
+void registerDiskPrettyErrorSnippetReader()
 
 export type EvlogSvelteKitOptions = BaseEvlogOptions
 
@@ -136,7 +139,7 @@ export function evlog(options: EvlogSvelteKitOptions = {}): SvelteKitHandle {
       headers: extractSafeHeaders(event.request.headers),
       ...options,
     }
-    const { logger, finish, skipped } = createMiddlewareLogger(middlewareOpts)
+    const { logger, finish, finishResponse, skipped } = createMiddlewareLogger(middlewareOpts)
 
     if (skipped) {
       return await resolve(event)
@@ -164,8 +167,7 @@ export function evlog(options: EvlogSvelteKitOptions = {}): SvelteKitHandle {
           })
         }
 
-        await finish({ status: response.status })
-        return response
+        return finishResponse(response)
       } catch (error) {
         await finish({ error: error instanceof Error ? error : new Error(String(error)) })
 

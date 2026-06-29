@@ -2,10 +2,15 @@ import { definePlugin } from 'nitro'
 import type { CaptureError } from 'nitro/types'
 import type { HTTPEvent } from 'nitro/h3'
 import { parseURL } from 'ufo'
-import { createRequestLogger, getGlobalPluginRunner, initLogger, isEnabled } from '../logger'
+import { createRequestLogger, getGlobalPluginRunner, initLogger, isEnabled, markWideEventDrainStarted } from '../logger'
+import { registerPrettyErrorSnippetReader } from '../shared/pretty-error'
+import { readCodeSnippetFromDisk } from '../shared/pretty-error-snippet.node'
+import { enrichErrorStackForDev } from '../shared/enrich-error-stack.node'
 import { shouldLog, getServiceForPath, extractErrorStatus } from '../nitro'
+import { extendDeferredDrain } from '../nitro/deferred-drain'
 import { normalizeRedactConfig } from '../redact'
 import { resolveEvlogConfigForNitroPlugin, setActiveNitroRuntime } from '../shared/nitroConfigBridge'
+import { bindStreamingResponseLifecycle, shouldDeferEmitForResponse } from '../shared/streamResponse'
 import type { EnrichContext, RequestLogger, TailSamplingContext, WideEvent } from '../types'
 import { filterSafeHeaders } from '../utils'
 
@@ -71,6 +76,7 @@ async function callDrainHook(
   emittedEvent: WideEvent | null,
   event: HTTPEvent,
   hookContext: Omit<EnrichContext, 'event'>,
+  options?: { deferDrain?: boolean },
 ): Promise<void> {
   if (!emittedEvent) return
 
@@ -102,15 +108,18 @@ async function callDrainHook(
   if (drainTasks.length === 0) return
   const drainPromise = Promise.all(drainTasks)
 
-  // Use waitUntil if available (srvx native — Cloudflare Workers, Vercel Edge, etc.)
-  // This keeps the runtime alive for background work without blocking the response
+  // deferDrain: never block Nitro Node responses; extend lifetime on Cloudflare only.
+  if (options?.deferDrain) {
+    const waitUntil = globalThis.navigator?.userAgent === 'Cloudflare-Workers' && typeof event.req.waitUntil === 'function'
+      ? event.req.waitUntil.bind(event.req)
+      : undefined
+    extendDeferredDrain(drainPromise, waitUntil)
+    return
+  }
+
   if (typeof event.req.waitUntil === 'function') {
     event.req.waitUntil(drainPromise)
   } else {
-    // Fallback: await drain to prevent lost logs in serverless environments
-    // (e.g. Vercel Fluid Compute). On the normal path this runs from the
-    // response hook (response already sent); on the error path it may run
-    // before the error response is finalized.
     await drainPromise
   }
 }
@@ -120,6 +129,7 @@ async function callEnrichAndDrain(
   emittedEvent: WideEvent | null,
   event: HTTPEvent,
   res?: Response,
+  options?: { deferDrain?: boolean },
 ): Promise<void> {
   if (!emittedEvent) return
 
@@ -137,7 +147,9 @@ async function callEnrichAndDrain(
     await runner.runEnrich(enrichCtx)
   }
 
-  await callDrainHook(hooks, emittedEvent, event, hookContext)
+  markWideEventDrainStarted(emittedEvent)
+
+  await callDrainHook(hooks, emittedEvent, event, hookContext, options)
 }
 
 /**
@@ -155,10 +167,13 @@ export default definePlugin(async (nitroApp) => {
 
   const redact = normalizeRedactConfig(evlogConfig?.redact as boolean | Record<string, unknown> | undefined)
 
+  registerPrettyErrorSnippetReader(readCodeSnippetFromDisk)
+
   initLogger({
     enabled: evlogConfig?.enabled,
     env: evlogConfig?.env,
     pretty: evlogConfig?.pretty,
+    dev: evlogConfig?.dev,
     silent: evlogConfig?.silent,
     sampling: evlogConfig?.sampling,
     minLevel: evlogConfig?.minLevel,
@@ -224,34 +239,50 @@ export default definePlugin(async (nitroApp) => {
   hooks.hook('response', async (res, event) => {
     const ctx = event.req.context
     // Skip if already emitted by error hook or route was filtered out
-    if (ctx?._evlogEmitted || !ctx?._evlogShouldEmit) return
+    if (ctx?._evlogEmitted || ctx?._evlogEmitting || !ctx?._evlogShouldEmit) return
 
     const log = ctx?.log as RequestLogger | undefined
     if (!log || !ctx) return
 
-    const { status } = res
-    log.set({ status })
+    const emitSuccessResponse = async (responseStatus: number) => {
+      log.set({ status: responseStatus })
 
-    const startTime = ctx._evlogStartTime as number | undefined
-    const durationMs = startTime ? Date.now() - startTime : undefined
+      const startTime = ctx._evlogStartTime as number | undefined
+      const durationMs = startTime ? Date.now() - startTime : undefined
 
-    const { pathname } = parseURL(event.req.url)
+      const { pathname } = parseURL(event.req.url)
 
-    const tailCtx: TailSamplingContext = {
-      status,
-      duration: durationMs,
-      path: pathname,
-      method: event.req.method,
-      context: log.getContext(),
-      shouldKeep: false,
+      const tailCtx: TailSamplingContext = {
+        status: responseStatus,
+        duration: durationMs,
+        path: pathname,
+        method: event.req.method,
+        context: log.getContext(),
+        shouldKeep: false,
+      }
+
+      await hooks.callHook('evlog:emit:keep', tailCtx)
+      const runner = getGlobalPluginRunner()
+      if (runner.hasKeep) await runner.runKeep(tailCtx)
+
+      const emittedEvent = log.emit({ _forceKeep: tailCtx.shouldKeep })
+      await callEnrichAndDrain(hooks, emittedEvent, event, res)
     }
 
-    await hooks.callHook('evlog:emit:keep', tailCtx)
-    const runner = getGlobalPluginRunner()
-    if (runner.hasKeep) await runner.runKeep(tailCtx)
+    if (shouldDeferEmitForResponse(res)) {
+      const wrapped = bindStreamingResponseLifecycle(res, async (meta) => {
+        if (meta.error) {
+          log.error(meta.error)
+        }
+        await emitSuccessResponse(meta.status ?? res.status)
+      })
+      if (wrapped !== res && 'res' in event) {
+        (event as { res: Response }).res = wrapped
+      }
+      return
+    }
 
-    const emittedEvent = log.emit({ _forceKeep: tailCtx.shouldKeep })
-    await callEnrichAndDrain(hooks, emittedEvent, event, res)
+    await emitSuccessResponse(res.status)
   })
 
   hooks.hook('error', async (error, { event }) => {
@@ -263,36 +294,44 @@ export default definePlugin(async (nitroApp) => {
     const log = ctx.log as RequestLogger | undefined
     if (!log) return
 
-    // Check if error.cause is an EvlogError (thrown errors get wrapped in HTTPError by nitro)
-    const actualError = (error.cause as Error)?.name === 'EvlogError' 
-      ? error.cause as Error 
-      : error as Error
+    ctx._evlogEmitting = true
+    try {
+      const actualError = (error.cause as Error)?.name === 'EvlogError'
+        ? error.cause as Error
+        : error as Error
 
-    log.error(actualError)
+      void enrichErrorStackForDev(actualError, { pretty: evlogConfig?.pretty })
+      log.error(actualError)
 
-    const errorStatus = extractErrorStatus(actualError)
-    log.set({ status: errorStatus })
+      const errorStatus = extractErrorStatus(actualError)
+      log.set({ status: errorStatus })
 
-    const { pathname } = parseURL(e.req.url)
-    const startTime = ctx._evlogStartTime as number | undefined
-    const durationMs = startTime ? Date.now() - startTime : undefined
+      const { pathname } = parseURL(e.req.url)
+      const startTime = ctx._evlogStartTime as number | undefined
+      const durationMs = startTime ? Date.now() - startTime : undefined
 
-    const tailCtx: TailSamplingContext = {
-      status: errorStatus,
-      duration: durationMs,
-      path: pathname,
-      method: e.req.method,
-      context: log.getContext(),
-      shouldKeep: false,
+      const tailCtx: TailSamplingContext = {
+        status: errorStatus,
+        duration: durationMs,
+        path: pathname,
+        method: e.req.method,
+        context: log.getContext(),
+        shouldKeep: false,
+      }
+
+      await hooks.callHook('evlog:emit:keep', tailCtx)
+      const runner = getGlobalPluginRunner()
+      if (runner.hasKeep) await runner.runKeep(tailCtx)
+
+      const emittedEvent = log.emit({ _forceKeep: tailCtx.shouldKeep })
+      if (emittedEvent) {
+        ctx._evlogEmitted = true
+        void callEnrichAndDrain(hooks, emittedEvent, e, undefined, { deferDrain: true }).catch((err) => {
+          console.error('[evlog] background enrich/drain failed:', err)
+        })
+      }
+    } finally {
+      delete ctx._evlogEmitting
     }
-
-    await hooks.callHook('evlog:emit:keep', tailCtx)
-    const runner = getGlobalPluginRunner()
-    if (runner.hasKeep) await runner.runKeep(tailCtx)
-
-    ctx._evlogEmitted = true
-
-    const emittedEvent = log.emit({ _forceKeep: tailCtx.shouldKeep })
-    await callEnrichAndDrain(hooks, emittedEvent, e)
   })
 })

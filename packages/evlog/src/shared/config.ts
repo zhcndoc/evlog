@@ -46,6 +46,51 @@ export async function resolveAdapterConfig<T>(
   return config as Partial<T>
 }
 
+/**
+ * Format environment variable names for user-facing messages.
+ * Drops internal `NUXT_*` aliases; joins alternatives with `, ` and fields with `/`.
+ */
+export function formatPublicEnvKeys(...envLists: (string[] | undefined)[]): string {
+  return envLists
+    .map((list) => {
+      const all = (list ?? []).filter((k): k is string => !!k)
+      const publicKeys = all.filter(k => !k.startsWith('NUXT_'))
+      const keys = [...new Set(publicKeys.length > 0 ? publicKeys : all)]
+      return keys.join(', ')
+    })
+    .filter(part => part.length > 0)
+    .join('/')
+}
+
+const warnedDeprecatedAliases = new Set<string>()
+
+/**
+ * Copy a deprecated config field onto its replacement when the replacement is
+ * unset, warning once per adapter/field pair.
+ */
+export function applyDeprecatedAlias<T extends object>(
+  config: T,
+  opts: {
+    adapter: string
+    from: keyof T & string
+    to: keyof T & string
+  },
+): T {
+  const record = config as Record<string, unknown>
+  if (record[opts.to] === undefined || record[opts.to] === null) {
+    const fromValue = record[opts.from]
+    if (fromValue !== undefined && fromValue !== null) {
+      const warnKey = `${opts.adapter}:${opts.from}`
+      if (!warnedDeprecatedAliases.has(warnKey)) {
+        warnedDeprecatedAliases.add(warnKey)
+        console.warn(`[evlog/${opts.adapter}] \`${opts.from}\` is deprecated, use \`${opts.to}\` instead.`)
+      }
+      record[opts.to] = fromValue
+    }
+  }
+  return config
+}
+
 // Avoid the Nitro virtual-module import when env/overrides already resolve
 // every env-backed field — optional tuning fields (timeout, retries) should
 // not trigger a runtime probe in non-Nitro runtimes.

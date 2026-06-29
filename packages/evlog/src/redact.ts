@@ -1,8 +1,173 @@
 import type { RedactConfig } from './types'
+import { globToRegExp } from './utils'
 
 const DEFAULT_REPLACEMENT = '[REDACTED]'
 
 export type Masker = [RegExp, (match: string) => string]
+
+/** Compiled matchers for {@link RedactConfig.paths} glob patterns. */
+export interface RedactPathMatchers {
+  exactPaths: Set<string>
+  pathGlobs: RegExp[]
+  keyGlobs: RegExp[]
+  /** Single-segment shorthands (`password` → `**.password`), stored lowercased, matched case-insensitively on leaf keys. */
+  caseInsensitiveLeaves: Set<string>
+}
+
+/**
+ * Normalize a redact path pattern.
+ * Single segments without wildcards are shorthand for `**.<segment>`.
+ */
+export function normalizeRedactPathPattern(pattern: string): string {
+  if (!pattern.includes('*') && !pattern.includes('.')) {
+    return `**.${pattern}`
+  }
+  return pattern
+}
+
+/**
+ * Compile `RedactConfig.paths` into exact paths, path globs, and key globs.
+ * Returns `undefined` when `patterns` is empty.
+ */
+export function compileRedactPathMatchers(patterns?: string[]): RedactPathMatchers | undefined {
+  if (!patterns?.length) return undefined
+
+  const exactPaths = new Set<string>()
+  const pathGlobs: RegExp[] = []
+  const keyGlobs: RegExp[] = []
+  const caseInsensitiveLeaves = new Set<string>()
+
+  for (const raw of patterns) {
+    if (!raw.includes('*')) {
+      if (raw.includes('.')) {
+        exactPaths.add(raw)
+      } else {
+        addPathGlobPattern(normalizeRedactPathPattern(raw), exactPaths, pathGlobs, caseInsensitiveLeaves)
+      }
+      continue
+    }
+
+    if (!raw.includes('.')) {
+      keyGlobs.push(globToRegExp(raw, '.'))
+    } else {
+      addPathGlobPattern(raw, exactPaths, pathGlobs, caseInsensitiveLeaves)
+    }
+  }
+
+  if (exactPaths.size === 0 && pathGlobs.length === 0 && keyGlobs.length === 0 && caseInsensitiveLeaves.size === 0) {
+    return undefined
+  }
+
+  return { exactPaths, pathGlobs, keyGlobs, caseInsensitiveLeaves }
+}
+
+/** `**.segment` also matches a top-level `segment` field. */
+function addPathGlobPattern(
+  pattern: string,
+  exactPaths: Set<string>,
+  pathGlobs: RegExp[],
+  caseInsensitiveLeaves: Set<string>,
+): void {
+  pathGlobs.push(globToRegExp(pattern, '.'))
+  const leaf = pattern.match(/^\*\*\.([^.?*]+)$/)
+  if (leaf) {
+    exactPaths.add(leaf[1]!)
+    caseInsensitiveLeaves.add(leaf[1]!.toLowerCase())
+  }
+}
+
+/**
+ * Whether a field at `fullPath` (dot-notation from root) with leaf key `leafKey`
+ * should be fully redacted.
+ */
+export function matchesRedactPath(fullPath: string, leafKey: string, matchers: RedactPathMatchers): boolean {
+  if (matchers.exactPaths.has(fullPath)) return true
+
+  if (matchers.caseInsensitiveLeaves.has(leafKey.toLowerCase())) return true
+
+  for (const glob of matchers.pathGlobs) {
+    glob.lastIndex = 0
+    if (glob.test(fullPath)) return true
+  }
+
+  for (const glob of matchers.keyGlobs) {
+    glob.lastIndex = 0
+    if (glob.test(leafKey)) return true
+  }
+
+  return false
+}
+
+/**
+ * Redact fields matching path globs recursively. Mutates `obj` in place (use on a clone).
+ */
+export function redactPathsInTree(
+  obj: unknown,
+  matchers: RedactPathMatchers,
+  replacement: string,
+  prefix = '',
+): void {
+  if (obj === null || obj === undefined) return
+
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const segment = String(i)
+      const fullPath = prefix ? `${prefix}.${segment}` : segment
+      redactPathsInTree(obj[i], matchers, replacement, fullPath)
+    }
+    return
+  }
+
+  if (typeof obj === 'object') {
+    const record = obj as Record<string, unknown>
+    for (const key in record) {
+      const fullPath = prefix ? `${prefix}.${key}` : key
+      if (matchesRedactPath(fullPath, key, matchers)) {
+        record[key] = replacement
+      } else {
+        redactPathsInTree(record[key], matchers, replacement, fullPath)
+      }
+    }
+  }
+}
+
+/**
+ * Return a copy of `value` with path-pattern matches replaced by `replacement`.
+ * Used by audit diffs; does not mutate the input.
+ *
+ * `pointerPath` is a JSON Pointer (e.g. `/user/password`).
+ */
+export function redactValueByPaths(
+  value: unknown,
+  matchers: RedactPathMatchers,
+  replacement: string,
+  pointerPath = '',
+): unknown {
+  const segments = pointerPath.split('/').filter(Boolean)
+  const dotPath = segments.join('.')
+  const leafKey = segments.at(-1) ?? ''
+
+  if (value === null || typeof value !== 'object') {
+    if (dotPath && matchesRedactPath(dotPath, leafKey, matchers)) return replacement
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((v, i) => redactValueByPaths(v, matchers, replacement, `${pointerPath}/${i}`))
+  }
+
+  if (!isPlainRecord(value)) return value
+
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value)) {
+    const childPointer = pointerPath ? `${pointerPath}/${k}` : `/${k}`
+    const childDot = dotPath ? `${dotPath}.${k}` : k
+    out[k] = matchesRedactPath(childDot, k, matchers)
+      ? replacement
+      : redactValueByPaths(v, matchers, replacement, childPointer)
+  }
+  return out
+}
 
 /**
  * Built-in PII detection patterns with smart masking.
@@ -91,7 +256,10 @@ export function resolveRedactConfig(input: boolean | RedactConfig | undefined): 
   }
 
   if (input.builtins === false) {
-    return input
+    return {
+      ...input,
+      _pathMatchers: compileRedactPathMatchers(input.paths),
+    }
   }
 
   const maskers = Array.isArray(input.builtins)
@@ -104,6 +272,7 @@ export function resolveRedactConfig(input: boolean | RedactConfig | undefined): 
   return {
     ...input,
     _maskers: maskers,
+    _pathMatchers: compileRedactPathMatchers(input.paths),
   }
 }
 
@@ -115,48 +284,67 @@ function cloneRegex(re: RegExp): RegExp {
   return new RegExp(re.source, re.flags)
 }
 
+/** @internal Set on wide events after initLogger redaction so middleware skips a second pass. */
+export const globallyRedacted = Symbol.for('evlog.globallyRedacted')
+
+/** @internal Mark a wide event as already redacted by {@link initLogger}. */
+export function markGloballyRedacted(event: Record<string, unknown>): void {
+  Object.defineProperty(event, globallyRedacted, { value: true, enumerable: false, configurable: true })
+}
+
+/** @internal Whether global redaction already ran on this wide event. */
+export function isGloballyRedacted(event: Record<string, unknown>): boolean {
+  return Reflect.has(event, globallyRedacted)
+}
+
 /**
- * Redact sensitive data from a wide event in-place.
- *
- * Three strategies applied in order:
- * 1. **Path-based**: dot-notation paths — the leaf value is replaced with `replacement`.
- * 2. **Masker-based**: built-in patterns with smart partial masking (e.g. `****1111`).
- * 3. **Pattern-based**: custom RegExp patterns replaced with `replacement`.
- *
- * @param event - The wide event object (mutated in-place).
- * @param config - Redaction configuration.
+ * Clone before redaction. Wide events are JSON-shaped; fall back when
+ * `structuredClone` rejects non-cloneable values (functions, symbols, etc.).
  */
-export function redactEvent(event: Record<string, unknown>, config: RedactConfig): void {
-  const replacement = config.replacement ?? DEFAULT_REPLACEMENT
-
-  if (config.paths?.length) {
-    for (const path of config.paths) {
-      redactPath(event, path.split('.'), replacement)
+function cloneForRedaction(event: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(event)
+  } catch {
+    try {
+      return JSON.parse(JSON.stringify(event)) as Record<string, unknown>
+    } catch {
+      console.warn('[cloneForRedaction] Shallow clone used — nested objects may be mutated by redactPath, redactPatterns, and applyMaskersToTree')
+      return { ...event }
     }
-  }
-
-  if (config._maskers?.length) {
-    applyMaskersToTree(event, config._maskers)
-  }
-
-  if (config.patterns?.length) {
-    redactPatterns(event, config.patterns, replacement)
   }
 }
 
-function redactPath(obj: Record<string, unknown>, segments: string[], replacement: string): void {
-  let current: unknown = obj
-  for (let i = 0; i < segments.length - 1; i++) {
-    if (current === null || current === undefined || typeof current !== 'object') return
-    current = (current as Record<string, unknown>)[segments[i]!]
+/**
+ * Redact sensitive data from a wide event without mutating the input.
+ *
+ * Returns a deep clone with redaction applied. Three strategies run in order:
+ * 1. **Path-based**: dot-notation paths with optional globs (`password`, `**.password`, `*_token`, `user.*`) — full value replacement.
+ * 2. **Masker-based**: built-in patterns with smart partial masking (e.g. `****1111`).
+ * 3. **Pattern-based**: custom RegExp patterns on string values replaced with `replacement`.
+ *
+ * @param event - The wide event object (not mutated).
+ * @param config - Redaction configuration.
+ * @returns A redacted deep clone of `event`.
+ */
+export function redactEvent(event: Record<string, unknown>, config: RedactConfig): Record<string, unknown> {
+  const clone = cloneForRedaction(event)
+  const replacement = config.replacement ?? DEFAULT_REPLACEMENT
+
+  // Configs resolved via resolveRedactConfig carry precompiled matchers; compile lazily for ad-hoc configs.
+  const pathMatchers = config._pathMatchers ?? compileRedactPathMatchers(config.paths)
+  if (pathMatchers) {
+    redactPathsInTree(clone, pathMatchers, replacement)
   }
 
-  if (current === null || current === undefined || typeof current !== 'object') return
-
-  const leaf = segments[segments.length - 1]!
-  if (leaf in (current as Record<string, unknown>)) {
-    (current as Record<string, unknown>)[leaf] = replacement
+  if (config._maskers?.length) {
+    applyMaskersToTree(clone, config._maskers)
   }
+
+  if (config.patterns?.length) {
+    redactPatterns(clone, config.patterns, replacement)
+  }
+
+  return clone
 }
 
 function redactPatterns(obj: unknown, patterns: RegExp[], replacement: string): void {
@@ -189,7 +377,6 @@ function redactPatterns(obj: unknown, patterns: RegExp[], replacement: string): 
 function applyPatterns(value: string, patterns: RegExp[], replacement: string): string {
   let result = value
   for (const pattern of patterns) {
-    pattern.lastIndex = 0
     result = result.replace(pattern, replacement)
   }
   return result
@@ -225,7 +412,6 @@ function applyMaskersToTree(obj: unknown, maskers: Masker[]): void {
 function applyMaskers(value: string, maskers: Masker[]): string {
   let result = value
   for (const [pattern, mask] of maskers) {
-    pattern.lastIndex = 0
     result = result.replace(pattern, mask)
   }
   return result
@@ -257,16 +443,39 @@ export function normalizeRedactConfig(raw: boolean | Record<string, unknown> | u
   }
 
   if (Array.isArray(raw.patterns)) {
-    config.patterns = (raw.patterns as unknown[]).map((p) => {
-      if (p instanceof RegExp) return p
-      if (typeof p === 'string') return new RegExp(p, 'g')
-      if (typeof p === 'object' && p !== null) {
-        const obj = p as Record<string, string>
-        return new RegExp(obj.source, obj.flags ?? 'g')
-      }
-      return null
-    }).filter((p): p is RegExp => p !== null)
+    config.patterns = deserializeRegexList(raw.patterns)
   }
 
   return resolveRedactConfig(config)
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+function deserializeRegexList(raw: unknown[]): RegExp[] {
+  const patterns: RegExp[] = []
+  for (const p of raw) {
+    try {
+      if (p instanceof RegExp) {
+        patterns.push(cloneRegex(p))
+        continue
+      }
+      if (typeof p === 'string') {
+        patterns.push(new RegExp(p, 'g'))
+        continue
+      }
+      if (typeof p === 'object' && p !== null && typeof (p as { source?: unknown }).source === 'string') {
+        const flags = typeof (p as { flags?: unknown }).flags === 'string'
+          ? (p as { flags: string }).flags
+          : 'g'
+        patterns.push(new RegExp((p as { source: string }).source, flags))
+      }
+    } catch {
+      console.warn('[normalizeRedactConfig] Ignoring invalid redact regex entry')
+    }
+  }
+  return patterns
 }

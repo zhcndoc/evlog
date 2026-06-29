@@ -7,7 +7,7 @@
 ```typescript
 import type { WideEvent } from '../types'
 import type { ConfigField } from '../shared/config'
-import { resolveAdapterConfig } from '../shared/config'
+import { formatPublicEnvKeys, resolveAdapterConfig } from '../shared/config'
 import { defineHttpDrain } from '../shared/drain'
 
 // --- 1. 配置接口 -------------------------------------------------
@@ -99,13 +99,13 @@ export async function sendBatchTo{Name}(
  * 1. 传递给 create{Name}Drain() 的覆盖项
  * 2. runtimeConfig.evlog.{name}
  * 3. runtimeConfig.{name}
- * 4. 环境变量：NUXT_{NAME}_*、{NAME}_*
+ * 4. Environment variables: {NAME}_*
  *
  * @example
  * ```ts
  * import { create{Name}Drain } from 'evlog/{name}'
  *
- * // 零配置 — 设置 NUXT_{NAME}_API_KEY 环境变量
+ * // Zero config — set {NAME}_API_KEY env var
  * defineEvlog({ drain: create{Name}Drain() })
  *
  * // 使用覆盖项
@@ -119,7 +119,7 @@ export function create{Name}Drain(overrides?: Partial<{Name}Config>) {
     resolve: async () => {
       const config = await resolveAdapterConfig<{Name}Config>('{name}', FIELDS, overrides)
       if (!config.apiKey) {
-        console.error('[evlog/{name}] 缺少 apiKey。请设置 NUXT_{NAME}_API_KEY 环境变量或传递给 create{Name}Drain()')
+        console.error(`[evlog/{name}] Missing apiKey. Set ${formatPublicEnvKeys(['NUXT_{NAME}_API_KEY', '{NAME}_API_KEY'])} env var or pass to create{Name}Drain()`)
         return null
       }
       return config as {Name}Config

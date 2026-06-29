@@ -1,10 +1,30 @@
 import type { AuditableLogger, AuditInput, AuditMethod } from './audit'
 import type { DrainContext, EnvironmentContext, FieldContext, Log, LogLevel, LoggerConfig, RedactConfig, RequestLogger, RequestLoggerOptions, SamplingConfig, TailSamplingContext, WideEvent } from './types'
 import { buildAuditFields, consumeAuditForceKeep, finalizeAudit } from './audit'
-import { redactEvent, resolveRedactConfig } from './redact'
+import { markGloballyRedacted, redactEvent, resolveRedactConfig } from './redact'
 import type { PluginRunner } from './shared/plugin'
 import { createPluginRunner, getEmptyPluginRunner } from './shared/plugin'
+import { buildErrorEntries, compactStackForStorage, PRETTY_ERROR_TREE_SPACER } from './shared/pretty-error'
+import type { ResolvedPrettyError } from './shared/dev-terminal'
+import { resolveDevTerminal } from './shared/dev-terminal'
+import { EvlogError } from './error'
 import { colors, cssColors, detectEnvironment, escapeFormatString, formatDuration, getConsoleMethod, getCssLevelColor, getLevelColor, isBrowser, isDev, isLevelEnabled, matchesPattern } from './utils'
+
+const nativeStdoutWrite =
+  typeof process !== 'undefined' && typeof process.stdout?.write === 'function'
+    ? process.stdout.write.bind(process.stdout)
+    : undefined
+
+/** Cross-bundle global slot for the native stdout write registered by captureOutput patching. */
+export interface EvlogProcessOutputGlobal {
+  __evlogNativeStdoutWrite?: typeof process.stdout.write
+}
+
+function writePrettyStdout(text: string): void {
+  const global = globalThis as EvlogProcessOutputGlobal
+  const write = global.__evlogNativeStdoutWrite ?? nativeStdoutWrite
+  write?.(text)
+}
 
 function isPlainObject(val: unknown): val is Record<string, unknown> {
   return val !== null && typeof val === 'object' && !Array.isArray(val)
@@ -41,6 +61,25 @@ function mergeInto(target: Record<string, unknown>, source: Record<string, unkno
   }
 }
 
+const pendingDrainState = new WeakMap<WideEvent, { drainStarted: boolean }>()
+
+function isAiOnlyFieldUpdate(data: Record<string, unknown>): boolean {
+  const keys = Object.keys(data)
+  return keys.length === 1 && keys[0] === 'ai'
+}
+
+/**
+ * Mark a wide event as past the post-emit AI merge window so late `log.set({ ai })`
+ * calls warn again. Called by framework enrich/drain pipelines before drain runs.
+ *
+ * @internal Used by middleware and framework integrations.
+ */
+export function markWideEventDrainStarted(event: WideEvent | null): void {
+  if (!event) return
+  const state = pendingDrainState.get(event)
+  if (state) state.drainStarted = true
+}
+
 /**
  * @internal Wide-event field merge — exported for test mocks that mirror emit accumulation.
  */
@@ -52,6 +91,12 @@ let globalEnv: EnvironmentContext = {
 }
 
 let globalPretty = isDev()
+let globalPrettyError: ResolvedPrettyError = {
+  snippet: isDev(),
+  stackDepth: 2,
+  compact: isDev(),
+  detail: 'full',
+}
 let globalSampling: SamplingConfig = {}
 let globalStringify = true
 let globalDrain: ((ctx: DrainContext) => void | Promise<void>) | undefined
@@ -80,6 +125,7 @@ export function initLogger(config: LoggerConfig = {}): void {
   }
 
   globalPretty = config.pretty ?? isDev()
+  globalPrettyError = resolveDevTerminal(config).prettyError
   globalSampling = config.sampling ?? {}
   globalStringify = config.stringify ?? true
   globalDrain = config.drain
@@ -230,7 +276,8 @@ function emitWideEvent(
   finalizeAudit(formatted)
 
   if (globalRedact) {
-    redactEvent(formatted, globalRedact)
+    formatted = redactEvent(formatted, globalRedact) as WideEvent
+    markGloballyRedacted(formatted)
   }
 
   if (!globalSilent) {
@@ -520,11 +567,34 @@ function buildAIEntries(ai: Record<string, unknown>): TreeEntry[] {
   return entries
 }
 
+function flushPrettyLines(lines: string[]): void {
+  if (lines.length === 0) return
+  const text = `${lines.join('\n')}\n`
+  if (
+    nativeStdoutWrite
+    && !isBrowser()
+    && process.env.VITEST !== 'true'
+  ) {
+    writePrettyStdout(text)
+    return
+  }
+  console.log(lines.join('\n'))
+}
+
 function prettyPrintWideEvent(event: Record<string, unknown>): void {
   const { timestamp, level, service, environment, version, ...rest } = event
   const ts = typeof timestamp === 'string' ? timestamp.slice(11, 23) : ''
   const levelLabel = typeof level === 'string' ? level : 'info'
   const browser = isBrowser()
+  const lines: string[] = []
+  const writeLine = (...args: unknown[]) => {
+    if (browser) {
+      console.log(...args)
+      return
+    }
+    const [line] = args
+    if (typeof line === 'string') lines.push(line)
+  }
 
   const parts: string[] = []
   const styles: string[] = []
@@ -535,7 +605,11 @@ function prettyPrintWideEvent(event: Record<string, unknown>): void {
     styles.push(cssColors.dim, cssColors.reset, lc, cssColors.reset, cssColors.cyan, cssColors.reset)
   } else {
     const lc = getLevelColor(levelLabel)
-    parts.push(`${colors.dim}${ts}${colors.reset} ${lc}${levelLabel.toUpperCase()}${colors.reset} ${colors.cyan}[${service}]${colors.reset}`)
+    if (isDev()) {
+      parts.push(`${lc}${levelLabel.toUpperCase()}${colors.reset} ${colors.cyan}[${service}]${colors.reset}`)
+    } else {
+      parts.push(`${colors.dim}${ts}${colors.reset} ${lc}${levelLabel.toUpperCase()}${colors.reset} ${colors.cyan}[${service}]${colors.reset}`)
+    }
   }
 
   if (rest.method && rest.path) {
@@ -568,23 +642,35 @@ function prettyPrintWideEvent(event: Record<string, unknown>): void {
     delete rest.duration
   }
 
-  console.log(parts.join(''), ...styles)
+  writeLine(parts.join(''), ...styles)
 
   const aiData = isPlainObject(rest.ai) ? rest.ai : undefined
   if (aiData) {
     delete rest.ai
   }
 
+  const errorData = rest.error
+  if (errorData !== undefined) {
+    delete rest.error
+  }
+
   const restEntries = Object.entries(rest).filter(([_, v]) => v !== undefined)
   const aiEntries = aiData ? buildAIEntries(aiData) : []
-  const allEntries: TreeEntry[] = [
+  const errorEntries = errorData !== undefined
+    ? buildErrorEntries(errorData, globalPrettyError)
+    : []
+  const contextEntries: TreeEntry[] = [
     ...restEntries.map(([key, value]) => ({ key, value: formatValue(value) })),
     ...aiEntries,
   ]
+  const allEntries: TreeEntry[] = errorEntries.length > 0
+    ? [...errorEntries, ...contextEntries]
+    : contextEntries
 
   for (let i = 0; i < allEntries.length; i++) {
     const entry = allEntries[i]
     if (!entry) continue
+
     const { children } = entry
     const hasChildren = children !== undefined && children.length > 0
     const isLast = i === allEntries.length - 1 && !hasChildren
@@ -592,10 +678,10 @@ function prettyPrintWideEvent(event: Record<string, unknown>): void {
 
     if (browser) {
       const val = entry.value ? ` ${escapeFormatString(entry.value)}` : ''
-      console.log(`  %c${prefix}%c %c${escapeFormatString(entry.key)}:%c${val}`, cssColors.dim, cssColors.reset, cssColors.cyan, cssColors.reset)
+      writeLine(`  %c${prefix}%c %c${escapeFormatString(entry.key)}:%c${val}`, cssColors.dim, cssColors.reset, cssColors.cyan, cssColors.reset)
     } else {
       const val = entry.value ? ` ${entry.value}` : ''
-      console.log(`  ${colors.dim}${prefix}${colors.reset} ${colors.cyan}${entry.key}:${colors.reset}${val}`)
+      writeLine(`  ${colors.dim}${prefix}${colors.reset} ${colors.cyan}${entry.key}:${colors.reset}${val}`)
     }
 
     if (hasChildren && children) {
@@ -604,15 +690,29 @@ function prettyPrintWideEvent(event: Record<string, unknown>): void {
       for (let j = 0; j < children.length; j++) {
         const child = children[j]
         if (child === undefined) continue
+        if (child === PRETTY_ERROR_TREE_SPACER) {
+          writeLine(`  ${colors.dim}${connector}${colors.reset}`)
+          continue
+        }
         const isLastChild = j === children.length - 1
         const childPrefix = isLastChild ? '└─' : '├─'
+        if (child === '') {
+          writeLine('')
+          continue
+        }
         if (browser) {
-          console.log(`  %c${connector}  ${childPrefix}%c ${escapeFormatString(child)}`, cssColors.dim, cssColors.reset)
+          writeLine(`  %c${connector}  ${childPrefix}%c ${escapeFormatString(child)}`, cssColors.dim, cssColors.reset)
+        } else if (child.startsWith(' ') || child.startsWith('\x1B')) {
+          writeLine(`  ${colors.dim}${connector}${colors.reset}${child}`)
         } else {
-          console.log(`  ${colors.dim}${connector}  ${childPrefix}${colors.reset} ${child}`)
+          writeLine(`  ${colors.dim}${connector}  ${childPrefix}${colors.reset} ${child}`)
         }
       }
     }
+  }
+
+  if (!browser && lines.length > 0) {
+    flushPrettyLines(lines)
   }
 }
 
@@ -703,6 +803,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
   let hasWarn = false
   let manualLevel: LogLevel | undefined
   let emitted = false
+  let pendingWideEvent: WideEvent | null = null
 
   function addLog(level: 'info' | 'warn', message: string): void {
     if (!Array.isArray(context.requestLogs)) {
@@ -737,7 +838,18 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
     audit: auditMethod,
     set(data: FieldContext<T>): void {
       if (emitted) {
-        const keys = Object.keys(data as Record<string, unknown>)
+        const record = data as Record<string, unknown>
+        const pendingState = pendingWideEvent ? pendingDrainState.get(pendingWideEvent) : undefined
+        if (
+          pendingWideEvent
+          && pendingState
+          && !pendingState.drainStarted
+          && isAiOnlyFieldUpdate(record)
+        ) {
+          mergeInto(pendingWideEvent as Record<string, unknown>, record)
+          return
+        }
+        const keys = Object.keys(record)
         warnPostEmit('log.set()', `Keys dropped: ${keys.length ? keys.join(', ') : '(empty)'}.`)
         return
       }
@@ -770,11 +882,19 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       const errorObj: Record<string, unknown> = {
         name: err.name,
         message: err.message,
-        stack: err.stack,
+        stack: isDev() ? compactStackForStorage(err.stack) : err.stack,
       }
       const errRecord = err as unknown as Record<string, unknown>
       for (const k of ['code', 'status', 'statusText', 'statusCode', 'statusMessage', 'data', 'cause', 'internal'] as const) {
         if (k in err) errorObj[k] = errRecord[k]
+      }
+
+      if (err instanceof EvlogError) {
+        if (err.code) errorObj.code = err.code
+        if (err.why) errorObj.why = err.why
+        if (err.fix) errorObj.fix = err.fix
+        if (err.link) errorObj.link = err.link
+        if (err.status) errorObj.status = err.status
       }
 
       if (isPlainObject(context.error)) {
@@ -842,6 +962,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
 
       if (!forceKeep && !shouldSample(level)) {
         emitted = true
+        pendingWideEvent = null
         return null
       }
 
@@ -855,6 +976,11 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
 
       const wide = emitWideEvent(level, context, { deferDrain, ownsEvent: true, waitUntil })
       emitted = true
+      pendingWideEvent = wide
+      if (wide) {
+        // Only enable the AI merge window when middleware defers drain until finish.
+        pendingDrainState.set(wide, { drainStarted: !deferDrain })
+      }
       return wide
     },
 

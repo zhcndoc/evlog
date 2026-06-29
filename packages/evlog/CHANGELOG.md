@@ -1,5 +1,102 @@
 # evlog
 
+## 2.19.2
+
+### Patch Changes
+
+- [#393](https://github.com/HugoRCD/evlog/pull/393) [`aa394e5`](https://github.com/HugoRCD/evlog/commit/aa394e534102a06d7fbd50d4503636db7214660e) Thanks [@HugoRCD](https://github.com/HugoRCD)! - # fix: type framework loggers as AuditableLogger with required `.audit()`
+
+  `useLogger()`, `c.get('log')`, `req.log`, and other integration surfaces now return `AuditableLogger` instead of `RequestLogger`, so `.audit()` type-checks without optional chaining. Matches runtime behavior from `createRequestLogger()`.
+
+  Closes [#389](https://github.com/HugoRCD/evlog/issues/389)
+
+- [#392](https://github.com/HugoRCD/evlog/pull/392) [`ffdd28f`](https://github.com/HugoRCD/evlog/commit/ffdd28f915dffaa82072da506ca35afd2c0beb30) Thanks [@HugoRCD](https://github.com/HugoRCD)! - # fix: keep Node built-ins out of the main entrypoint bundle
+
+  Non-Node bundlers (Convex, etc.) failed when importing `defineErrorCatalog` from `evlog` because the main bundle transitively referenced `node:crypto` and `pretty-error-snippet.node` (`node:fs`, `node:path`, `node:module`). The audit signer now uses `globalThis.crypto.subtle` only, disk snippet loading is registered from Node-only integration entrypoints instead of `initLogger`, and catalog utilities live in a dedicated `evlog/catalog` subpath backed by a lean `audit-action` module.
+
+  Closes [#387](https://github.com/HugoRCD/evlog/issues/387)
+
+- [#391](https://github.com/HugoRCD/evlog/pull/391) [`467d615`](https://github.com/HugoRCD/evlog/commit/467d615bdaf1ce0bc7caceed2fdc9c50ed654e79) Thanks [@HugoRCD](https://github.com/HugoRCD)! - # fix(nuxt): restore `error.vue` rendering for SSR page errors
+
+  With `evlog/nuxt` installed, every non-API SSR error (404/500) was returned as raw Nitro JSON instead of rendering the framework error page. The Nitro error handler now delegates document/HTML navigations to the next handler in Nitro's chain (Nuxt's `error.vue` renderer) while still serializing JSON for API routes and `EvlogError` responses.
+
+  Closes [#390](https://github.com/HugoRCD/evlog/issues/390)
+
+- [#384](https://github.com/HugoRCD/evlog/pull/384) [`6eb0957`](https://github.com/HugoRCD/evlog/commit/6eb0957d03c69fffbac2390c6e2bc84cf42fbb4b) Thanks [@nadaniels](https://github.com/nadaniels)! - fix(hono): resolve "ReadableStream is locked" error with AI SDK streaming responses
+
+  Using `createUIMessageStreamResponse` or `createAgentUIStreamResponse` from the Vercel AI SDK inside a Hono route would throw `ERR_INVALID_STATE: ReadableStream is locked` when running under `@hono/node-server`.
+
+  **Root cause:** The middleware called `createObservedBody(c.res.body)` (which calls `body.getReader()`, locking the stream) and then relied on Hono's `compose` to update `c.res` with the wrapped response via the middleware return value. However, Hono skips that update when `context.finalized` is already `true` — which is always the case after a route handler returns a `Response`. This left `c.res` pointing at the original response whose body was now locked, so `@hono/node-server`'s subsequent `response.body.getReader()` call threw.
+
+  **Fix:** Explicitly assign `c.res = await finishResponse(c.res, ...)` instead of returning the wrapped response, so `c.res` is always updated regardless of `context.finalized`.
+
+  Closes [#382](https://github.com/HugoRCD/evlog/issues/382)
+
+## 2.19.1
+
+### Patch Changes
+
+- [#379](https://github.com/HugoRCD/evlog/pull/379) [`8ede2c2`](https://github.com/HugoRCD/evlog/commit/8ede2c2d648156b1e6f05ec8fb015100bb6d5560) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Adapter error and deprecation messages now show canonical environment variable names only (`BETTER_STACK_API_KEY`, `AXIOM_API_KEY`, `SENTRY_DSN`, etc.). `NUXT_*` aliases still resolve silently for backward compatibility, but are no longer mentioned in console output or documentation.
+
+  The OTLP adapter now also accepts the shorter `OTLP_ENDPOINT` / `OTLP_HEADERS` env vars as aliases for the standard `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`.
+
+- [#381](https://github.com/HugoRCD/evlog/pull/381) [`6f21121`](https://github.com/HugoRCD/evlog/commit/6f2112127861f31660182e6ebe5b47ef66911301) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix duplicate terminal output when Next.js `captureOutput` is enabled: pretty-print writes use the native stdout handle registered at patch time and passthrough is skipped unless `silent: true`. Next.js dev stacks are source-mapped to original TypeScript (like Nitro) via a Next-only enricher that does not bundle nitropack/youch; stored stacks are compacted in dev (production stacks are kept intact) and useless `.next`/`node:` snippet previews are skipped. The primary `at` line now points at your route/handler file instead of Next `route-modules` internals.
+
+- [#373](https://github.com/HugoRCD/evlog/pull/373) [`4c51970`](https://github.com/HugoRCD/evlog/commit/4c5197095b9717c9f725b52c0796d1b6b62814cc) Thanks [@jmcgoldrick](https://github.com/jmcgoldrick)! - Fix `evlog/nitro/v3` pulling in the optional `h3` peer. The v3 plugin shared a deferred-drain helper from the v2 module, which imports `getHeaders` from `h3`, so the v3 bundle referenced `h3` even though the v3 runtime never uses it. Consumers that don't install `h3` directly (e.g. Nitro v3 / TanStack Start on Vite) failed to build with `"getHeaders" is not exported by "__vite-optional-peer-dep:h3:evlog"`. The helper now lives in an h3-free module, so the v3 path no longer references `h3`.
+
+- [#380](https://github.com/HugoRCD/evlog/pull/380) [`af238a2`](https://github.com/HugoRCD/evlog/commit/af238a24470b39910024b561989170e857244d54) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Split Next.js instrumentation into an Edge-safe gate (`evlog/next/instrumentation`) and a Node-only factory (`evlog/next/instrumentation/create`) so root `instrumentation.ts` no longer pulls the logger, audit, or file-system helpers into the Edge bundle. `defineNodeInstrumentation` now accepts an options object directly (no `import().then()` in user code). Filter known Next.js Edge bundler warnings from `captureOutput` (`CaptureOutputOptions`: `stdout`, `stderr`, `ignore`). The FS adapter warns once and skips writes when `NEXT_RUNTIME` is `edge`.
+
+- [#375](https://github.com/HugoRCD/evlog/pull/375) [`83ec28f`](https://github.com/HugoRCD/evlog/commit/83ec28f98e32809e4a86c16900bead2b7b1a69e3) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix Nitro v2 error responses hanging in Nuxt/Nitro apps after thrown API errors. The Nitro v2 error handler now ends the Node response directly instead of relying on h3 `send()`, so clients receive the expected JSON error response.
+
+- [#376](https://github.com/HugoRCD/evlog/pull/376) [`4c13bb0`](https://github.com/HugoRCD/evlog/commit/4c13bb0043c5acca4bd8e99638740396a557ead0) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Hardening and performance improvements across the package:
+  - **Redaction**: path matchers are now precompiled once per resolved config instead of on every event, and case-insensitive leaf lookups are O(1).
+  - **Pipeline**: the idle flush scheduling timer is `unref()`'d so it never holds a Node process open on shutdown — call `flush()` to deliver buffered events before exit (unchanged, documented contract). Retry backoff timers stay ref'd so in-flight batches are not dropped mid-retry.
+  - **Ingest endpoint**: request bodies are capped at 32KB (413 beyond) and parsed as strict JSON.
+  - **Audit**: `stableStringify` guards against circular references in audit `changes` instead of recursing forever; shared (non-circular) references keep stable signatures.
+  - **Toolkit**: new `applyDeprecatedAlias` helper to map deprecated config fields onto their replacement with a one-time warning, used by the Axiom and Better Stack adapters.
+  - **Vite**: warns when `sourceLocation` is enabled for a production build (source paths embedded in the client bundle).
+  - Published packages now declare `engines.node >= 18`.
+
+## 2.19.0
+
+### Minor Changes
+
+- [#356](https://github.com/HugoRCD/evlog/pull/356) [`bb3ec19`](https://github.com/HugoRCD/evlog/commit/bb3ec1932402861fd12bb47633c191cf3c993941) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Add optional catalog metadata on `defineAuditCatalog` and `defineAuditAction` entries: `description`, `severity`, `requiresChanges`, `requiresReason`, and `redactPaths`. Metadata is exposed on each factory for introspection, docs, and review tooling.
+
+- [#370](https://github.com/HugoRCD/evlog/pull/370) [`6dc352d`](https://github.com/HugoRCD/evlog/commit/6dc352ddba142ae68735ca932119566ac6074730) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Improve dev terminal error output and introduce a clearer `dev` config API.
+
+  **Presets:** `dev: 'evlog' | 'nitro' | 'both'` — controls Nitro's Youch overlay (`frameworkOverlay`) and how much stack detail evlog prints in the wide event (`prettyError.detail`). Default in pretty dev is `'evlog'` (no Nitro overlay, full evlog error block). `'nitro'` keeps Nitro's stack and prints only message + Why/Fix/link in the wide event. `'both'` shows both full outputs.
+
+  **Explicit object:** `dev: { frameworkOverlay, prettyError: { snippet, stackDepth, compact, detail: 'full' | 'guidance' } }`.
+
+  Other improvements: tighter error blocks by default (`prettyError.compact`), tree spacers, hanging-indent Why/Fix wrapping, `stdout` for error wide events in dev, source-mapped file:line via Nitro `loadStackTrace`, Nitro error hook enrich+drain no longer blocks HTTP responses.
+
+- [#371](https://github.com/HugoRCD/evlog/pull/371) [`0625240`](https://github.com/HugoRCD/evlog/commit/0625240cecf483107550000dfc38ba48359b32bd) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Add glob path redaction to `RedactConfig.paths`. Single-segment patterns like `password` are shorthand for `**.password` (any nesting depth). Key-name globs (`*_token`) and path globs (`user.*`) are supported. `auditRedactPreset` simplified to path globs.
+
+  ```ts
+  initLogger({
+    redact: {
+      paths: ["password", "*_token", "headers.x-forwarded-for"],
+    },
+  });
+  ```
+
+- [#367](https://github.com/HugoRCD/evlog/pull/367) [`23d616f`](https://github.com/HugoRCD/evlog/commit/23d616ffecd9c2105051297d3ece44dd5542879d) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Defer wide-event emit for streaming HTTP responses (SSE, AI SDK UI streams, chunked bodies) until the response body finishes, so `createAILogger()` metadata is included on the same request event instead of triggering post-emit warnings.
+
+  Applies to Next.js `withEvlog`, SvelteKit, Hono, React Router, oRPC, and Nitro/Nuxt integrations. Also merges late `ai` fields onto an emitted event before enrich/drain when metadata arrives in a narrow race window.
+
+  Fixes [#321](https://github.com/HugoRCD/evlog/issues/321)
+
+### Patch Changes
+
+- [#356](https://github.com/HugoRCD/evlog/pull/356) [`bb3ec19`](https://github.com/HugoRCD/evlog/commit/bb3ec1932402861fd12bb47633c191cf3c993941) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix `mockAudit()` to capture in-request `log.audit()` events on emit (with finalized `idempotencyKey`). Add `assertAudit()` matcher on the mock result. Type `AuditFields.changes.patch` via new `AuditChanges` export.
+
+- [#369](https://github.com/HugoRCD/evlog/pull/369) [`0c6cb24`](https://github.com/HugoRCD/evlog/commit/0c6cb247cb608083f3fca72ed1d69dc55e34962f) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix Nuxt `silent` option not suppressing built-in console output in production builds on evlog 2.11+. The Nuxt module now bakes evlog options into `nitro.options.replace.__EVLOG_CONFIG__` (matching standalone Nitro modules), so the Nitro plugin receives `silent: true` and no longer emits an unenriched log line before your `evlog:drain` hook runs.
+
+- [#359](https://github.com/HugoRCD/evlog/pull/359) [`1b17ff1`](https://github.com/HugoRCD/evlog/commit/1b17ff1d51ebe92c75026d269d31c9b6da25857c) Thanks [@abhishekg999](https://github.com/abhishekg999)! - Fix `evlog/elysia` to capture unmatched routes so Elysia 404 responses emit HTTP events with the correct path and error level.
+
+- [#365](https://github.com/HugoRCD/evlog/pull/365) [`e2806b8`](https://github.com/HugoRCD/evlog/commit/e2806b8e47e78b4c147ec4fc3b1daef47749dac7) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix redaction mutating source objects and arrays passed by reference. Wide events are now deep-cloned before redaction, so `log.info({ user })` and `createLogger().emit()` only scrub the emitted copy sent to console and drains.
+
 ## 2.18.1
 
 ### Patch Changes

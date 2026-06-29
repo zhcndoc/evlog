@@ -1,7 +1,8 @@
 import type { Context, MiddlewareHandler } from 'hono'
-import type { RequestLogger } from '../types'
+import type { AuditableLogger } from '../audit'
 import { defineFrameworkIntegration } from '../shared/integration'
 import type { BaseEvlogOptions } from '../shared/middleware'
+import { shouldDeferEmitForResponse } from '../shared/streamResponse'
 
 export type EvlogHonoOptions = BaseEvlogOptions
 
@@ -19,7 +20,7 @@ export type EvlogHonoOptions = BaseEvlogOptions
  * })
  * ```
  */
-export type EvlogVariables = { Variables: { log: RequestLogger } }
+export type EvlogVariables = { Variables: { log: AuditableLogger } }
 
 const integration = defineFrameworkIntegration<Context>({
   name: 'hono',
@@ -54,13 +55,20 @@ const integration = defineFrameworkIntegration<Context>({
  */
 export function evlog(options: EvlogHonoOptions = {}): MiddlewareHandler {
   return async (c, next) => {
-    const { skipped, finish } = integration.start(c, options)
+    const { skipped, finish, finishResponse } = integration.start(c, options)
     if (skipped) {
       await next()
       return
     }
     try {
       await next()
+      if (shouldDeferEmitForResponse(c.res)) {
+        // Assign directly — Hono's compose ignores middleware return values when
+        // context.finalized is already true, so returning the wrapped response
+        // would leave c.res with a locked body stream.
+        c.res = await finishResponse(c.res, { status: c.res.status })
+        return
+      }
       await finish({ status: c.res.status })
     } catch (error) {
       await finish({ error: error as Error })

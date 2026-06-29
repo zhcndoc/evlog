@@ -1,5 +1,5 @@
 import { ORPCError, type Context, type MiddlewareOptions, type MiddlewareResult } from '@orpc/server'
-import type { RequestLogger } from '../types'
+import type { AuditableLogger } from '../audit'
 import { EvlogError } from '../error'
 import { parseError } from '../runtime/utils/parseError'
 import { defineFrameworkIntegration } from '../shared/integration'
@@ -32,7 +32,7 @@ export { useLogger }
  * ```
  */
 export interface EvlogOrpcContext {
-  log: RequestLogger
+  log: AuditableLogger
 }
 
 /**
@@ -111,7 +111,7 @@ export function withEvlog<THandler extends OrpcFetchHandlerLike>(
   options: EvlogOrpcOptions = {},
 ): THandler {
   const handle: THandler['handle'] = async (request, callOptions) => {
-    const { skipped, finish, runWith, logger } = integration.start({ request }, options)
+    const { skipped, finish, finishResponse, runWith, logger } = integration.start({ request }, options)
 
     const initialContext = (callOptions as { context?: Record<string, unknown> } | undefined)?.context ?? {}
     const finalOptions = {
@@ -125,8 +125,11 @@ export function withEvlog<THandler extends OrpcFetchHandlerLike>(
 
     try {
       const result = await runWith(() => handler.handle(request, finalOptions))
-      const status = result.matched ? result.response.status : 404
-      await finish({ status })
+      if (result.matched) {
+        result.response = await finishResponse(result.response, { status: result.response.status })
+      } else {
+        await finish({ status: 404 })
+      }
       return result
     } catch (error) {
       await finish({ error: error as Error })
