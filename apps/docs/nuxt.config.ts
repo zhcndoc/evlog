@@ -1,7 +1,13 @@
-import { redirects } from './config/redirects'
+import { rawRedirects, redirects } from './config/redirects'
 
 export default defineNuxtConfig({
   extends: ['docus'],
+
+  experimental: {
+    appManifest: true,
+    emitRouteChunkError: 'automatic-immediate',
+    checkOutdatedBuildInterval: 60_000,
+  },
 
   app: {
     head: {
@@ -10,8 +16,19 @@ export default defineNuxtConfig({
   },
 
   routeRules: {
-    '/': { prerender: true },
+    '/': { prerender: true, headers: { 'cache-control': 'public, max-age=0, must-revalidate' } },
+    '/_nuxt/**': { headers: { 'cache-control': 'public, max-age=31536000, immutable' } },
+    '/**': { headers: { 'cache-control': 'public, max-age=0, must-revalidate' } },
     ...redirects,
+    ...rawRedirects,
+  },
+
+  // Docus defaults to allowing everything. Keep non-content routes (the MCP
+  // JSON-RPC endpoint, the Studio CMS editor) out of the crawl — they 405/302
+  // on a GET and only add noise to Search Console Coverage.
+  robots: {
+    groups: [{ userAgent: '*', allow: '/', disallow: ['/mcp', '/_studio'] }],
+    sitemap: '/sitemap.xml',
   },
 
   modules: [
@@ -38,13 +55,17 @@ export default defineNuxtConfig({
   },
 
   fonts: {
+    defaults: {
+      // Full variable axis — discrete weights from @nuxt/ui defaults render too thin on Chromium.
+      weights: ['100 900'],
+    },
     families: [
-      { name: 'Geist', weights: [400, 500, 600, 700], global: true },
-      { name: 'Geist Mono', weights: [400, 500, 600, 700], global: true },
+      { name: 'Geist', weights: ['100 900'], global: true },
+      { name: 'Geist Mono', weights: ['100 900'], global: true },
       {
         name: 'Geist Pixel Line',
         src: '/fonts/GeistPixel-Line.woff2',
-        weights: [400],
+        weights: [400, 500],
         global: true,
       },
     ],
@@ -58,9 +79,19 @@ export default defineNuxtConfig({
   },
 
   ogImage: {
-    // Custom OgImageDocs.satori.vue has complex shadow/blur effects that slow Satori down.
-    // 15s default makes some pages timeout during prerender, which means Vercel hits the
-    // zero-runtime route at runtime and returns 500 ("Not supported in zeroRuntime mode").
+    // Cache prerendered OG image output between CI builds. Cache misses spend most of
+    // the Vercel build rendering /_og/s/* routes, so keeping generated images avoids
+    // rerendering unchanged docs pages on every deployment.
+    buildCache: true,
+    // Simplified OgImageDocs.satori.vue (text-shadow only) keeps prerender under timeout.
+    // Missing prerendered assets fall back to /og.png via server/middleware/01-og-fallback.ts.
+    defaults: {
+      // Satori cannot parse woff2 — keep woff2 in @nuxt/fonts for the browser, TTF here for OG images.
+      fonts: [
+        { name: 'Geist Pixel Line', weight: 400, path: '/fonts/GeistPixel-Line.ttf' },
+        { name: 'Geist Pixel Line', weight: 500, path: '/fonts/GeistPixel-Line.ttf' },
+      ],
+    },
     security: {
       renderTimeout: 60_000,
     },
@@ -101,9 +132,13 @@ export default defineNuxtConfig({
         'html',
         'js',
         'json',
+        'jsonc',
+        'jsonl',
+        'kusto',
         'md',
         'mdc',
         'shell',
+        'sql',
         'toml',
         'ts',
         'tsx',

@@ -4,6 +4,7 @@ import {
   addServerHandler,
   addServerImports,
   addServerPlugin,
+  addTypeTemplate,
   addVitePlugin,
   createResolver,
   defineNuxtModule,
@@ -420,43 +421,104 @@ export default defineNuxtModule<ModuleOptions>({
       {
         name: 'log',
         from: resolver.resolve('../runtime/client/log'),
+        dtsDisabled: true,
       },
       {
         name: 'setIdentity',
         from: resolver.resolve('../runtime/client/log'),
+        dtsDisabled: true,
       },
       {
         name: 'clearIdentity',
         from: resolver.resolve('../runtime/client/log'),
+        dtsDisabled: true,
       },
       {
         name: 'setMinLevel',
         from: resolver.resolve('../runtime/client/log'),
+        dtsDisabled: true,
       },
       {
         name: 'createEvlogError',
         from: resolver.resolve('../error'),
+        dtsDisabled: true,
       },
       {
         name: 'parseError',
         from: resolver.resolve('../runtime/utils/parseError'),
+        dtsDisabled: true,
       },
     ])
+
+    addTypeTemplate({
+      filename: 'types/evlog-client.d.ts',
+      getContents: () => `declare global {
+  const log: typeof import('evlog/client').log
+  const setIdentity: typeof import('evlog/client').setIdentity
+  const clearIdentity: typeof import('evlog/client').clearIdentity
+  const setMinLevel: typeof import('evlog/client').setMinLevel
+  const createEvlogError: typeof import('evlog').createEvlogError
+  const parseError: typeof import('evlog').parseError
+}
+export {}
+`,
+    })
 
     addServerImports([
       {
         name: 'useLogger',
         from: resolver.resolve('../runtime/server/useLogger'),
+        dtsDisabled: true,
       },
       {
         name: 'log',
         from: resolver.resolve('../logger'),
+        dtsDisabled: true,
       },
       {
         name: 'createEvlogError',
         from: resolver.resolve('../error'),
+        dtsDisabled: true,
       },
     ])
+
+    addTypeTemplate({
+      filename: 'types/evlog-server.d.ts',
+      getContents: () => `declare global {
+  const useLogger: typeof import('evlog').useLogger
+  const createEvlogError: typeof import('evlog').createEvlogError
+}
+export {}
+`,
+      // `nitro: true` puts the reference on the server tsconfig project.
+      // `nuxt: true` also puts it on the app tsconfig project — required
+      // because `$fetch` typings resolve server route return types by
+      // importing the route modules directly, which pulls server routes
+      // (and therefore these globals) into the app project's typecheck too.
+      // `createEvlogError` is safe to expose in both contexts: it resolves
+      // to the same `evlog` export as the one declared in evlog-client.d.ts.
+      // `log` is intentionally NOT declared here — the server `log` (a
+      // module-level logger for background/non-request code) and the
+      // client `log` (declared in evlog-client.d.ts) are different values
+      // with different types but share the same global name, so it can
+      // only be safely typed within the project that actually needs it.
+    }, { nitro: true, nuxt: true })
+
+    addTypeTemplate({
+      filename: 'types/evlog-server-log.d.ts',
+      getContents: () => `declare global {
+  const log: typeof import('evlog').log
+}
+export {}
+`,
+      // Nitro-only: the app tsconfig project already declares a (different)
+      // global `log` via evlog-client.d.ts. Referencing this template there
+      // too would make the two ambient declarations fight over the same
+      // name — since \`skipLibCheck\` is on by default in Nuxt's generated
+      // tsconfigs, TypeScript silently keeps whichever declaration it sees
+      // first instead of erroring, so the losing side's shape goes unused
+      // without warning.
+    }, { nitro: true })
 
     const stripLevels = options.strip ?? ['debug']
     if (stripLevels.length > 0) {

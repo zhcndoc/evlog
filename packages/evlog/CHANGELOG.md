@@ -1,5 +1,87 @@
 # evlog
 
+## 2.22.4
+
+### Patch Changes
+
+- [#442](https://github.com/HugoRCD/evlog/pull/442) [`8f294d1`](https://github.com/HugoRCD/evlog/commit/8f294d17b65e17a77aa40f2be721168be35b61bb) Thanks [@lichterspiel](https://github.com/lichterspiel)! - fix(next): thread `redact` through `createInstrumentation().register()` — it previously re-initialised the logger without redaction and locked it, silently disabling `redact` configured for the Next.js instrumentation path
+
+## 2.22.3
+
+### Patch Changes
+
+- [#437](https://github.com/HugoRCD/evlog/pull/437) [`00fadc9`](https://github.com/HugoRCD/evlog/commit/00fadc9573ae8d49b64a5deccd6d2e93ee3ad66b) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix `nuxt typecheck` failing with `TS2304: Cannot find name 'useLogger'` (and `createEvlogError`) on server routes. `$fetch`'s return-type inference pulls server routes — and their auto-imported globals — into the app tsconfig project's typecheck too, but the Nuxt module only declared these globals for the server project. `useLogger` and `createEvlogError` are now declared for both projects; the server-only `log` export stays scoped to the server project since it shares its global name with the (differently-typed) client `log`.
+
+## 2.22.2
+
+### Patch Changes
+
+- [#438](https://github.com/HugoRCD/evlog/pull/438) [`8f7b5e3`](https://github.com/HugoRCD/evlog/commit/8f7b5e3c933bfd58e910dfa501dbfc0789260cb5) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix `withEvlog` (Next.js) logging a phantom ERROR at status 500 for every `redirect()`/`notFound()`/`forbidden()`/`unauthorized()` call. These APIs throw an internal Next.js control-flow signal that isn't a real error — `withEvlog` now detects it via `unstable_rethrow` and rethrows it untouched instead of logging and emitting an error event.
+
+## 2.22.1
+
+### Patch Changes
+
+- [#431](https://github.com/HugoRCD/evlog/pull/431) [`573f772`](https://github.com/HugoRCD/evlog/commit/573f772cdb0d69425739c389b780119fbb63259e) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Export `evlog/package.json` so tooling (e.g. `evlog doctor`) can resolve the installed version via `require.resolve('evlog/package.json')` under Node's `exports` map.
+
+- [#433](https://github.com/HugoRCD/evlog/pull/433) [`9b2d3d9`](https://github.com/HugoRCD/evlog/commit/9b2d3d94ad0e922942f35cc6b604db7e8b764fa0) Thanks [@TheLiberal](https://github.com/TheLiberal)! - Fix the Nitro v3 response hook breaking every streaming response (SSE, NDJSON, and `transfer-encoding: chunked` — which includes all tRPC v11 `httpBatchStreamLink` traffic). The hook locked the original response body via `getReader()` and assigned the wrapped response to `event.res`, which is a getter-only accessor on h3 v2, producing `Attempted to assign to readonly property` followed by `ReadableStream is locked` and a 500 for the client. Streaming responses now pass through untouched and the wide event is emitted at header time; stream-lifetime metrics are not observable from h3 v2's `onResponse` hook, which cannot replace the outgoing response.
+
+## 2.22.0
+
+### Minor Changes
+
+- [#430](https://github.com/HugoRCD/evlog/pull/430) [`31c251f`](https://github.com/HugoRCD/evlog/commit/31c251f2670ebb5a771e259ee01b802fcc33a99d) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Add `evlog/toolkit/storage` for `createLoggerStorage` so edge/Workers integrations can import ALS separately. The main `evlog/toolkit` barrel still re-exports it for compatibility; prefer `evlog/toolkit/storage` when you need to keep `node:async_hooks` out of bundles that do not tree-shake unused exports. Drop the barrel re-export at the next major.
+
+- [#429](https://github.com/HugoRCD/evlog/pull/429) [`1e325b9`](https://github.com/HugoRCD/evlog/commit/1e325b9cdc0567cb5e1937dbd4bf29e6879a97a6) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Add `waitUntil` support to `createMiddlewareLogger` and `defineFrameworkIntegration` so custom framework integrations can defer async drains on Cloudflare Workers and Vercel Edge without blocking the response. Pass `waitUntil` per request (e.g. `ctx.waitUntil.bind(ctx)`) or declare `extractWaitUntil` on the integration manifest.
+
+### Patch Changes
+
+- [#419](https://github.com/HugoRCD/evlog/pull/419) [`1953cfe`](https://github.com/HugoRCD/evlog/commit/1953cfe27e355fe36888985b43017e5ba152b2fc) Thanks [@crtwheel](https://github.com/crtwheel)! - fix: pretty printer shows `[object Object]` for array field values
+
+- [#428](https://github.com/HugoRCD/evlog/pull/428) [`ec13863`](https://github.com/HugoRCD/evlog/commit/ec1386379dd0330a467e4a503f232f486d4f7dfc) Thanks [@HugoRCD](https://github.com/HugoRCD)! - fix(nitro): preserve h3 HTTPError `message` in JSON error responses instead of overwriting it with `statusText`
+
+  ***
+
+## 2.21.0
+
+### Minor Changes
+
+- [#410](https://github.com/HugoRCD/evlog/pull/410) [`30208db`](https://github.com/HugoRCD/evlog/commit/30208db84348e78ec3150cc6bfdf01a7557fd277) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Add AI SDK v7 `LanguageModelV4` wrap/middleware support in `evlog/ai`. `createAILogger().wrap()` and `createAIMiddleware()` now use V4-native middleware (`specificationVersion: 'v4'`) while still accepting V3 models (AI SDK upgrades them via `wrapLanguageModel`). `wrap()` is typed against `LanguageModel` from `ai`, so V3, V4, and gateway model strings all type-check on AI SDK v7.
+
+### Patch Changes
+
+- [#409](https://github.com/HugoRCD/evlog/pull/409) [`0fc4e80`](https://github.com/HugoRCD/evlog/commit/0fc4e8080c2b1e1f7da9329de191e1f3ac77ca72) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix `createEvlog({ redact })` / `withEvlog` so custom `redact` rules apply to the main Next.js request wide event (console output and drain), not only forked child events.
+
+- [#412](https://github.com/HugoRCD/evlog/pull/412) [`b4d4baf`](https://github.com/HugoRCD/evlog/commit/b4d4baf840e707f4b09d31cb51d6e9a7fb483e45) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix Nuxt auto-import types for `useLogger`, `log`, `parseError`, and related helpers. The Nuxt module now ships explicit type templates that resolve through `evlog` / `evlog/client` package exports instead of Nitro's extensionless `dist/` paths, which typed as `any`.
+
+## 2.20.0
+
+### Minor Changes
+
+- [#404](https://github.com/HugoRCD/evlog/pull/404) [`f5df8ff`](https://github.com/HugoRCD/evlog/commit/f5df8ffd6a564d3d807caa85838dd479102eee25) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Add AI SDK v7 compatibility for `evlog/ai`. `createEvlogIntegration()` now implements both v6 hooks (`onToolCallFinish`, `onFinish`) and v7 hooks (`onToolExecutionEnd`, `onEnd`, `onEmbedEnd`, `onAbort`, `onError`). On v7, embeddings are auto-captured via `onEmbedEnd` when telemetry is enabled, and abort/error lifecycle events are written to the wide event. Pass the integration via `telemetry.integrations` (v7) or `experimental_telemetry.integrations` (v6). Exports a new `EvlogTelemetry` type.
+
+- [#399](https://github.com/HugoRCD/evlog/pull/399) [`b1d04d0`](https://github.com/HugoRCD/evlog/commit/b1d04d0ec4d22af3102bc13c252112091fffc8c4) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Add `evlog/eve` with `defineEvlogHook()` for one wide event per agent turn and `useLogger()` in tools (AsyncLocalStorage on `turn.started`; pass `ctx` only when ALS is unavailable) — full drain, enrich, and tail-sampling pipeline. Tracks tool durations (including post-approval resumes), session context carry-over with LRU eviction (`maxSessions`), slim `eve.phase` / `eve.sessionTurns` fields, and compact HITL `approval`. The turn logger is bound via AsyncLocalStorage on `turn.started`; pass `ctx` when ALS is unavailable. Turn state is shared via `globalThis` when eve bundles hooks and tools separately. `finalizeAudit()` no longer crashes on partial `audit` objects missing `actor` fields. Fixes `_auditForceKeep` leaking on force-kept events and skips Nitro runtime probes on Next.js hosts.
+
+### Patch Changes
+
+- [#395](https://github.com/HugoRCD/evlog/pull/395) [`a024f4c`](https://github.com/HugoRCD/evlog/commit/a024f4ce8adc5bf2857fc2d077dfeae4827ef519) Thanks [@HugoRCD](https://github.com/HugoRCD)! - # fix(elysia): support Cloudflare Workers without AsyncLocalStorage.enterWith
+
+  Cloudflare Workers omit native `AsyncLocalStorage.enterWith()`. The Elysia integration now installs a small polyfill on load so `useLogger()` keeps working in typical `wrangler dev` flows. `{ log }` from derive remains the safest option when multiple requests may interleave in the same isolate.
+
+  Closes [#394](https://github.com/HugoRCD/evlog/issues/394)
+
+- [#401](https://github.com/HugoRCD/evlog/pull/401) [`bf5705b`](https://github.com/HugoRCD/evlog/commit/bf5705bcef3f6be9fb2d0a605138cc77a2284058) Thanks [@HugoRCD](https://github.com/HugoRCD)! - # fix(nitro): avoid comment collision when inlining config with `*/` globs
+
+  Nitro's textual `nitro.options.replace` substitution was also rewriting JSDoc that mentioned the inline config token. Route globs containing `*/` (for example `/api/graphs/**/changes`) could terminate block comments early and break production builds with Rolldown parse errors.
+
+  Closes [#397](https://github.com/HugoRCD/evlog/issues/397)
+
+- [#402](https://github.com/HugoRCD/evlog/pull/402) [`4f80f39`](https://github.com/HugoRCD/evlog/commit/4f80f399bddc832af4ce7e610c9ec5425dde8bd2) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix dev pretty output so structured wide events include a timestamp, matching tagged logs.
+
+  Closes [#396](https://github.com/HugoRCD/evlog/issues/396)
+
+- [#399](https://github.com/HugoRCD/evlog/pull/399) [`b1d04d0`](https://github.com/HugoRCD/evlog/commit/b1d04d0ec4d22af3102bc13c252112091fffc8c4) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Fix stream server mis-detection when co-located with eve dev: return 404 (not SSE 200) for non-root GET paths, and re-bind the turn logger on `actions.requested` so tool handlers can resolve `useLogger()`.
+
 ## 2.19.2
 
 ### Patch Changes

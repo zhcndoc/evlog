@@ -1,5 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import * as toolkit from '../../src/shared/index'
+import * as toolkitStorage from '../../src/shared/storage'
 
 describe('evlog/toolkit barrel exports', () => {
   it('exports createMiddlewareLogger', () => {
@@ -14,7 +18,7 @@ describe('evlog/toolkit barrel exports', () => {
     expect(toolkit.extractSafeNodeHeaders).toBeTypeOf('function')
   })
 
-  it('exports createLoggerStorage', () => {
+  it('exports createLoggerStorage (also available from evlog/toolkit/storage)', () => {
     expect(toolkit.createLoggerStorage).toBeTypeOf('function')
   })
 
@@ -34,6 +38,16 @@ describe('evlog/toolkit barrel exports', () => {
     expect(toolkit.attachForkToLogger).toBeTypeOf('function')
     expect(toolkit.forkBackgroundLogger).toBeTypeOf('function')
     expect(toolkit.runEnrichAndDrain).toBeTypeOf('function')
+  })
+})
+
+describe('evlog/toolkit/storage', () => {
+  it('exports createLoggerStorage', () => {
+    expect(toolkitStorage.createLoggerStorage).toBeTypeOf('function')
+  })
+
+  it('is the same helper as the toolkit barrel re-export', () => {
+    expect(toolkitStorage.createLoggerStorage).toBe(toolkit.createLoggerStorage)
   })
 })
 
@@ -66,3 +80,16 @@ describe('extractErrorStatus', () => {
     expect(toolkit.extractErrorStatus({ status: '404' })).toBe(404)
   })
 })
+
+const distDir = join(dirname(fileURLToPath(import.meta.url)), '../../dist')
+
+describe.skipIf(!existsSync(join(distDir, 'toolkit/storage.mjs')))(
+  'toolkit/storage dist entry',
+  () => {
+    it('ships createLoggerStorage with node:async_hooks on the dedicated entry', () => {
+      const source = readFileSync(join(distDir, 'toolkit/storage.mjs'), 'utf8')
+      expect(source).toMatch(/node:async_hooks/)
+      expect(source).toMatch(/createLoggerStorage/)
+    })
+  },
+)

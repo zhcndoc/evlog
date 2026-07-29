@@ -1,5 +1,54 @@
 # evlog-community-framework-skeleton
 
+## 8.0.4
+
+### Patch Changes
+
+- Updated dependencies [[`8f294d1`](https://github.com/HugoRCD/evlog/commit/8f294d17b65e17a77aa40f2be721168be35b61bb)]:
+  - evlog@2.22.4
+
+## 8.0.3
+
+### Patch Changes
+
+- Updated dependencies [[`00fadc9`](https://github.com/HugoRCD/evlog/commit/00fadc9573ae8d49b64a5deccd6d2e93ee3ad66b)]:
+  - evlog@2.22.3
+
+## 8.0.2
+
+### Patch Changes
+
+- Updated dependencies [[`8f7b5e3`](https://github.com/HugoRCD/evlog/commit/8f7b5e3c933bfd58e910dfa501dbfc0789260cb5)]:
+  - evlog@2.22.2
+
+## 8.0.1
+
+### Patch Changes
+
+- Updated dependencies [[`573f772`](https://github.com/HugoRCD/evlog/commit/573f772cdb0d69425739c389b780119fbb63259e), [`9b2d3d9`](https://github.com/HugoRCD/evlog/commit/9b2d3d94ad0e922942f35cc6b604db7e8b764fa0)]:
+  - evlog@2.22.1
+
+## 8.0.0
+
+### Patch Changes
+
+- Updated dependencies [[`1953cfe`](https://github.com/HugoRCD/evlog/commit/1953cfe27e355fe36888985b43017e5ba152b2fc), [`ec13863`](https://github.com/HugoRCD/evlog/commit/ec1386379dd0330a467e4a503f232f486d4f7dfc), [`31c251f`](https://github.com/HugoRCD/evlog/commit/31c251f2670ebb5a771e259ee01b802fcc33a99d), [`1e325b9`](https://github.com/HugoRCD/evlog/commit/1e325b9cdc0567cb5e1937dbd4bf29e6879a97a6)]:
+  - evlog@2.22.0
+
+## 7.0.0
+
+### Patch Changes
+
+- Updated dependencies [[`30208db`](https://github.com/HugoRCD/evlog/commit/30208db84348e78ec3150cc6bfdf01a7557fd277), [`0fc4e80`](https://github.com/HugoRCD/evlog/commit/0fc4e8080c2b1e1f7da9329de191e1f3ac77ca72), [`b4d4baf`](https://github.com/HugoRCD/evlog/commit/b4d4baf840e707f4b09d31cb51d6e9a7fb483e45)]:
+  - evlog@2.21.0
+
+## 6.0.0
+
+### Patch Changes
+
+- Updated dependencies [[`f5df8ff`](https://github.com/HugoRCD/evlog/commit/f5df8ffd6a564d3d807caa85838dd479102eee25), [`b1d04d0`](https://github.com/HugoRCD/evlog/commit/b1d04d0ec4d22af3102bc13c252112091fffc8c4), [`a024f4c`](https://github.com/HugoRCD/evlog/commit/a024f4ce8adc5bf2857fc2d077dfeae4827ef519), [`bf5705b`](https://github.com/HugoRCD/evlog/commit/bf5705bcef3f6be9fb2d0a605138cc77a2284058), [`4f80f39`](https://github.com/HugoRCD/evlog/commit/4f80f399bddc832af4ce7e610c9ec5425dde8bd2), [`b1d04d0`](https://github.com/HugoRCD/evlog/commit/b1d04d0ec4d22af3102bc13c252112091fffc8c4)]:
+  - evlog@2.20.0
+
 ## 5.0.2
 
 ### Patch Changes

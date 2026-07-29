@@ -46,7 +46,19 @@ export default defineAppConfig({
       primary: 'blue',
       neutral: 'zinc',
     },
+    sidebar: {
+      slots: {
+        container: 'fixed inset-y-0 z-50 hidden h-svh w-(--sidebar-width) lg:flex',
+      },
+    },
     prose: {
+      pre: {
+        slots: {
+          // Scroll long lines instead of wrapping them: CLI output and check
+          // matrices are column-aligned, and a soft wrap destroys the alignment.
+          base: 'whitespace-pre wrap-normal',
+        },
+      },
       codeIcon: {
         'nuxt': 'i-vscode-icons-file-type-nuxt',
         'nuxt / nitro': 'i-vscode-icons-file-type-nuxt',

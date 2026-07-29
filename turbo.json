@@ -1,6 +1,5 @@
 {
   "$schema": "https://turborepo.dev/schema.v2.json",
-  "globalDependencies": [".env"],
   "globalEnv": [
     "AI_GATEWAY_API_KEY",
     "AXIOM_TOKEN",
@@ -9,12 +8,33 @@
     "POSTHOG_API_KEY",
     "POSTHOG_HOST",
     "SENTRY_DSN",
-    "BETTER_STACK_SOURCE_TOKEN"
+    "BETTER_STACK_SOURCE_TOKEN",
+    "DATABASE_URL",
+    "ANALYTICS_PASSWORD",
+    "NUXT_SESSION_PASSWORD",
+    "ANALYTICS_ALLOWED_TOOLS",
+    "ANALYTICS_ALLOWED_CUSTOM_KEYS"
+  ],
+  "globalPassThroughEnv": [
+    "CI",
+    "GITHUB_ACTIONS",
+    "GITHUB_EVENT_NAME",
+    "GITHUB_REF",
+    "GITHUB_SHA"
   ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": [".vercel/output/**", "dist/**", ".output/**", ".nuxt/**"],
+      "dependsOn": ["^build", "dev:prepare"],
+      "outputs": [
+        "dist/**",
+        ".nuxt/**",
+        ".output/**",
+        ".vercel/output/**",
+        ".next/**",
+        "!.next/cache/**",
+        "!.next/dev/**"
+      ],
+      "inputs": ["$TURBO_DEFAULT$", ".env", ".env.*"],
       "env": [
         "NUXT_STUDIO_SSO_URL",
         "NUXT_STUDIO_SSO_CLIENT_ID",
@@ -28,29 +48,32 @@
       "dependsOn": ["dev:prepare"],
       "cache": false,
       "persistent": true,
+      "inputs": ["$TURBO_DEFAULT$", ".env", ".env.*"],
       "env": [
         "AI_GATEWAY_API_KEY"
       ]
     },
     "dev:prepare": {
-      "dependsOn": ["^dev:prepare"],
-      "outputs": ["dist/**", ".output/**", ".nuxt/**"]
+      "dependsOn": ["^dev:prepare", "^build"],
+      "outputs": ["dist/**", ".nuxt/**", ".output/**"],
+      "inputs": ["$TURBO_DEFAULT$", ".env", ".env.*"]
     },
     "lint": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["dev:prepare"]
     },
     "lint:fix": {
+      "dependsOn": ["dev:prepare"],
       "cache": false
     },
     "bench": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^dev:prepare"],
       "cache": false
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["dev:prepare"]
     },
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["dev:prepare"]
     }
   }
 }

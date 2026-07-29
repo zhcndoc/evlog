@@ -1,6 +1,6 @@
 {
   "name": "evlog",
-  "version": "2.19.2",
+  "version": "2.22.4",
   "description": "Modern TypeScript logger — simple logs, wide events, structured errors. Built for scripts, libraries, jobs, edge, and HTTP. One drain pipeline everywhere.",
   "author": "HugoRCD <contact@hrcd.fr>",
   "homepage": "https://evlog.dev",
@@ -25,6 +25,7 @@
     "elysia",
     "nestjs",
     "orpc",
+    "eve",
     "sveltekit",
     "react-router",
     "vite",
@@ -44,6 +45,7 @@
       "import": "./dist/index.mjs",
       "default": "./dist/index.mjs"
     },
+    "./package.json": "./package.json",
     "./nuxt": {
       "types": "./dist/nuxt/module.d.mts",
       "import": "./dist/nuxt/module.mjs",
@@ -194,6 +196,11 @@
       "import": "./dist/orpc/index.mjs",
       "default": "./dist/orpc/index.mjs"
     },
+    "./eve": {
+      "types": "./dist/eve/index.d.mts",
+      "import": "./dist/eve/index.mjs",
+      "default": "./dist/eve/index.mjs"
+    },
     "./react-router": {
       "types": "./dist/react-router/index.d.mts",
       "import": "./dist/react-router/index.mjs",
@@ -218,6 +225,11 @@
       "types": "./dist/toolkit.d.mts",
       "import": "./dist/toolkit.mjs",
       "default": "./dist/toolkit.mjs"
+    },
+    "./toolkit/storage": {
+      "types": "./dist/toolkit/storage.d.mts",
+      "import": "./dist/toolkit/storage.mjs",
+      "default": "./dist/toolkit/storage.mjs"
     },
     "./ai": {
       "types": "./dist/ai/index.d.mts",
@@ -327,6 +339,9 @@
       "orpc": [
         "./dist/orpc/index.d.mts"
       ],
+      "eve": [
+        "./dist/eve/index.d.mts"
+      ],
       "react-router": [
         "./dist/react-router/index.d.mts"
       ],
@@ -341,6 +356,9 @@
       ],
       "toolkit": [
         "./dist/toolkit.d.mts"
+      ],
+      "toolkit/storage": [
+        "./dist/toolkit/storage.d.mts"
       ],
       "ai": [
         "./dist/ai/index.d.mts"
@@ -373,65 +391,68 @@
     "typecheck": "echo 'Typecheck handled by build'"
   },
   "devDependencies": {
-    "@codspeed/vitest-plugin": "^5.3.0",
-    "@nestjs/common": "^11.1.19",
-    "@nestjs/core": "^11.1.19",
-    "@nestjs/platform-express": "^11.1.19",
-    "@nestjs/testing": "^11",
+    "@codspeed/vitest-plugin": "^5.7.1",
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/core": "^11.1.28",
+    "@nestjs/platform-express": "^11.1.28",
+    "@nestjs/testing": "^11.1.28",
     "@nuxt/devtools": "^3.2.4",
     "@nuxt/schema": "^4.4.2",
     "@nuxt/test-utils": "^4.0.3",
-    "@orpc/client": "^1.14.2",
-    "@orpc/server": "^1.14.2",
+    "@orpc/client": "^1.14.8",
+    "@orpc/server": "^1.14.8",
+    "ai": "^7.0.28",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
-    "@sveltejs/kit": "^2.59.0",
-    "@swc/core": "^1.15.33",
-    "@tanstack/start-client-core": "^1.167.20",
+    "@sveltejs/kit": "^2.69.3",
+    "@swc/core": "^1.15.43",
+    "@tanstack/start-client-core": "^1.170.14",
     "@types/express": "^5.0.6",
-    "@types/supertest": "^7.2.0",
-    "@vitest/coverage-v8": "^4.1.5",
-    "acorn": "^8.16.0",
+    "@types/supertest": "^7.2.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "acorn": "^8.17.0",
     "changelogen": "^0.6.2",
     "consola": "^3.4.2",
-    "elysia": "^1.4.28",
+    "elysia": "^1.4.29",
+    "eve": "^0.24.3",
     "express": "^5.2.1",
-    "fastify": "^5.8.5",
+    "fastify": "^5.10.0",
     "h3": "^1.15.11",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^20.10.6",
     "magic-string": "^0.30.21",
     "nitro": "^3.0.260311-beta",
-    "nitropack": "^2.13.3",
+    "nitropack": "^2.13.4",
     "nuxt": "^4.4.2",
     "pino": "^10.3.1",
-    "react-router": "^7.14.2",
+    "react-router": "^7.18.1",
     "supertest": "^7.2.2",
-    "tinyglobby": "^0.2.16",
-    "tsdown": "^0.21.10",
-    "tsx": "^4.20.7",
+    "tinyglobby": "^0.2.17",
+    "tsdown": "^0.22.8",
+    "tsx": "^4.23.1",
     "typescript": "^6.0.3",
-    "ufo": "^1.6.3",
+    "ufo": "^1.6.4",
     "unplugin-swc": "^1.5.9",
-    "vite": "^8.0.10",
+    "vite": "^8.1.4",
     "winston": "^3.19.0"
   },
   "peerDependencies": {
-    "@nestjs/common": ">=11.1.19",
+    "@nestjs/common": ">=11.1.28",
     "@nuxt/kit": "^4.4.2",
-    "@orpc/server": ">=1.14.0",
-    "@tanstack/start-client-core": "^1.167.20",
-    "ai": ">=6.0.168",
-    "elysia": ">=1.4.28",
+    "@orpc/server": ">=1.14.8",
+    "eve": ">=0.24.3",
+    "@tanstack/start-client-core": "^1.170.14",
+    "ai": ">=6.0.168 <8.0.0",
+    "elysia": ">=1.4.29",
     "express": ">=5.2.1",
-    "fastify": ">=5.8.5",
+    "fastify": ">=5.10.0",
     "h3": "^1.15.11",
-    "hono": ">=4.11.0",
-    "next": ">=16.2.4",
+    "hono": ">=4.12.30",
+    "next": ">=16.2.10",
     "nitro": "^3.0.260311-beta",
-    "nitropack": "^2.13.3",
+    "nitropack": "^2.13.4",
     "ofetch": "^1.5.1",
-    "react": ">=19.2.5",
-    "react-router": ">=7.14.2",
+    "react": ">=19.2.7",
+    "react-router": ">=7.18.1",
     "vite": "^7.0.0 || ^8.0.0"
   },
   "peerDependenciesMeta": {
@@ -472,6 +493,9 @@
       "optional": true
     },
     "@orpc/server": {
+      "optional": true
+    },
+    "eve": {
       "optional": true
     },
     "react-router": {

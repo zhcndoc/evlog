@@ -98,6 +98,12 @@ exports[`public API surface > matches snapshot for all subpath exports 1`] = `
     "createTraceContextEnricher",
     "createUserAgentEnricher",
   ],
+  "./eve": [
+    "defineEvlogHook",
+    "detachActiveTurnLoggerForTests",
+    "resetEvlogEveForTests",
+    "useLogger",
+  ],
   "./express": [
     "evlog",
     "useLogger",
@@ -268,6 +274,9 @@ exports[`public API surface > matches snapshot for all subpath exports 1`] = `
     "toOtlpAttributeValue",
     "toTypedAttributeValue",
     "withEvlogIdentityHeaders",
+  ],
+  "./toolkit/storage": [
+    "createLoggerStorage",
   ],
   "./vite": [
     "createAutoImportsPlugin",

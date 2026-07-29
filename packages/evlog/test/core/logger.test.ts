@@ -770,6 +770,26 @@ describe('tail sampling', () => {
     expect(infoSpy).toHaveBeenCalledTimes(1)
   })
 
+  it('strips _auditForceKeep from emitted events when _forceKeep is set', () => {
+    initLogger({
+      pretty: false,
+      sampling: {
+        rates: { info: 0 },
+      },
+    })
+
+    const logger = createRequestLogger({ method: 'GET', path: '/test' })
+    logger.audit({
+      action: 'invoice.refund',
+      actor: { type: 'user', id: 'u1' },
+      target: { type: 'invoice', id: 'inv_1' },
+    })
+    const event = logger.emit({ _forceKeep: true })
+
+    expect(event).toBeDefined()
+    expect(event).not.toHaveProperty('_auditForceKeep')
+  })
+
   it('head sampling still works when no tail conditions match', () => {
     initLogger({
       pretty: false,
@@ -1151,6 +1171,36 @@ describe('silent option', () => {
   })
 })
 
+describe('pretty dev timestamp consistency', () => {
+  const timestampPattern = /\d{2}:\d{2}:\d{2}\.\d{3}/
+
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    initLogger({ pretty: true })
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('includes timestamp in dev pretty wide event and tagged log headers', () => {
+    const logSpy = vi.mocked(console.log)
+
+    log.info({ message: 'Test' })
+    log.warn('server', 'test')
+
+    expect(logSpy).toHaveBeenCalledTimes(2)
+
+    const wideOutput = String(logSpy.mock.calls[0]![0])
+    const taggedOutput = String(logSpy.mock.calls[1]![0])
+
+    expect(wideOutput).toMatch(timestampPattern)
+    expect(taggedOutput).toMatch(timestampPattern)
+  })
+})
+
 describe('pretty-print tool input serialization', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -1174,5 +1224,36 @@ describe('pretty-print tool input serialization', () => {
       },
     })
     expect(() => logger.emit()).not.toThrow()
+  })
+})
+
+describe('pretty-print array field values', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    initLogger({ pretty: true })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('serializes top-level array of objects as JSON instead of [object Object]', () => {
+    log.info({ action: 'demo', issues: [{ code: 'invalid_union', path: [], message: 'Invalid input' }] })
+
+    const logSpy = vi.mocked(console.log)
+    const output = logSpy.mock.calls.map(call => String(call[0])).join('\n')
+
+    expect(output).not.toContain('[object Object]')
+    expect(output).toContain('[{"code":"invalid_union","path":[],"message":"Invalid input"}]')
+  })
+
+  it('serializes array of strings', () => {
+    log.info({ action: 'test', tags: ['a', 'b', 'c'] })
+
+    const logSpy = vi.mocked(console.log)
+    const output = logSpy.mock.calls.map(call => String(call[0])).join('\n')
+
+    expect(output).not.toContain('[object Object]')
+    expect(output).toContain('["a","b","c"]')
   })
 })

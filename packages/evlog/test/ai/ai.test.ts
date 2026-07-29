@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { LanguageModelV3, LanguageModelV3CallOptions, LanguageModelV3FinishReason, LanguageModelV3StreamPart } from '@ai-sdk/provider'
-import type { OnFinishEvent, OnStartEvent, OnToolCallFinishEvent, TelemetryIntegration } from 'ai'
+import type {
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4FinishReason,
+  LanguageModelV4StreamPart,
+} from '@ai-sdk/provider'
+import type { LanguageModel } from 'ai'
 import type { RequestLogger } from '../../src/types'
-import { createAILogger, createAIMiddleware, createEvlogIntegration } from '../../src/ai'
+import { createAILogger, createAIMiddleware, createEvlogIntegration, type AILogger, type EvlogTelemetry } from '../../src/ai'
 import { createLogger, mergeWideEventFields } from '../../src/logger'
 import { defined } from '../helpers/defined'
+import { withFakeTimers } from '../helpers/timers'
 
 interface MockLogger extends RequestLogger {
   setCalls: Array<Record<string, unknown>>
@@ -58,8 +64,8 @@ function createMockUsage(overrides?: Partial<{
   }
 }
 
-type GenerateResult = Awaited<ReturnType<LanguageModelV3['doGenerate']>>
-type StreamResult = Awaited<ReturnType<LanguageModelV3['doStream']>>
+type GenerateResult = Awaited<ReturnType<LanguageModelV4['doGenerate']>>
+type StreamResult = Awaited<ReturnType<LanguageModelV4['doStream']>>
 
 /** AI SDK generate results require many fields — partial mocks cast once here. */
 function asGenerateResult(value: Record<string, unknown>): GenerateResult {
@@ -70,34 +76,90 @@ function asStreamResult(value: Record<string, unknown>): StreamResult {
   return value as StreamResult
 }
 
-type MockLanguageModel = Pick<LanguageModelV3, 'specificationVersion' | 'provider' | 'modelId'> & {
-  doGenerate: ReturnType<typeof vi.fn<LanguageModelV3['doGenerate']>>
-  doStream: ReturnType<typeof vi.fn<LanguageModelV3['doStream']>>
+type MockLanguageModel = {
+  specificationVersion: 'v3' | 'v4'
+  provider: string
+  modelId: string
+  supportedUrls: Record<string, RegExp[]>
+  doGenerate: ReturnType<typeof vi.fn>
+  doStream: ReturnType<typeof vi.fn>
 }
 
-function createMockCallOptions(): LanguageModelV3CallOptions {
-  return { prompt: [] }
+function createMockModel(
+  overrides?: Partial<{ provider: string, modelId: string, specificationVersion: 'v3' | 'v4' }>,
+): MockLanguageModel {
+  return {
+    specificationVersion: overrides?.specificationVersion ?? 'v4',
+    provider: overrides?.provider ?? 'anthropic',
+    modelId: overrides?.modelId ?? 'claude-sonnet-4.6',
+    supportedUrls: {},
+    doGenerate: vi.fn(),
+    doStream: vi.fn(),
+  }
+}
+
+/** wrap() returns LanguageModel (string | V2 | V3 | V4); tests need the V4 instance API. */
+function wrapMock(ai: AILogger, model: MockLanguageModel): LanguageModelV4 {
+  return ai.wrap(model as LanguageModel) as LanguageModelV4
+}
+
+function createMockCallOptions(): LanguageModelV4CallOptions {
+  return { prompt: [] } as LanguageModelV4CallOptions
+}
+
+function createFinishReason(unified: LanguageModelV4FinishReason['unified'] = 'stop'): LanguageModelV4FinishReason {
+  return { unified, raw: undefined }
+}
+
+function makeReadableStream(chunks: LanguageModelV4StreamPart[]): ReadableStream<LanguageModelV4StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(chunk)
+      }
+      controller.close()
+    },
+  })
+}
+
+async function consumeStream(stream: ReadableStream<LanguageModelV4StreamPart>): Promise<LanguageModelV4StreamPart[]> {
+  const reader = stream.getReader()
+  const result: LanguageModelV4StreamPart[] = []
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    result.push(value)
+  }
+  return result
 }
 
 function getLastAiData(log: MockLogger): Record<string, unknown> {
   return defined(log.setCalls.at(-1)?.ai, 'last ai payload') as Record<string, unknown>
 }
 
-function callIntegrationOnStart(integration: TelemetryIntegration, event?: Partial<OnStartEvent>) {
+function callIntegrationOnStart(integration: EvlogTelemetry, event?: Record<string, unknown>) {
   defined(integration.onStart, 'onStart')({
     model: { provider: 'anthropic', modelId: 'claude-sonnet-4.6' },
     maxRetries: 0,
     ...event,
-  } as OnStartEvent)
+  })
 }
 
-/** createEvlogIntegration ignores the onFinish payload — cast kept in one place. */
-function callIntegrationOnFinish(integration: TelemetryIntegration) {
-  defined(integration.onFinish, 'onFinish')({} as OnFinishEvent)
+/** createEvlogIntegration ignores the onFinish/onEnd payload — cast kept in one place. */
+function callIntegrationOnFinish(integration: EvlogTelemetry) {
+  if (integration.onFinish) {
+    integration.onFinish({})
+    return
+  }
+  defined(integration.onEnd, 'onEnd')({})
+}
+
+function callIntegrationOnEnd(integration: EvlogTelemetry) {
+  defined(integration.onEnd, 'onEnd')({})
 }
 
 function callIntegrationOnToolCallFinish(
-  integration: TelemetryIntegration,
+  integration: EvlogTelemetry,
   input: {
     toolName: string
     durationMs: number
@@ -118,47 +180,69 @@ function callIntegrationOnToolCallFinish(
     experimental_context: undefined,
   }
 
-  const event: OnToolCallFinishEvent = input.success
-    ? { ...base, success: true, output: input.output ?? {} }
-    : { ...base, success: false, error: input.error ?? new Error('failed') }
+  const event = input.success
+    ? { ...base, success: true as const, output: input.output ?? {} }
+    : { ...base, success: false as const, error: input.error ?? new Error('failed') }
 
-  defined(integration.onToolCallFinish, 'onToolCallFinish')(event as OnToolCallFinishEvent)
+  defined(integration.onToolCallFinish, 'onToolCallFinish')(event)
 }
 
-function createMockModel(overrides?: Partial<{ provider: string, modelId: string }>): MockLanguageModel {
-  return {
-    specificationVersion: 'v3',
-    provider: overrides?.provider ?? 'anthropic',
-    modelId: overrides?.modelId ?? 'claude-sonnet-4.6',
-    doGenerate: vi.fn(),
-    doStream: vi.fn(),
-  }
-}
+function callIntegrationOnToolExecutionEnd(
+  integration: EvlogTelemetry,
+  input: {
+    toolName: string
+    toolExecutionMs: number
+    success: boolean
+    output?: unknown
+    error?: unknown
+  },
+) {
+  const toolOutput = input.success
+    ? { type: 'tool-result' as const, output: input.output ?? {} }
+    : { type: 'tool-error' as const, error: input.error ?? new Error('failed') }
 
-function createFinishReason(unified: LanguageModelV3FinishReason['unified'] = 'stop'): LanguageModelV3FinishReason {
-  return { unified, raw: undefined }
-}
-
-function makeReadableStream(chunks: LanguageModelV3StreamPart[]): ReadableStream<LanguageModelV3StreamPart> {
-  return new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(chunk)
-      }
-      controller.close()
-    },
+  defined(integration.onToolExecutionEnd, 'onToolExecutionEnd')({
+    callId: 'call-1',
+    toolCall: { toolName: input.toolName, toolCallId: 'tc1', input: {} },
+    toolExecutionMs: input.toolExecutionMs,
+    toolContext: undefined,
+    toolOutput,
+    messages: [],
   })
 }
 
-async function consumeStream(stream: ReadableStream<LanguageModelV3StreamPart>): Promise<LanguageModelV3StreamPart[]> {
-  const reader = stream.getReader()
-  const result: LanguageModelV3StreamPart[] = []
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    result.push(value)
-  }
-  return result
+function callIntegrationOnEmbedEnd(
+  integration: EvlogTelemetry,
+  input: {
+    modelId?: string
+    tokens?: number
+    dimensions?: number
+    count?: number
+  } = {},
+) {
+  const count = input.count ?? 1
+  defined(integration.onEmbedEnd, 'onEmbedEnd')({
+    callId: 'embed-1',
+    embedCallId: 'embed-call-1',
+    operationId: 'ai.embed.doEmbed',
+    provider: 'openai',
+    modelId: input.modelId ?? 'text-embedding-3-small',
+    values: Array.from({ length: count }, (_, i) => `value-${i}`),
+    embeddings: [{ length: input.dimensions ?? 1536 }],
+    usage: { tokens: input.tokens ?? 10 },
+  })
+}
+
+function callIntegrationOnAbort(integration: EvlogTelemetry, reason?: unknown) {
+  defined(integration.onAbort, 'onAbort')({
+    callId: 'call-1',
+    steps: [],
+    ...(reason !== undefined ? { reason } : {}),
+  })
+}
+
+function callIntegrationOnError(integration: EvlogTelemetry, error: unknown) {
+  defined(integration.onError, 'onError')(error)
 }
 
 describe('createAILogger', () => {
@@ -172,7 +256,7 @@ describe('createAILogger', () => {
       const ai = createAILogger(log)
       const model = createMockModel()
 
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const mockResult = {
         content: [],
@@ -201,7 +285,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const mockResult = {
         content: [],
@@ -223,7 +307,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const mockResult = {
         content: [],
@@ -245,7 +329,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const mockResult = {
         content: [
@@ -270,7 +354,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel({ modelId: 'claude-sonnet-4.6' })
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const mockResult = {
         content: [],
@@ -290,7 +374,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel({ modelId: 'claude-sonnet-4.6' })
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const mockResult = {
         content: [],
@@ -311,9 +395,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Hello ' },
         { type: 'text-delta', id: 't1', delta: 'world' },
@@ -343,9 +427,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Hi' },
         { type: 'text-end', id: 't1' },
@@ -370,9 +454,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'tool-input-start', id: 'tc1', toolName: 'searchWeb' },
         { type: 'tool-input-delta', id: 'tc1', delta: '{}' },
         { type: 'tool-input-end', id: 'tc1' },
@@ -394,10 +478,10 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel({ modelId: 'claude-sonnet-4.6' })
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
-        { type: 'response-metadata', modelId: 'claude-sonnet-4.6-20250514' } as LanguageModelV3StreamPart,
+      const chunks: LanguageModelV4StreamPart[] = [
+        { type: 'response-metadata', modelId: 'claude-sonnet-4.6-20250514' } as LanguageModelV4StreamPart,
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Hi' },
         { type: 'text-end', id: 't1' },
@@ -419,9 +503,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const inputChunks: LanguageModelV3StreamPart[] = [
+      const inputChunks: LanguageModelV4StreamPart[] = [
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Hello' },
         { type: 'text-end', id: 't1' },
@@ -445,7 +529,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate)
         .mockResolvedValueOnce({
@@ -475,7 +559,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const mockResult = {
         content: [],
@@ -503,8 +587,8 @@ describe('createAILogger', () => {
       const gemini = createMockModel({ provider: 'google', modelId: 'gemini-3-flash' })
       const claude = createMockModel({ provider: 'anthropic', modelId: 'claude-sonnet-4.6' })
 
-      const wrappedGemini = ai.wrap(gemini)
-      const wrappedClaude = ai.wrap(claude)
+      const wrappedGemini = wrapMock(ai, gemini)
+      const wrappedClaude = wrapMock(ai, claude)
 
       vi.mocked(gemini.doGenerate).mockResolvedValue({
         content: [],
@@ -534,7 +618,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const mockResult = {
         content: [],
@@ -557,7 +641,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate)
         .mockResolvedValueOnce({
@@ -584,7 +668,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const tools = ['list-pages', 'get-page', 'get-page', 'get-page', 'get-page', 'get-page']
 
@@ -619,7 +703,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel({ provider: 'gateway', modelId: 'google/gemini-3-flash' })
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -638,7 +722,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel({ provider: 'gateway', modelId: 'anthropic/claude-sonnet-4.6' })
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -658,7 +742,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel({ provider: 'anthropic', modelId: 'claude-sonnet-4.6' })
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -678,9 +762,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel({ provider: 'gateway', modelId: 'anthropic/claude-sonnet-4.6' })
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Hi' },
         { type: 'text-end', id: 't1' },
@@ -705,9 +789,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
 
-      const wrappedModel = ai.wrap('anthropic/claude-sonnet-4.6')
+      const wrappedModel = ai.wrap('anthropic/claude-sonnet-4.6') as LanguageModelV4
       expect(wrappedModel).toBeDefined()
-      expect(wrappedModel.specificationVersion).toBe('v3')
+      expect(wrappedModel.specificationVersion).toBe('v4')
     })
   })
 
@@ -716,9 +800,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Hi' },
         { type: 'text-end', id: 't1' },
@@ -743,9 +827,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Hi' },
         { type: 'text-end', id: 't1' },
@@ -771,7 +855,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockRejectedValue(new Error('API rate limit exceeded'))
 
@@ -787,7 +871,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doStream).mockRejectedValue(new Error('Connection timeout'))
 
@@ -803,9 +887,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'text-start', id: 't1' },
         { type: 'error', error: new Error('Content filter triggered') },
         { type: 'finish', finishReason: createFinishReason('content-filter'), usage: createMockUsage() },
@@ -841,7 +925,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       ai.captureEmbed({ usage: { tokens: 30 } })
 
@@ -867,7 +951,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'searchWeb', input: '{"query":"weather"}' }],
@@ -886,7 +970,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log, { toolInputs: true })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [
@@ -911,7 +995,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log, { toolInputs: true })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'run', input: 'not-json' }],
@@ -931,9 +1015,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log, { toolInputs: true })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'tool-input-start', id: 'tc1', toolName: 'searchWeb' },
         { type: 'tool-input-delta', id: 'tc1', delta: '{"que' },
         { type: 'tool-input-delta', id: 'tc1', delta: 'ry":"hello"}' },
@@ -956,9 +1040,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'tool-input-start', id: 'tc1', toolName: 'searchWeb' },
         { type: 'tool-input-delta', id: 'tc1', delta: '{"query":"test"}' },
         { type: 'tool-input-end', id: 'tc1' },
@@ -980,7 +1064,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log, { toolInputs: true })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'run', input: { already: 'parsed' } }],
@@ -1000,7 +1084,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log, { toolInputs: { maxLength: 20 } })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'queryDB', input: '{"sql":"SELECT * FROM events WHERE status = 200 ORDER BY created_at DESC LIMIT 50"}' },],
@@ -1022,7 +1106,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log, { toolInputs: { maxLength: 500 } })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'search', input: '{"q":"hello"}' },],
@@ -1051,7 +1135,7 @@ describe('createAILogger', () => {
         },
       })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [
@@ -1080,7 +1164,7 @@ describe('createAILogger', () => {
         },
       })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'search', input: '{"query":"a very long search query that exceeds the limit"}' },],
@@ -1101,9 +1185,9 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log, { toolInputs: { maxLength: 15 } })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: 'tool-input-start', id: 'tc1', toolName: 'queryDB' },
         { type: 'tool-input-delta', id: 'tc1', delta: '{"sql":"SELECT * FROM events' },
         { type: 'tool-input-delta', id: 'tc1', delta: ' WHERE id = 1"}' },
@@ -1130,7 +1214,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -1149,10 +1233,10 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks: LanguageModelV3StreamPart[] = [
-        { type: 'response-metadata', id: 'msg_stream_123', modelId: 'claude-sonnet-4.6' } as LanguageModelV3StreamPart,
+      const chunks: LanguageModelV4StreamPart[] = [
+        { type: 'response-metadata', id: 'msg_stream_123', modelId: 'claude-sonnet-4.6' } as LanguageModelV4StreamPart,
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Hi' },
         { type: 'text-end', id: 't1' },
@@ -1174,7 +1258,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -1195,7 +1279,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -1215,7 +1299,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate)
         .mockResolvedValueOnce({
@@ -1255,16 +1339,16 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
-      const chunks1: LanguageModelV3StreamPart[] = [
+      const chunks1: LanguageModelV4StreamPart[] = [
         { type: 'tool-input-start', id: 'tc1', toolName: 'search' },
         { type: 'tool-input-delta', id: 'tc1', delta: '{}' },
         { type: 'tool-input-end', id: 'tc1' },
         { type: 'finish', finishReason: createFinishReason('tool-calls'), usage: createMockUsage({ inputTotal: 150, outputTotal: 80 }) },
       ]
 
-      const chunks2: LanguageModelV3StreamPart[] = [
+      const chunks2: LanguageModelV4StreamPart[] = [
         { type: 'text-start', id: 't1' },
         { type: 'text-delta', id: 't1', delta: 'Done' },
         { type: 'text-end', id: 't1' },
@@ -1303,8 +1387,8 @@ describe('createAILogger', () => {
       const fast = createMockModel({ provider: 'anthropic', modelId: 'claude-haiku-4.5' })
       const smart = createMockModel({ provider: 'anthropic', modelId: 'claude-sonnet-4.6' })
 
-      const wrappedFast = ai.wrap(fast)
-      const wrappedSmart = ai.wrap(smart)
+      const wrappedFast = wrapMock(ai, fast)
+      const wrappedSmart = wrapMock(ai, smart)
 
       vi.mocked(fast.doGenerate).mockResolvedValue({
         content: [],
@@ -1336,6 +1420,7 @@ describe('createAILogger', () => {
       const middleware = createAIMiddleware(log)
 
       expect(middleware).toBeDefined()
+      expect(middleware.specificationVersion).toBe('v4')
       expect(middleware.wrapGenerate).toBeTypeOf('function')
       expect(middleware.wrapStream).toBeTypeOf('function')
     })
@@ -1346,7 +1431,10 @@ describe('createAILogger', () => {
       const middleware = createAIMiddleware(log, { toolInputs: true })
       const model = createMockModel()
 
-      const wrappedModel = wrapLanguageModel({ model, middleware })
+      const wrappedModel = wrapLanguageModel({
+        model: model as LanguageModelV4,
+        middleware,
+      })
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'search', input: '{"q":"test"}' }],
@@ -1361,6 +1449,82 @@ describe('createAILogger', () => {
       expect(aiData.calls).toBe(1)
       expect(aiData.toolCalls).toEqual([{ name: 'search', input: { q: 'test' } }])
       expect(aiData.responseId).toBe('msg_abc')
+    })
+  })
+
+  describe('LanguageModelV4 wrap support (#406)', () => {
+    it('wraps a native V4 model and captures generate usage', async () => {
+      const log = createMockLogger()
+      const ai = createAILogger(log)
+      const model = createMockModel({ specificationVersion: 'v4', modelId: 'claude-sonnet-4.6' })
+      const wrappedModel = wrapMock(ai, model)
+
+      expect(wrappedModel.specificationVersion).toBe('v4')
+
+      vi.mocked(model.doGenerate).mockResolvedValue(asGenerateResult({
+        content: [],
+        finishReason: createFinishReason(),
+        usage: createMockUsage({ inputTotal: 120, outputTotal: 40 }),
+        response: { modelId: 'claude-sonnet-4.6' },
+      }))
+
+      await wrappedModel.doGenerate(createMockCallOptions())
+
+      const aiData = getLastAiData(log)
+      expect(aiData.calls).toBe(1)
+      expect(aiData.inputTokens).toBe(120)
+      expect(aiData.outputTokens).toBe(40)
+      expect(aiData.model).toBe('claude-sonnet-4.6')
+    })
+
+    it('still accepts a V3 model and upgrades the wrapped result to V4', async () => {
+      const log = createMockLogger()
+      const ai = createAILogger(log)
+      const model = createMockModel({ specificationVersion: 'v3' })
+      const wrappedModel = wrapMock(ai, model)
+
+      expect(wrappedModel.specificationVersion).toBe('v4')
+
+      vi.mocked(model.doGenerate).mockResolvedValue(asGenerateResult({
+        content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'search', input: '{"q":"v3"}' }],
+        finishReason: createFinishReason('tool-calls'),
+        usage: createMockUsage({ inputTotal: 80, outputTotal: 20 }),
+        response: { modelId: 'claude-sonnet-4.6', id: 'msg_v3' },
+      }))
+
+      await wrappedModel.doGenerate(createMockCallOptions())
+
+      const aiData = getLastAiData(log)
+      expect(aiData.calls).toBe(1)
+      expect(aiData.inputTokens).toBe(80)
+      expect(aiData.responseId).toBe('msg_v3')
+    })
+
+    it('captures V4 stream finish usage and TTFT', async () => {
+      const log = createMockLogger()
+      const ai = createAILogger(log)
+      const model = createMockModel({ specificationVersion: 'v4' })
+      const wrappedModel = wrapMock(ai, model)
+
+      const chunks: LanguageModelV4StreamPart[] = [
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'hello' },
+        { type: 'text-end', id: 't1' },
+        { type: 'finish', finishReason: createFinishReason(), usage: createMockUsage({ inputTotal: 10, outputTotal: 5 }) },
+      ]
+
+      vi.mocked(model.doStream).mockResolvedValue(asStreamResult({
+        stream: makeReadableStream(chunks),
+      }))
+
+      const { stream } = await wrappedModel.doStream(createMockCallOptions())
+      await consumeStream(stream)
+
+      const aiData = getLastAiData(log)
+      expect(aiData.calls).toBe(1)
+      expect(aiData.inputTokens).toBe(10)
+      expect(aiData.outputTokens).toBe(5)
+      expect(aiData.msToFirstChunk).toBeTypeOf('number')
     })
   })
 
@@ -1431,7 +1595,7 @@ describe('createAILogger', () => {
         },
       })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -1455,7 +1619,7 @@ describe('createAILogger', () => {
         },
       })
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -1474,7 +1638,7 @@ describe('createAILogger', () => {
       const log = createMockLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [],
@@ -1491,14 +1655,19 @@ describe('createAILogger', () => {
   })
 
   describe('createEvlogIntegration', () => {
-    it('returns a valid TelemetryIntegration', () => {
+    it('returns a valid telemetry integration with v6 and v7 hooks', () => {
       const log = createMockLogger()
       const integration = createEvlogIntegration(log)
 
       expect(integration).toBeDefined()
       expect(integration.onStart).toBeTypeOf('function')
       expect(integration.onToolCallFinish).toBeTypeOf('function')
+      expect(integration.onToolExecutionEnd).toBeTypeOf('function')
       expect(integration.onFinish).toBeTypeOf('function')
+      expect(integration.onEnd).toBeTypeOf('function')
+      expect(integration.onEmbedEnd).toBeTypeOf('function')
+      expect(integration.onAbort).toBeTypeOf('function')
+      expect(integration.onError).toBeTypeOf('function')
     })
 
     it('captures tool execution timing and success', () => {
@@ -1581,7 +1750,7 @@ describe('createAILogger', () => {
       const ai = createAILogger(log)
       const integration = createEvlogIntegration(ai)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       vi.mocked(model.doGenerate).mockResolvedValue({
         content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'getWeather', input: '{}' }],
@@ -1613,16 +1782,17 @@ describe('createAILogger', () => {
     })
 
     it('computes totalDurationMs from onStart to onFinish', async () => {
-      const log = createMockLogger()
-      const integration = createEvlogIntegration(log)
+      await withFakeTimers(() => {
+        const log = createMockLogger()
+        const integration = createEvlogIntegration(log)
 
-      callIntegrationOnStart(integration)
-      await new Promise(resolve => setTimeout(resolve, 20))
-      callIntegrationOnFinish(integration)
+        callIntegrationOnStart(integration)
+        vi.advanceTimersByTime(20)
+        callIntegrationOnFinish(integration)
 
-      const aiData = getLastAiData(log)
-      expect(aiData.totalDurationMs).toBeTypeOf('number')
-      expect(aiData.totalDurationMs as number).toBeGreaterThanOrEqual(15)
+        const aiData = getLastAiData(log)
+        expect(aiData.totalDurationMs).toBe(20)
+      })
     })
 
     it('handles string errors from tool execution', () => {
@@ -1653,6 +1823,113 @@ describe('createAILogger', () => {
       const aiData = getLastAiData(log)
       expect(aiData.tools).toBeUndefined()
     })
+
+    describe('AI SDK v7 hooks', () => {
+      it('captures tool execution via onToolExecutionEnd', () => {
+        const log = createMockLogger()
+        const integration = createEvlogIntegration(log)
+
+        callIntegrationOnStart(integration)
+        callIntegrationOnToolExecutionEnd(integration, {
+          toolName: 'getWeather',
+          toolExecutionMs: 150,
+          success: true,
+          output: { temperature: 22 },
+        })
+        callIntegrationOnEnd(integration)
+
+        const aiData = getLastAiData(log)
+        const tools = aiData.tools as Array<Record<string, unknown>>
+        expect(tools).toHaveLength(1)
+        expect(tools[0]).toEqual({
+          name: 'getWeather',
+          durationMs: 150,
+          success: true,
+        })
+      })
+
+      it('captures tool errors via onToolExecutionEnd', () => {
+        const log = createMockLogger()
+        const integration = createEvlogIntegration(log)
+
+        callIntegrationOnStart(integration)
+        callIntegrationOnToolExecutionEnd(integration, {
+          toolName: 'searchDB',
+          toolExecutionMs: 50,
+          success: false,
+          error: new Error('Connection refused'),
+        })
+        callIntegrationOnEnd(integration)
+
+        const aiData = getLastAiData(log)
+        const tools = aiData.tools as Array<Record<string, unknown>>
+        expect(tools[0]).toEqual({
+          name: 'searchDB',
+          durationMs: 50,
+          success: false,
+          error: 'Connection refused',
+        })
+      })
+
+      it('computes totalDurationMs from onStart to onEnd', async () => {
+        await withFakeTimers(() => {
+          const log = createMockLogger()
+          const integration = createEvlogIntegration(log)
+
+          callIntegrationOnStart(integration)
+          vi.advanceTimersByTime(20)
+          callIntegrationOnEnd(integration)
+
+          const aiData = getLastAiData(log)
+          expect(aiData.totalDurationMs).toBe(20)
+        })
+      })
+
+      it('auto-captures embeddings via onEmbedEnd', () => {
+        const log = createMockLogger()
+        const integration = createEvlogIntegration(log)
+
+        callIntegrationOnEmbedEnd(integration, {
+          modelId: 'text-embedding-3-small',
+          tokens: 42,
+          dimensions: 1536,
+          count: 3,
+        })
+
+        const aiData = getLastAiData(log)
+        expect(aiData.calls).toBe(1)
+        expect(aiData.inputTokens).toBe(42)
+        expect(aiData.embedding).toEqual({
+          model: 'text-embedding-3-small',
+          tokens: 42,
+          dimensions: 1536,
+          count: 3,
+        })
+      })
+
+      it('records abort via onAbort', () => {
+        const log = createMockLogger()
+        const integration = createEvlogIntegration(log)
+
+        callIntegrationOnStart(integration)
+        callIntegrationOnAbort(integration, new Error('User cancelled'))
+
+        const aiData = getLastAiData(log)
+        expect(aiData.finishReason).toBe('abort')
+        expect(aiData.error).toBe('User cancelled')
+        expect(aiData.totalDurationMs).toBeTypeOf('number')
+      })
+
+      it('records unrecoverable errors via onError', () => {
+        const log = createMockLogger()
+        const integration = createEvlogIntegration(log)
+
+        callIntegrationOnError(integration, new Error('Provider unavailable'))
+
+        const aiData = getLastAiData(log)
+        expect(aiData.error).toBe('Provider unavailable')
+      })
+    })
   })
 
   describe('public metadata API', () => {
@@ -1678,7 +1955,7 @@ describe('createAILogger', () => {
           cost: { 'claude-sonnet-4.6': { input: 3, output: 15 } },
         })
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         vi.mocked(model.doGenerate).mockResolvedValue({
           content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'search', input: '{}' }],
@@ -1709,7 +1986,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         vi.mocked(model.doGenerate).mockResolvedValue({
           content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'search', input: '{}' }],
@@ -1733,7 +2010,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         vi.mocked(model.doGenerate)
           .mockResolvedValueOnce({
@@ -1780,7 +2057,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         vi.mocked(model.doGenerate).mockRejectedValue(new Error('quota exceeded'))
 
@@ -1797,7 +2074,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         vi.mocked(model.doGenerate).mockResolvedValue({
           content: [],
@@ -1816,7 +2093,7 @@ describe('createAILogger', () => {
           cost: { 'claude-sonnet-4.6': { input: 3, output: 15 } },
         })
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         vi.mocked(model.doGenerate).mockResolvedValue({
           content: [],
@@ -1835,7 +2112,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log, { cost: { 'gpt-4o': { input: 2.5, output: 10 } } })
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         vi.mocked(model.doGenerate).mockResolvedValue({
           content: [],
@@ -1854,7 +2131,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         const updates: Array<ReturnType<typeof ai.getMetadata>> = []
         ai.onUpdate((metadata) => {
@@ -1902,7 +2179,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         const updates: Array<ReturnType<typeof ai.getMetadata>> = []
         ai.onUpdate(metadata => updates.push(metadata))
@@ -1920,7 +2197,7 @@ describe('createAILogger', () => {
         const ai = createAILogger(log)
         const integration = createEvlogIntegration(ai)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         const updates: Array<ReturnType<typeof ai.getMetadata>> = []
         ai.onUpdate(metadata => updates.push(metadata))
@@ -1952,7 +2229,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         let count = 0
         const off = ai.onUpdate(() => {
@@ -1999,7 +2276,7 @@ describe('createAILogger', () => {
         const log = createMockLogger()
         const ai = createAILogger(log)
         const model = createMockModel()
-        const wrappedModel = ai.wrap(model)
+        const wrappedModel = wrapMock(ai, model)
 
         ai.onUpdate(() => {
           throw new Error('listener crashed')
@@ -2043,7 +2320,7 @@ describe('createAILogger', () => {
       const log = createLogger()
       const ai = createAILogger(log)
       const model = createMockModel()
-      const wrappedModel = ai.wrap(model)
+      const wrappedModel = wrapMock(ai, model)
 
       const tools = ['list-pages', 'get-page', 'get-page', 'get-page', 'get-page', 'get-page']
       const doGenerate = vi.mocked(model.doGenerate)
@@ -2075,8 +2352,8 @@ describe('createAILogger', () => {
 
       const gemini = createMockModel({ provider: 'google', modelId: 'gemini-3-flash' })
       const claude = createMockModel({ provider: 'anthropic', modelId: 'claude-sonnet-4.6' })
-      const wrappedGemini = ai.wrap(gemini)
-      const wrappedClaude = ai.wrap(claude)
+      const wrappedGemini = wrapMock(ai, gemini)
+      const wrappedClaude = wrapMock(ai, claude)
 
       const baseResult = (modelId: string) => ({
         content: [],

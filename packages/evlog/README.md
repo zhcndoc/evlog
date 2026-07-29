@@ -560,6 +560,32 @@ export default async function fetch(request: Request) {
 
 See the full [orpc example](https://github.com/HugoRCD/evlog/tree/main/examples/orpc) for a complete working project.
 
+## eve
+
+```typescript
+// agent/hooks/evlog.ts
+import { defineEvlogHook } from 'evlog/eve'
+import { createAxiomDrain } from 'evlog/axiom'
+
+export default defineEvlogHook({
+  init: { env: { service: 'my-agent' } },
+  drain: createAxiomDrain(),
+  maxSessions: 256,
+})
+```
+
+```typescript
+// agent/tools/my_tool.ts — inside execute()
+import { useLogger } from 'evlog/eve'
+
+const log = useLogger()
+log.set({ order: { id: input.orderId } })
+```
+
+`defineEvlogHook()` maps eve turn lifecycle events to one wide event per turn. Call `useLogger()` in tools — the logger is bound via AsyncLocalStorage on `turn.started`. Pass `ctx` only when ALS is unavailable (`useLogger(ctx)`). Pretty-printing follows `isDev()` by default (tree locally, JSON in production); set `init.pretty: false` explicitly if you need to override. Complements eve Agent Runs and OpenTelemetry — see the [eve use case](https://evlog.dev/use-cases/eve).
+
+See the full [eve example](https://github.com/HugoRCD/evlog/tree/main/examples/eve) for a complete agent layout.
+
 ## Browser
 
 Use the `log` API on the client side for structured browser logging:
@@ -794,7 +820,9 @@ See [the Audit Logs guide](https://evlog.dev/use-cases/audit/overview) for compl
 
 ## AI SDK Integration
 
-Capture token usage, tool calls, model info, and streaming metrics from the [Vercel AI SDK](https://ai-sdk.dev) into wide events. Requires `ai >= 6.0.0`.
+Capture token usage, tool calls, model info, and streaming metrics from the [Vercel AI SDK](https://ai-sdk.dev) into wide events. Compatible with AI SDK v6 and v7 (`ai >= 6.0.168`). AI SDK v7 requires Node.js 22+.
+
+For tool execution timing, abort tracking, and auto embed capture, pass `createEvlogIntegration(ai)` to `telemetry.integrations` (v7) or `experimental_telemetry.integrations` (v6).
 
 ```typescript
 import { streamText } from 'ai'
@@ -1388,11 +1416,45 @@ try {
 | **Fastify** | `app.register(evlog)` with `import { evlog } from 'evlog/fastify'` ([example](./examples/fastify)) |
 | **Elysia** | `.use(evlog())` with `import { evlog } from 'evlog/elysia'` ([example](./examples/elysia)) |
 | **oRPC** | `withEvlog(handler)` + `os.use(evlog())` with `import { evlog, withEvlog } from 'evlog/orpc'` ([example](./examples/orpc)) |
+| **eve** | `defineEvlogHook()` in `agent/hooks/evlog.ts` with `import { defineEvlogHook, useLogger } from 'evlog/eve'` ([example](./examples/eve)) |
 | **Cloudflare Workers** | Manual setup with `import { initWorkersLogger, createWorkersLogger } from 'evlog/workers'` ([example](./examples/workers)) |
 | **Custom** | Build your own with `import { createMiddlewareLogger } from 'evlog/toolkit'` ([guide](https://evlog.dev/extend/custom-framework)) |
 | **Analog** | Nitro v2 module setup |
 | **Vinxi** | Nitro v2 module setup |
 | **SolidStart** | Nitro v2 module setup ([example](./examples/solidstart)) |
+
+## CLI
+
+[`@evlog/cli`](https://npmjs.com/package/@evlog/cli) is a **separate package** — still early — that scores what your app can tell you when something goes wrong. It reads your project on disk — no traffic, no instrumentation — finds every entry point, and names the ones to fix first. Worth trying once you have anything wired; hand the report to an agent if you like.
+
+```bash
+npx @evlog/cli map
+# or: pnpm dlx @evlog/cli map
+```
+
+```
+▀▀█ █▀▀   score /100              your-app · Nuxt
+  █ █▀█   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱    29 entry points scanned
+  ▀ ▀▀▀   good                    ▂▂▂▃▃▃▃▃▄▆▆▆▆▆███████████████
+
+FIX FIRST
+1. ANY    /api/auth/:all* A — touches auth and logs nothing
+   server/api/auth/[...all].ts:1 · evlog.dev/learn/wide-events
+```
+
+| Command | What it does |
+|---------|-------------|
+| `evlog map` | Score every entry point and list the three worth fixing first |
+| `evlog map <route-or-file>` | Explain one entry point in full, with the shape it could take |
+| `evlog map --all` | Every entry point as a check matrix |
+| `evlog map --min-score <n>` | Exit 1 below the threshold — a CI gate |
+| `evlog doctor` | Diagnose the install: Node, workspace, evlog version, local logs |
+
+Same code in, same verdict out, with the file and line for every finding — which also makes it something you can hand to an agent: run it, fix the list, run it again.
+
+> **Early days:** the CLI is tested and safe to run on any project, but it is young — four framework adapters today, rules still being refined. Expect verdicts and scores to move between releases; pin it as a dev dependency when you gate CI on the number.
+
+Docs: [CLI](https://www.evlog.dev/cli/overview) · [`evlog map`](https://www.evlog.dev/cli/map) · [Rules](https://www.evlog.dev/cli/rules) · [Scoring](https://www.evlog.dev/cli/scoring) · [CI](https://www.evlog.dev/cli/ci)
 
 ## Agent Skills
 
@@ -1411,12 +1473,14 @@ Once installed, your AI assistant will:
 - Help refactor scattered `console.log` calls into structured events
 - Guide you to use `createError()` for self-documenting errors
 - Ensure proper use of `useLogger(event)` in Nuxt/Nitro routes
+- Optionally run [`evlog map`](https://www.evlog.dev/cli/map) (`npx @evlog/cli map`) to score dark entry points — separate early CLI package, worth trying
 
 ### Examples
 
-```
+```text
 Add logging to this endpoint
 Review my logging code
+Raise my evlog map score
 Help me set up logging for this service
 ```
 

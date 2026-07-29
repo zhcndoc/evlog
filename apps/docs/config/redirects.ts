@@ -14,6 +14,12 @@ type RouteRedirect = { redirect: { to: string, statusCode: 301 } }
 const r = (to: string): RouteRedirect => ({ redirect: { to, statusCode: 301 } })
 
 export const redirects: Record<string, RouteRedirect> = {
+  // `/landing` is the content collection path behind the homepage (rendered at `/` via
+  // `app/pages/index.vue`). No Vue page matches `/landing` itself, so it falls through to
+  // the raw-markdown mirror and serves `text/markdown` — a near-duplicate of `/` that
+  // Google crawls but (correctly) won't index. Send it to the real homepage instead.
+  '/landing': r('/'),
+
   // Section landings (no slug → first child of new section)
   '/getting-started': r('/start/introduction'),
   '/logging': r('/learn/overview'),
@@ -22,6 +28,19 @@ export const redirects: Record<string, RouteRedirect> = {
   '/adapters': r('/integrate/adapters/overview'),
   '/enrichers': r('/use-cases/enrichers'),
   '/use-cases': r('/use-cases/overview'),
+  '/use-cases/eve/overview': r('/use-cases/eve'),
+  '/use-cases/telemetry': r('/use-cases/telemetry/overview'),
+
+  // New section roots (no content index page — 404 without an explicit redirect)
+  '/start': r('/start/introduction'),
+  '/learn': r('/learn/overview'),
+  '/cli': r('/cli/overview'),
+  '/integrate': r('/integrate/overview'),
+  '/reference': r('/reference/configuration'),
+  '/examples': r('/integrate/frameworks/overview'),
+  '/adapters/cloud': r('/integrate/adapters/overview'),
+  '/adapters/self-hosted': r('/integrate/adapters/overview'),
+  '/use-cases/audit': r('/use-cases/audit/overview'),
 
   // Getting Started → Start + Reference
   '/getting-started/introduction': r('/start/introduction'),
@@ -152,3 +171,18 @@ export const redirects: Record<string, RouteRedirect> = {
   '/enrichers/built-in': r('/use-cases/enrichers'),
   '/enrichers/custom': r('/extend/custom-enrichers'),
 }
+
+/**
+ * Docus mirrors every content page as raw markdown at `/raw/<path>.md` (used by
+ * `/llms.txt`). That catch-all route resolves by content path and is not covered by
+ * the page-level redirects above, so old paths 404 there even though the HTML page
+ * redirects fine. Derive one mirror redirect per entry instead of hand-duplicating
+ * the whole table — anchored targets (`#retention`) have no raw equivalent and are
+ * skipped, as is `/` (the homepage isn't a regular content page and has no
+ * `/raw/....md` mirror).
+ */
+export const rawRedirects: Record<string, RouteRedirect> = Object.fromEntries(
+  Object.entries(redirects)
+    .filter(([, entry]) => !entry.redirect.to.includes('#') && entry.redirect.to !== '/')
+    .map(([from, entry]) => [`/raw${from}.md`, r(`/raw${entry.redirect.to}.md`)]),
+)

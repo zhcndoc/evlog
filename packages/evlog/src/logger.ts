@@ -8,7 +8,7 @@ import { buildErrorEntries, compactStackForStorage, PRETTY_ERROR_TREE_SPACER } f
 import type { ResolvedPrettyError } from './shared/dev-terminal'
 import { resolveDevTerminal } from './shared/dev-terminal'
 import { EvlogError } from './error'
-import { colors, cssColors, detectEnvironment, escapeFormatString, formatDuration, getConsoleMethod, getCssLevelColor, getLevelColor, isBrowser, isDev, isLevelEnabled, matchesPattern } from './utils'
+import { colors, cssColors, detectEnvironment, escapeFormatString, formatDuration, getConsoleMethod, getCssLevelColor, getLevelColor, isBrowser, isDev, isLevelEnabled, isoNow, matchesPattern } from './utils'
 
 const nativeStdoutWrite =
   typeof process !== 'undefined' && typeof process.stdout?.write === 'function'
@@ -28,12 +28,6 @@ function writePrettyStdout(text: string): void {
 
 function isPlainObject(val: unknown): val is Record<string, unknown> {
   return val !== null && typeof val === 'object' && !Array.isArray(val)
-}
-
-const _tsDate = new Date()
-function isoNow(): string {
-  _tsDate.setTime(Date.now())
-  return _tsDate.toISOString()
 }
 
 /** Shown after post-emit warnings so users can fix fire-and-forget / ALS continuations. */
@@ -106,6 +100,7 @@ let globalSilent = false
 /** Minimum level for the global `log` API only (`ownsEvent === false`). Default: all levels. */
 let globalMinLevel: LogLevel = 'debug'
 let _locked = false
+let _loggerInitialized = false
 let globalPluginRunner: PluginRunner = getEmptyPluginRunner()
 
 /**
@@ -144,6 +139,8 @@ export function initLogger(config: LoggerConfig = {}): void {
   if (globalSilent && !hasAnyDrain && !config._suppressDrainWarning) {
     console.warn('[evlog] silent mode is enabled but no drain is configured. Events will be built and sampled but not output anywhere. Set a drain via initLogger({ drain }) or a framework hook (evlog:drain).')
   }
+
+  _loggerInitialized = true
 }
 
 /**
@@ -176,6 +173,13 @@ export function lockLogger(): void {
  */
 export function isLoggerLocked(): boolean {
   return _locked
+}
+
+/**
+ * @internal Whether {@link initLogger} has completed at least once.
+ */
+export function isLoggerInitialized(): boolean {
+  return _loggerInitialized
 }
 
 /**
@@ -349,6 +353,9 @@ function emitTaggedLog(level: LogLevel, tag: string, message: string): void {
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) {
     return String(value)
+  }
+  if (Array.isArray(value)) {
+    return JSON.stringify(value)
   }
   if (isPlainObject(value)) {
     const pairs: string[] = []
@@ -605,11 +612,7 @@ function prettyPrintWideEvent(event: Record<string, unknown>): void {
     styles.push(cssColors.dim, cssColors.reset, lc, cssColors.reset, cssColors.cyan, cssColors.reset)
   } else {
     const lc = getLevelColor(levelLabel)
-    if (isDev()) {
-      parts.push(`${lc}${levelLabel.toUpperCase()}${colors.reset} ${colors.cyan}[${service}]${colors.reset}`)
-    } else {
-      parts.push(`${colors.dim}${ts}${colors.reset} ${lc}${levelLabel.toUpperCase()}${colors.reset} ${colors.cyan}[${service}]${colors.reset}`)
-    }
+    parts.push(`${colors.dim}${ts}${colors.reset} ${lc}${levelLabel.toUpperCase()}${colors.reset} ${colors.cyan}[${service}]${colors.reset}`)
   }
 
   if (rest.method && rest.path) {
@@ -945,9 +948,10 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       const level: LogLevel = manualLevel ?? (hasError ? 'error' : hasWarn ? 'warn' : 'info')
 
       let forceKeep = false
+      const auditForceKeep = consumeAuditForceKeep(context)
       if (overrides?._forceKeep) {
         forceKeep = true
-      } else if (consumeAuditForceKeep(context)) {
+      } else if (auditForceKeep) {
         forceKeep = true
       } else if (globalSampling.keep?.length) {
         const status = (overrides as Record<string, unknown> | undefined)?.status ?? context.status

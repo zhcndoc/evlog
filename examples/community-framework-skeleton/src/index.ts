@@ -17,6 +17,7 @@ import {
   defineFrameworkIntegration,
   type BaseEvlogOptions,
 } from 'evlog/toolkit'
+// On Workers / edge, prefer: import { createLoggerStorage } from 'evlog/toolkit/storage'
 
 /** The framework's per-request context shape. */
 export interface MyFrameworkContext {

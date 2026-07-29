@@ -1,0 +1,190 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/*
+ * Brand tokens — mirror `apps/docs/app/assets/css/main.css` verbatim so the
+ * telemetry dashboard matches evlog's actual brand instead of stock Nuxt UI
+ * blue/rounded defaults. Keep in sync with the docs site if the brand changes.
+ */
+@theme static {
+  --color-blue-400: #2853ff;
+  --color-blue-500: #2853ff;
+}
+
+@theme {
+  --font-sans: "Geist", sans-serif;
+  --font-mono: "Geist Mono", monospace;
+  --font-pixel: "Geist Pixel Line", monospace;
+}
+
+:root {
+  --ui-radius: 0;
+}
+
+/* Dark-only surface overrides — scoped to `.dark` so the light mode Nuxt UI
+ * ships out of the box (white bg, zinc text ramp) stays intact. */
+.dark {
+  --ui-bg: var(--color-zinc-950);
+  --ui-text-dimmed: var(--color-zinc-400);
+}
+
+/*
+ * `nuxt-charts` (Unovis under the hood) theme — mirrors the styling used by
+ * https://github.com/nuxt-ui-templates/chat's chart tool: transparent
+ * tooltip chrome (each chart supplies its own tooltip via the `#tooltip`
+ * slot), axis/legend colors pulled from Nuxt UI's semantic text tokens, and
+ * a subtle dot-grid background behind the plot area.
+ */
+:root {
+  --vis-tooltip-padding: 0 !important;
+  --vis-tooltip-background-color: transparent !important;
+  --vis-tooltip-border-color: transparent !important;
+
+  --vis-axis-grid-color: rgba(255, 255, 255, 0) !important;
+  --vis-axis-tick-label-color: var(--ui-text-muted) !important;
+  --vis-axis-label-color: var(--ui-text-toned) !important;
+  --vis-legend-label-color: var(--ui-text-muted) !important;
+
+  /* Unovis only auto-swaps this for its own dark-mode selectors
+   * (`html.dark-theme`/`html[data-theme="dark"]`, etc.), which Nuxt UI's
+   * `.dark` class never matches — override directly so the `padAngle` gaps
+   * in `EnvironmentBreakdown`'s donut don't show its light-mode default. */
+  --vis-donut-background-color: transparent !important;
+
+  --dot-pattern-color: #111827;
+
+  /* Full-saturation on light cards — no need to darken toward black when the
+   * surface is already light. */
+  --chart-success-color: var(--ui-success);
+  --chart-error-color: var(--ui-error);
+  --chart-env-production: var(--ui-success);
+  --chart-env-preview: var(--ui-warning);
+  --chart-env-development: var(--ui-primary);
+  --chart-env-neutral: var(--ui-color-neutral-400);
+  --chart-primary-color: var(--ui-primary);
+}
+
+.dark {
+  --dot-pattern-color: #9ca3af;
+
+  /* Darkened off their raw saturated values so bars/arcs read as deliberate
+   * rather than "hyper brut" against the dashboard's near-black background. */
+  --chart-success-color: color-mix(in srgb, var(--ui-success) 75%, black);
+  --chart-error-color: color-mix(in srgb, var(--ui-error) 55%, black);
+  --chart-env-production: color-mix(in srgb, var(--ui-success) 75%, black);
+  --chart-env-preview: color-mix(in srgb, var(--ui-warning) 75%, black);
+  --chart-env-development: color-mix(in srgb, var(--ui-primary) 85%, black);
+  --chart-env-neutral: color-mix(in srgb, var(--ui-color-neutral-400) 70%, black);
+  --chart-primary-color: color-mix(in srgb, var(--ui-primary) 85%, black);
+}
+
+/*
+ * Motion tokens — strong custom curves (built-in CSS easings are too weak to
+ * read as intentional). Everything animating transform/opacity in the
+ * dashboard shares these.
+ */
+:root {
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/*
+ * Breakdown bar fills (`BreakdownBars`, `CiBreakdown`) — width changes are
+ * expressed as `scaleX` so live refreshes glide on the GPU. Transitions (not
+ * keyframes) so a poll landing mid-animation retargets smoothly.
+ */
+.breakdown-bar {
+  transform-origin: left;
+  transition: transform 250ms var(--ease-out-strong);
+}
+
+/*
+ * Live flash — rows that just arrived on a poll (`LiveFeed`, `RunsTable`)
+ * flash then fade. A one-shot keyframe (not a transition) so it can't hijack
+ * the row's own hover background transition; each row flashes exactly once.
+ */
+.live-flash-fresh {
+  animation: live-flash 900ms ease-out both;
+}
+
+@keyframes live-flash {
+  from {
+    background-color: color-mix(in srgb, var(--ui-primary) 14%, transparent);
+  }
+
+  to {
+    background-color: transparent;
+  }
+}
+
+.feed-enter-active {
+  transition: transform 250ms var(--ease-out-strong), opacity 250ms var(--ease-out-strong);
+}
+
+.feed-enter-from {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+.feed-leave-active {
+  /* Out of flow so remaining rows can start moving immediately. */
+  position: absolute;
+  width: 100%;
+  transition: opacity 150ms ease-out;
+}
+
+.feed-leave-to {
+  opacity: 0;
+}
+
+.feed-move {
+  transition: transform 250ms var(--ease-out-strong);
+}
+
+/*
+ * Page-load stagger — sections cascade in (40ms apart, transform+opacity
+ * only). Skipped entirely under reduced motion: content is simply there.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .stagger-item {
+    animation: stagger-in 400ms var(--ease-out-strong) both;
+  }
+
+  .stagger-item:nth-child(3) { animation-delay: 40ms; }
+  .stagger-item:nth-child(4) { animation-delay: 80ms; }
+  .stagger-item:nth-child(5) { animation-delay: 120ms; }
+  .stagger-item:nth-child(6) { animation-delay: 160ms; }
+  .stagger-item:nth-child(7) { animation-delay: 200ms; }
+  .stagger-item:nth-child(8) { animation-delay: 240ms; }
+}
+
+@keyframes stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .breakdown-bar,
+  .feed-enter-active,
+  .feed-leave-active,
+  .feed-move {
+    transition-duration: 0ms;
+  }
+
+  .live-flash-fresh {
+    animation: none;
+  }
+}
+
+.dot-pattern {
+  position: absolute;
+  /* Purely decorative — never intercept hover/click, or it blocks the chart
+   * SVG it overlaps (e.g. breaks Unovis tooltip hover in `DailyActivityChart`). */
+  pointer-events: none;
+  background-image: radial-gradient(var(--dot-pattern-color) 1px, transparent 1px);
+  background-size: 7px 7px;
+  background-position: -8.5px -8.5px;
+  opacity: 20%;
+  mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 1), transparent 75%);
+}

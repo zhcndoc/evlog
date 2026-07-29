@@ -1,7 +1,56 @@
-import { gateway, wrapLanguageModel, bindTelemetryIntegration } from 'ai'
-import type { GatewayModelId, TelemetryIntegration, OnStartEvent, OnToolCallFinishEvent, OnFinishEvent } from 'ai'
-import type { LanguageModelV3, LanguageModelV3Middleware, LanguageModelV3StreamPart } from '@ai-sdk/provider'
+import * as aiModule from 'ai'
+import { gateway, wrapLanguageModel } from 'ai'
+import type { LanguageModel, LanguageModelMiddleware } from 'ai'
+import type { LanguageModelV4StreamPart } from '@ai-sdk/provider'
 import type { RequestLogger } from '../types'
+
+const { bindTelemetryIntegration } = aiModule as {
+  bindTelemetryIntegration?: (integration: EvlogTelemetryIntegration) => EvlogTelemetry
+}
+
+/** @internal v6 tool execution event shape. */
+interface V6ToolCallFinishEvent {
+  toolCall: { toolName: string }
+  durationMs: number
+  success: boolean
+  error?: unknown
+}
+
+/** @internal v7 tool execution event shape. */
+interface V7ToolExecutionEndEvent {
+  toolCall: { toolName: string }
+  toolExecutionMs: number
+  toolOutput: { type: 'tool-result', output?: unknown } | { type: 'tool-error', error: unknown }
+}
+
+/** @internal v7 embedding telemetry event shape. */
+interface V7EmbedEndEvent {
+  modelId: string
+  usage: { tokens: number }
+  embeddings: Array<{ length?: number }>
+  values: string[]
+}
+
+/**
+ * Telemetry integration returned by {@link createEvlogIntegration}.
+ * Implements hooks for AI SDK v6 (`onToolCallFinish`, `onFinish`) and v7
+ * (`onToolExecutionEnd`, `onEnd`, `onEmbedEnd`, `onAbort`, `onError`).
+ */
+export type EvlogTelemetry = {
+  onStart?: (event: unknown) => void | PromiseLike<void>
+  /** AI SDK v6 — superseded by `onToolExecutionEnd` in v7. */
+  onToolCallFinish?: (event: unknown) => void | PromiseLike<void>
+  onToolExecutionEnd?: (event: unknown) => void | PromiseLike<void>
+  /** AI SDK v6 — superseded by `onEnd` in v7. */
+  onFinish?: (event: unknown) => void | PromiseLike<void>
+  onEnd?: (event: unknown) => void | PromiseLike<void>
+  onEmbedEnd?: (event: unknown) => void | PromiseLike<void>
+  onAbort?: (event: unknown) => void | PromiseLike<void>
+  onError?: (event: unknown) => void | PromiseLike<void>
+}
+
+/** @internal Concrete integration class — both v6 and v7 hook names. */
+interface EvlogTelemetryIntegration extends EvlogTelemetry {}
 
 /**
  * Fine-grained control over tool call input capture.
@@ -72,7 +121,7 @@ export interface AIStepUsage {
 }
 
 /**
- * Tool execution detail captured via `TelemetryIntegration`.
+ * Tool execution detail captured via telemetry integration hooks.
  */
 export interface AIToolExecution {
   name: string
@@ -145,22 +194,29 @@ export interface AILogger {
    * All `generateText` and `streamText` calls using the wrapped model
    * are captured automatically into the wide event.
    *
-   * Accepts a `LanguageModelV3` object or a model string (e.g. `'anthropic/claude-sonnet-4.6'`).
+   * Accepts a language model object (`LanguageModelV3` or `LanguageModelV4`)
+   * or a model string (e.g. `'anthropic/claude-sonnet-4.6'`).
    * Strings are resolved via the AI SDK gateway.
+   *
+   * On AI SDK v7, the wrapped model is a `LanguageModelV4`. On v6 it remains
+   * a `LanguageModelV3`. Both are accepted as input.
    *
    * Also works with pre-wrapped models (e.g. from supermemory, guardrails):
    * `ai.wrap(withSupermemory(base, orgId))` composes correctly.
    *
-   * @example
+   * @example Gateway model string
    * ```ts
    * const ai = createAILogger(log)
    * const model = ai.wrap('anthropic/claude-sonnet-4.6')
+   * ```
    *
-   * // Also accepts a model object
+   * @example Provider model object (V3 or V4)
+   * ```ts
+   * const ai = createAILogger(log)
    * const model = ai.wrap(anthropic('claude-sonnet-4.6'))
    * ```
    */
-  wrap: (model: LanguageModelV3 | GatewayModelId) => LanguageModelV3
+  wrap: (model: LanguageModel) => LanguageModel
 
   /**
    * Manually capture token usage from an `embed()` or `embedMany()` result.
@@ -341,7 +397,7 @@ function resolveProviderAndModel(provider: string, modelId: string): { provider:
  * })
  * ```
  */
-export function createAIMiddleware(log: RequestLogger, options?: AILoggerOptions): LanguageModelV3Middleware {
+export function createAIMiddleware(log: RequestLogger, options?: AILoggerOptions): LanguageModelMiddleware {
   return buildMiddleware(log, options)
 }
 
@@ -377,7 +433,7 @@ export function createAILogger(log: RequestLogger, options?: AILoggerOptions): A
   const middleware = buildMiddlewareFromState(log, state)
 
   return {
-    wrap: (model: LanguageModelV3 | GatewayModelId) => {
+    wrap: (model: LanguageModel) => {
       const resolved = typeof model === 'string' ? gateway(model) : model
       return wrapLanguageModel({ model: resolved, middleware })
     },
@@ -656,15 +712,17 @@ function recordError(log: RequestLogger, state: AccumulatorState, model: { provi
   flushState(log, state)
 }
 
-function buildMiddleware(log: RequestLogger, options?: AILoggerOptions): LanguageModelV3Middleware {
+function buildMiddleware(log: RequestLogger, options?: AILoggerOptions): LanguageModelMiddleware {
   const state = createAccumulatorState(options)
   state._log = log
   return buildMiddlewareFromState(log, state)
 }
 
-function buildMiddlewareFromState(log: RequestLogger, state: AccumulatorState): LanguageModelV3Middleware {
+function buildMiddlewareFromState(log: RequestLogger, state: AccumulatorState): LanguageModelMiddleware {
   return {
-    specificationVersion: 'v3',
+    // AI SDK v7 middleware is V4-native; `LanguageModelMiddleware` also
+    // accepts this on v6-compatible installs that relax the version field.
+    specificationVersion: 'v4',
     wrapGenerate: async ({ doGenerate, model }) => {
       try {
         const result = await doGenerate()
@@ -733,8 +791,8 @@ function buildMiddlewareFromState(log: RequestLogger, state: AccumulatorState): 
       const { stream, ...rest } = doStreamResult
 
       const transformStream = new TransformStream<
-        LanguageModelV3StreamPart,
-        LanguageModelV3StreamPart
+        LanguageModelV4StreamPart,
+        LanguageModelV4StreamPart
       >({
         transform(chunk, controller) {
           if (!firstChunkTime && chunk.type === 'text-delta') {
@@ -838,9 +896,84 @@ function buildMiddlewareFromState(log: RequestLogger, state: AccumulatorState): 
   }
 }
 
+function formatTelemetryError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function recordToolExecution(
+  state: AccumulatorState,
+  input: { name: string, durationMs: number, success: boolean, error?: string },
+): void {
+  const execution: AIToolExecution = {
+    name: input.name,
+    durationMs: input.durationMs,
+    success: input.success,
+  }
+  if (input.error) execution.error = input.error
+  state.toolExecutions.push(execution)
+}
+
+function adaptV6ToolEvent(event: V6ToolCallFinishEvent) {
+  return {
+    name: event.toolCall.toolName,
+    durationMs: event.durationMs,
+    success: event.success,
+    error: !event.success && event.error !== undefined
+      ? formatTelemetryError(event.error)
+      : undefined,
+  }
+}
+
+function adaptV7ToolEvent(event: V7ToolExecutionEndEvent) {
+  const success = event.toolOutput.type === 'tool-result'
+  return {
+    name: event.toolCall.toolName,
+    durationMs: event.toolExecutionMs,
+    success,
+    error: !success && event.toolOutput.type === 'tool-error'
+      ? formatTelemetryError(event.toolOutput.error)
+      : undefined,
+  }
+}
+
+function recordGenerationEnd(state: AccumulatorState, log: RequestLogger): void {
+  if (state.generationStartTime !== undefined) {
+    state.totalDurationMs = Date.now() - state.generationStartTime
+  }
+  flushState(log, state)
+}
+
+function recordEmbedEnd(state: AccumulatorState, log: RequestLogger, event: V7EmbedEndEvent): void {
+  state.calls++
+  state.usage.inputTokens += event.usage.tokens
+  const dimensions = event.embeddings[0]?.length
+  state.embedding = {
+    tokens: (state.embedding?.tokens ?? 0) + event.usage.tokens,
+    model: event.modelId,
+    ...(dimensions !== undefined
+      ? { dimensions }
+      : state.embedding?.dimensions
+        ? { dimensions: state.embedding.dimensions }
+        : {}),
+    count: (state.embedding?.count ?? 0) + event.values.length,
+  }
+  flushState(log, state)
+}
+
+function finalizeIntegration(integration: EvlogTelemetryIntegration): EvlogTelemetry {
+  if (typeof bindTelemetryIntegration === 'function') {
+    return bindTelemetryIntegration(integration)
+  }
+  return integration
+}
+
 /**
- * Create an AI SDK `TelemetryIntegration` that captures tool execution
+ * Create an AI SDK telemetry integration that captures tool execution
  * timing, errors, and total generation wall time into the wide event.
+ *
+ * Compatible with AI SDK v6 (`TelemetryIntegration`) and v7 (`Telemetry`).
+ * On v7, also captures embeddings via `onEmbedEnd`, aborts via `onAbort`,
+ * and unrecoverable errors via `onError`.
  *
  * Complements the middleware-based `createAILogger`: the middleware captures
  * token usage and streaming metrics at the model level, while the integration
@@ -859,8 +992,7 @@ function buildMiddlewareFromState(log: RequestLogger, state: AccumulatorState): 
  * const result = await generateText({
  *   model: ai.wrap('anthropic/claude-sonnet-4.6'),
  *   tools: { getWeather },
- *   experimental_telemetry: {
- *     isEnabled: true,
+ *   telemetry: {
  *     integrations: [createEvlogIntegration(ai)],
  *   },
  * })
@@ -874,8 +1006,7 @@ function buildMiddlewareFromState(log: RequestLogger, state: AccumulatorState): 
  *
  * const result = await generateText({
  *   model: openai('gpt-4o'),
- *   experimental_telemetry: {
- *     isEnabled: true,
+ *   telemetry: {
  *     integrations: [integration],
  *   },
  * })
@@ -884,7 +1015,7 @@ function buildMiddlewareFromState(log: RequestLogger, state: AccumulatorState): 
 export function createEvlogIntegration(
   logOrAi: RequestLogger | AILogger,
   options?: AILoggerOptions,
-): TelemetryIntegration {
+): EvlogTelemetry {
   let log: RequestLogger
   let state: AccumulatorState
 
@@ -897,32 +1028,47 @@ export function createEvlogIntegration(
     state._log = log
   }
 
-  class EvlogIntegration implements TelemetryIntegration {
+  class EvlogIntegration implements EvlogTelemetryIntegration {
 
-    onStart(_event: OnStartEvent) {
+    onStart(_event: unknown) {
       state.generationStartTime = Date.now()
     }
 
-    onToolCallFinish(event: OnToolCallFinishEvent) {
-      const execution: AIToolExecution = {
-        name: (event.toolCall as { toolName: string }).toolName,
-        durationMs: event.durationMs,
-        success: event.success,
-      }
-      if (!event.success && event.error) {
-        execution.error = event.error instanceof Error ? event.error.message : String(event.error)
-      }
-      state.toolExecutions.push(execution)
+    onToolCallFinish(event: unknown) {
+      recordToolExecution(state, adaptV6ToolEvent(event as V6ToolCallFinishEvent))
     }
 
-    onFinish(_event: OnFinishEvent) {
-      if (state.generationStartTime) {
-        state.totalDurationMs = Date.now() - state.generationStartTime
+    onToolExecutionEnd(event: unknown) {
+      recordToolExecution(state, adaptV7ToolEvent(event as V7ToolExecutionEndEvent))
+    }
+
+    onFinish(_event: unknown) {
+      recordGenerationEnd(state, log)
+    }
+
+    onEnd(_event: unknown) {
+      recordGenerationEnd(state, log)
+    }
+
+    onEmbedEnd(event: unknown) {
+      recordEmbedEnd(state, log, event as V7EmbedEndEvent)
+    }
+
+    onAbort(event: unknown) {
+      state.lastFinishReason = 'abort'
+      const { reason } = event as { reason?: unknown }
+      if (reason !== undefined) {
+        state.lastError = formatTelemetryError(reason)
       }
+      recordGenerationEnd(state, log)
+    }
+
+    onError(error: unknown) {
+      state.lastError = formatTelemetryError(error)
       flushState(log, state)
     }
-  
+
   }
 
-  return bindTelemetryIntegration(new EvlogIntegration())
+  return finalizeIntegration(new EvlogIntegration())
 }

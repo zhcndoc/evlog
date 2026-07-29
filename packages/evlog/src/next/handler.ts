@@ -42,6 +42,7 @@ export function configureHandler(options: NextEvlogOptions): void {
     sampling: options.sampling,
     minLevel: options.minLevel,
     stringify: options.stringify,
+    redact: options.redact,
     _suppressDrainWarning: true,
   })
 }
@@ -114,6 +115,34 @@ async function callEnrichAndDrain(
 
   // Fallback: fire-and-forget (enrich still awaited for correctness)
   run().catch(() => {})
+}
+
+/**
+ * Rethrow `error` if Next.js recognizes it as an internal control-flow signal
+ * (`redirect()`, `notFound()`, `forbidden()`, `unauthorized()`, ...) rather than a real
+ * application error. No-ops otherwise, letting the caller continue with normal error
+ * logging.
+ *
+ * Delegates to Next's own `unstable_rethrow`, which covers current and future signal
+ * types without hardcoding digest strings — including signals wrapped in `error.cause`,
+ * which it rethrows unwrapped. `next/navigation` import failures (older Next.js versions,
+ * non-Next runtimes) are swallowed so the caller falls through to normal logging.
+ */
+async function rethrowIfNextNavigationSignal(error: unknown): Promise<void> {
+  let unstableRethrow: ((error: unknown) => void) | undefined
+  try {
+    const nextNavigation = await import('next/navigation') as {
+      unstable_rethrow?: (error: unknown) => void
+    }
+    unstableRethrow = nextNavigation.unstable_rethrow
+  } catch {
+    return
+  }
+
+  if (typeof unstableRethrow !== 'function') return
+
+  // Throws (possibly the unwrapped `error.cause`) iff this is a recognized signal.
+  unstableRethrow(error)
 }
 
 async function emitRequestEvent(
@@ -253,6 +282,11 @@ export function createWithEvlog(options: NextEvlogOptions) {
 
         return result as Awaited<TReturn>
       } catch (error) {
+        // redirect()/notFound()/forbidden()/unauthorized() throw a control-flow signal
+        // that Next.js turns into a real response — not an application error. Rethrow it
+        // untouched instead of logging a phantom ERROR@500 (see #436).
+        await rethrowIfNextNavigationSignal(error)
+
         const err = error instanceof Error ? error : new Error(String(error))
         await enrichNextErrorStackForDev(err, { pretty: state.options.pretty })
         logger.error(err)

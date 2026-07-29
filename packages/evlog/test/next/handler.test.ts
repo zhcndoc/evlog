@@ -131,6 +131,122 @@ describe('withEvlog', () => {
     expect(parsed.status).toBe(404)
   })
 
+  it('rethrows redirect() navigation signals without logging a phantom error (#436)', async () => {
+    const drainMock = vi.fn()
+    const withEvlog = createWithEvlog({ pretty: false, drain: drainMock })
+
+    const redirectError = Object.assign(new Error('NEXT_REDIRECT'), {
+      digest: 'NEXT_REDIRECT;replace;/foo;307;',
+    })
+    const handler = withEvlog((_: Request) => {
+      throw redirectError
+    })
+
+    const request = new Request('http://localhost/go', { method: 'GET' })
+    await expect(handler(request)).rejects.toBe(redirectError)
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    expect(consoleSpy).not.toHaveBeenCalled()
+    expect(drainMock).not.toHaveBeenCalled()
+  })
+
+  it('rethrows notFound() navigation signals without logging a phantom error (#436)', async () => {
+    const drainMock = vi.fn()
+    const withEvlog = createWithEvlog({ pretty: false, drain: drainMock })
+
+    const notFoundError = Object.assign(new Error('NEXT_HTTP_ERROR_FALLBACK'), {
+      digest: 'NEXT_HTTP_ERROR_FALLBACK;404',
+    })
+    const handler = withEvlog((_: Request) => {
+      throw notFoundError
+    })
+
+    const request = new Request('http://localhost/missing', { method: 'GET' })
+    await expect(handler(request)).rejects.toBe(notFoundError)
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    expect(consoleSpy).not.toHaveBeenCalled()
+    expect(drainMock).not.toHaveBeenCalled()
+  })
+
+  it('rethrows forbidden() navigation signals without logging a phantom error (#436)', async () => {
+    const drainMock = vi.fn()
+    const withEvlog = createWithEvlog({ pretty: false, drain: drainMock })
+
+    const forbiddenError = Object.assign(new Error('NEXT_HTTP_ERROR_FALLBACK'), {
+      digest: 'NEXT_HTTP_ERROR_FALLBACK;403',
+    })
+    const handler = withEvlog((_: Request) => {
+      throw forbiddenError
+    })
+
+    const request = new Request('http://localhost/admin', { method: 'GET' })
+    await expect(handler(request)).rejects.toBe(forbiddenError)
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    expect(consoleSpy).not.toHaveBeenCalled()
+    expect(drainMock).not.toHaveBeenCalled()
+  })
+
+  it('rethrows unauthorized() navigation signals without logging a phantom error (#436)', async () => {
+    const drainMock = vi.fn()
+    const withEvlog = createWithEvlog({ pretty: false, drain: drainMock })
+
+    const unauthorizedError = Object.assign(new Error('NEXT_HTTP_ERROR_FALLBACK'), {
+      digest: 'NEXT_HTTP_ERROR_FALLBACK;401',
+    })
+    const handler = withEvlog((_: Request) => {
+      throw unauthorizedError
+    })
+
+    const request = new Request('http://localhost/account', { method: 'GET' })
+    await expect(handler(request)).rejects.toBe(unauthorizedError)
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    expect(consoleSpy).not.toHaveBeenCalled()
+    expect(drainMock).not.toHaveBeenCalled()
+  })
+
+  it('rethrows a navigation signal wrapped in error.cause without logging (#436)', async () => {
+    const drainMock = vi.fn()
+    const withEvlog = createWithEvlog({ pretty: false, drain: drainMock })
+
+    const redirectError = Object.assign(new Error('NEXT_REDIRECT'), {
+      digest: 'NEXT_REDIRECT;replace;/foo;307;',
+    })
+    // Some frameworks/middleware wrap the original error — unstable_rethrow unwraps
+    // `.cause` and rethrows the inner signal, not the outer wrapper.
+    const wrapper = new Error('wrapped', { cause: redirectError })
+    const handler = withEvlog((_: Request) => {
+      throw wrapper
+    })
+
+    const request = new Request('http://localhost/go', { method: 'GET' })
+    await expect(handler(request)).rejects.toBe(redirectError)
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    expect(consoleSpy).not.toHaveBeenCalled()
+    expect(drainMock).not.toHaveBeenCalled()
+  })
+
+  it('still logs a real error whose message happens to mention NEXT_REDIRECT (#436)', async () => {
+    const withEvlog = createWithEvlog({ pretty: false })
+
+    const handler = withEvlog((_: Request) => {
+      // No `digest` set — unstable_rethrow must not treat this as a navigation signal.
+      throw new Error('something about NEXT_REDIRECT went wrong')
+    })
+
+    const request = new Request('http://localhost/api/test', { method: 'GET' })
+    await expect(handler(request)).rejects.toThrow('something about NEXT_REDIRECT went wrong')
+
+    expect(consoleErrorSpy).toHaveBeenCalled()
+    const [[output]] = consoleErrorSpy.mock.calls
+    const parsed = JSON.parse(output)
+    expect(parsed.level).toBe('error')
+    expect(parsed.status).toBe(500)
+  })
+
   it('calls drain callback with emitted event', async () => {
     const drainMock = vi.fn()
     const withEvlog = createWithEvlog({ pretty: false, drain: drainMock })
@@ -148,6 +264,35 @@ describe('withEvlog', () => {
     expect(drainCtx.event.level).toBe('info')
     expect(drainCtx.request.method).toBe('GET')
     expect(drainCtx.request.path).toBe('/api/test')
+  })
+
+  it('applies createEvlog redact.paths to the main request event (#408)', async () => {
+    const drainMock = vi.fn()
+    const withEvlog = createWithEvlog({
+      pretty: false,
+      redact: {
+        builtins: false,
+        paths: ['secret'],
+      },
+      drain: drainMock,
+    })
+
+    const handler = withEvlog((_: Request) => {
+      const logger = defined(evlogStorage.getStore(), 'request logger')
+      logger.set({ secret: 'must-not-leak' })
+      return new Response('ok')
+    })
+
+    await handler(new Request('http://localhost/api/redaction', { method: 'POST' }))
+
+    expect(drainMock).toHaveBeenCalledTimes(1)
+    const [[drainCtx]] = drainMock.mock.calls
+    expect(drainCtx.event.secret).toBe('[REDACTED]')
+
+    expect(consoleSpy).toHaveBeenCalled()
+    const [[output]] = consoleSpy.mock.calls
+    const parsed = JSON.parse(output)
+    expect(parsed.secret).toBe('[REDACTED]')
   })
 
   it('calls enrich callback before drain', async () => {

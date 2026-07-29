@@ -1,0 +1,217 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { getAdapter } from '../../src/lib/map/adapters/index'
+import type { Framework, RawRouteEntry, ScanContext } from '../../src/lib/map/types'
+
+const tempDirs: string[] = []
+
+/** Write a throwaway project from a path → source map, and return its root. */
+async function project(files: Record<string, string>): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'evlog-cli-adapter-'))
+  tempDirs.push(root)
+  for (const [path, source] of Object.entries(files)) {
+    const file = join(root, path)
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, source, 'utf8')
+  }
+  return root
+}
+
+function routesOf(framework: Framework, root: string): Promise<RawRouteEntry[]> {
+  const ctx: ScanContext = {
+    projectRoot: root,
+    framework,
+    projectName: 'temp',
+    hasEvlog: true,
+    verbose: false,
+  }
+  return getAdapter(framework).extractRoutes(ctx)
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })))
+})
+
+describe('next adapter', () => {
+  it('finds routes in src/app when the project has no pages at all', async () => {
+    const root = await project({
+      'src/app/api/health/route.ts': 'export function GET() { return Response.json({ ok: true }) }',
+    })
+
+    const routes = await routesOf('next', root)
+
+    expect(routes.map(route => `${route.method} ${route.path}`)).toEqual(['GET /api/health'])
+  })
+
+  it('gives the root handler the root path', async () => {
+    const root = await project({
+      'app/route.ts': 'export function GET() { return new Response("hi") }',
+    })
+
+    const routes = await routesOf('next', root)
+
+    expect(routes[0]?.path).toBe('/')
+  })
+
+  it('reads a method exported under an alias', async () => {
+    const root = await project({
+      'app/api/orders/route.ts': [
+        'async function handler() { return Response.json([]) }',
+        'export { handler as GET }',
+      ].join('\n'),
+    })
+
+    const routes = await routesOf('next', root)
+
+    expect(routes.map(route => route.method)).toEqual(['GET'])
+  })
+
+  it('still collects server actions once the cheap text filter is in the way', async () => {
+    const root = await project({
+      'app/actions/orders.ts': [
+        '"use server"',
+        'export async function createOrder() { return { id: 1 } }',
+      ].join('\n'),
+      'app/lib/plain.ts': 'export function helper() { return 1 }',
+    })
+
+    const routes = await routesOf('next', root)
+
+    expect(routes.map(route => route.path)).toEqual(['action:createOrder'])
+  })
+
+  /* Next treats every export of a `'use server'` module as a public endpoint, so
+     a spelling the adapter cannot read is an unscanned POST handler. */
+  it.each([
+    ['a function declaration', 'export async function createOrder() {}', 'action:createOrder'],
+    ['an arrow constant', 'export const createOrder = async () => {}', 'action:createOrder'],
+    ['a plain specifier', 'async function createOrder() {}\nexport { createOrder }', 'action:createOrder'],
+    ['a renamed specifier', 'async function run() {}\nexport { run as createOrder }', 'action:createOrder'],
+    ['a default function', 'export default async function createOrder() {}', 'action:createOrder'],
+  ])('collects a server action declared as %s', async (_name, source, expected) => {
+    const root = await project({ 'app/actions/orders.ts': `"use server"\n${source}` })
+
+    const routes = await routesOf('next', root)
+
+    expect(routes.map(route => route.path)).toEqual([expected])
+  })
+
+  it('leaves a re-export alone — the action belongs to the module it came from', async () => {
+    const root = await project({
+      'app/actions/orders.ts': '"use server"\nexport { createOrder } from \'./impl\'',
+    })
+
+    const routes = await routesOf('next', root)
+
+    expect(routes).toEqual([])
+  })
+})
+
+describe('nuxt adapter', () => {
+  it.each(['ts', 'mjs', 'cjs', 'mts'])('reads the method and path off a .%s handler', async (ext) => {
+    const root = await project({
+      [`server/api/orders/checkout.post.${ext}`]: 'export default defineEventHandler(() => ({ ok: true }))',
+    })
+
+    const routes = await routesOf('nuxt', root)
+
+    expect(routes.map(route => `${route.method} ${route.path}`)).toEqual(['POST /api/orders/checkout'])
+  })
+
+  it('gives server/routes handlers no /api prefix', async () => {
+    const root = await project({
+      'server/routes/health.get.ts': 'export default defineEventHandler(() => ({ ok: true }))',
+    })
+
+    const routes = await routesOf('nuxt', root)
+
+    expect(routes.map(route => `${route.method} ${route.path}`)).toEqual(['GET /health'])
+  })
+
+  it.each(['app/pages', 'pages', 'src/pages'] as const)(
+    'maps a page under %s and strips that root from the path',
+    async (pageDir) => {
+      const root = await project({
+        [`${pageDir}/blog/[...slug].vue`]: '<script setup lang="ts"></script>',
+      })
+
+      const routes = await routesOf('nuxt', root)
+
+      expect(routes.map(route => `${route.kind} ${route.path}`)).toEqual(['page /blog/:slug*'])
+      expect(routes[0]?.file).toBe(`${pageDir}/blog/[...slug].vue`)
+    },
+  )
+
+  it('collects pages from every populated root', async () => {
+    const root = await project({
+      'app/pages/index.vue': '<script setup lang="ts"></script>',
+      'pages/about.vue': '<script setup lang="ts"></script>',
+    })
+
+    const routes = await routesOf('nuxt', root)
+
+    expect(routes.map(route => `${route.path} (${route.file})`).sort()).toEqual([
+      '/ (app/pages/index.vue)',
+      '/about (pages/about.vue)',
+    ])
+  })
+})
+
+describe('nitro adapter', () => {
+  it('derives the same paths as nuxt, one directory level up', async () => {
+    const root = await project({
+      'api/orders/checkout.post.ts': 'export default defineEventHandler(() => ({ ok: true }))',
+      'routes/health.get.ts': 'export default defineEventHandler(() => ({ ok: true }))',
+      'middleware/auth.ts': 'export default defineEventHandler(() => {})',
+    })
+
+    const routes = await routesOf('nitro', root)
+
+    expect(routes.map(route => `${route.kind} ${route.method ?? '*'} ${route.path}`).sort()).toEqual([
+      'api GET /health',
+      'api POST /api/orders/checkout',
+      'middleware * *',
+    ])
+  })
+})
+
+describe('tanstack-start adapter', () => {
+  it('does not read "api" inside a longer word as an API route', async () => {
+    const root = await project({
+      'src/routes/capital.tsx': 'export const Route = createFileRoute("/capital")({})',
+    })
+
+    const routes = await routesOf('tanstack-start', root)
+
+    expect(routes.map(route => route.kind)).toEqual(['page'])
+  })
+
+  it('ignores lowercase method-shaped properties', async () => {
+    const root = await project({
+      'src/routes/settings.tsx': [
+        'const form = { get: () => null, delete: () => null }',
+        'export const Route = createFileRoute("/settings")({ component: () => form })',
+      ].join('\n'),
+    })
+
+    const routes = await routesOf('tanstack-start', root)
+
+    expect(routes.map(route => `${route.kind} ${route.method ?? '*'}`)).toEqual(['page *'])
+  })
+
+  it('reads the uppercase handlers the framework actually honours', async () => {
+    const root = await project({
+      'src/routes/api/orders.ts': [
+        'export const Route = createFileRoute("/api/orders")({',
+        '  server: { handlers: { GET: async () => null, POST: async () => null } },',
+        '})',
+      ].join('\n'),
+    })
+
+    const routes = await routesOf('tanstack-start', root)
+
+    expect(routes.map(route => route.method).sort()).toEqual(['GET', 'POST'])
+  })
+})
