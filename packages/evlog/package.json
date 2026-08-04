@@ -1,6 +1,6 @@
 {
   "name": "evlog",
-  "version": "2.22.4",
+  "version": "2.24.0",
   "description": "Modern TypeScript logger — simple logs, wide events, structured errors. Built for scripts, libraries, jobs, edge, and HTTP. One drain pipeline everywhere.",
   "author": "HugoRCD <contact@hrcd.fr>",
   "homepage": "https://evlog.dev",
@@ -100,6 +100,16 @@
       "types": "./dist/adapters/datadog.d.mts",
       "import": "./dist/adapters/datadog.mjs",
       "default": "./dist/adapters/datadog.mjs"
+    },
+    "./loki": {
+      "types": "./dist/adapters/loki.d.mts",
+      "import": "./dist/adapters/loki.mjs",
+      "default": "./dist/adapters/loki.mjs"
+    },
+    "./clickhouse": {
+      "types": "./dist/adapters/clickhouse.d.mts",
+      "import": "./dist/adapters/clickhouse.mjs",
+      "default": "./dist/adapters/clickhouse.mjs"
     },
     "./fs": {
       "types": "./dist/adapters/fs.d.mts",
@@ -221,6 +231,11 @@
       "import": "./dist/client.mjs",
       "default": "./dist/client.mjs"
     },
+    "./diagnostics": {
+      "types": "./dist/diagnostics.d.mts",
+      "import": "./dist/diagnostics.mjs",
+      "default": "./dist/diagnostics.mjs"
+    },
     "./toolkit": {
       "types": "./dist/toolkit.d.mts",
       "import": "./dist/toolkit.mjs",
@@ -281,6 +296,12 @@
       ],
       "datadog": [
         "./dist/adapters/datadog.d.mts"
+      ],
+      "loki": [
+        "./dist/adapters/loki.d.mts"
+      ],
+      "clickhouse": [
+        "./dist/adapters/clickhouse.d.mts"
       ],
       "fs": [
         "./dist/adapters/fs.d.mts"
@@ -353,6 +374,9 @@
       ],
       "client": [
         "./dist/client.d.mts"
+      ],
+      "diagnostics": [
+        "./dist/diagnostics.d.mts"
       ],
       "toolkit": [
         "./dist/toolkit.d.mts"

@@ -1,4 +1,4 @@
-# Enricher 源模板
+# Enricher 源代码模板
 
 用于使用 `defineEnricher` 向 `packages/evlog/src/enrichers/index.ts` 添加新的 enricher 的模板。
 
@@ -46,13 +46,14 @@ export function create{Name}Enricher(options: EnricherOptions = {}): (ctx: Enric
 
 ## 架构规则
 
-1. **使用工具包原语**：来自 `../shared/enricher` 的 `defineEnricher<T>({ name, field, compute }, options)`（重新导出为 `evlog/toolkit`）。
-2. **使用工具包辅助函数**：用于大小写不敏感请求头查找的 `getHeader()`，以及用于数字字符串的 `normalizeNumber()` —— 二者都来自 `../shared/headers`。
-3. **单个事件字段** —— 每个 enricher 在 `ctx.event` 上写入一个顶级字段（通过 `field` 选项声明）。
-4. **返回 `undefined` 以跳过** —— `compute` 返回 `undefined` 会使该 enricher 对该事件不执行任何操作（不合并字段，也不报错）。
-5. **工厂模式** —— 始终将 `defineEnricher` 包装在 `create{Name}Enricher(options?)` 工厂中并返回其结果。
-6. **不要使用 try/catch** —— `defineEnricher` 已经隔离了错误（记录为 `[evlog/{name}]`，且不会向管道抛出异常）。
-7. **不要在 `compute` 之外进行修改** —— 让 `defineEnricher` 通过 `mergeEventField` 处理合并。
+1. **使用工具包原语**：使用来自 `../shared/enricher`（重新导出为 `evlog/toolkit`）的 `defineEnricher<T>({ name, field, compute }, options)`。
+2. **使用工具包辅助函数**：使用来自 `../shared/headers` 的 `getHeader()` 进行不区分大小写的请求头查找，并使用 `normalizeNumber()` 处理数字字符串。
+3. **单一事件字段**——每个 enrichers 在 `ctx.event` 上写入一个顶层字段（通过 `field` 选项声明）。
+4. **返回 `undefined` 以跳过**——`compute` 返回 `undefined` 时，enricher 对该事件不执行任何操作（不合并字段，不产生错误）。
+5. **工厂模式**——始终将 `defineEnricher` 包装在 `create{Name}Enricher(options?)` 工厂中，并返回其结果（直接返回，或在固定顶层字段时通过规则 7 的闭包包装器返回）。
+6. **不要使用 try/catch**——`defineEnricher` 已经隔离错误（记录为 `[evlog/{name}] enrich failed:`，且永远不会向管道抛出错误）。
+7. **不要在 `compute` 之外进行变更**——让 `defineEnricher` 通过 `mergeEventField` 处理合并。唯一允许的例外是：除了 enrichers 自身的字段外固定顶层字段，此操作通过将 `defineEnricher` 的结果包装在闭包中完成（参见 `createTraceContextEnricher`，它还会设置 `event.traceId` / `event.spanId`）。
+8. **组合**——要将多个 enrichers 组合到一个回调中，请使用来自 `../shared/compose` 的 `composeEnrichers`（`createDefaultEnrichers()` 正是以此方式构建的），而不是手动循环。
 
 ## 可用辅助函数
 
@@ -70,11 +71,11 @@ function normalizeNumber(value: string | undefined): number | undefined
 
 ## 数据源
 
-Enricher 通常从 `ctx` 中读取：
+增强器通常从 `ctx` 中读取：
 
 - **`ctx.headers`** — HTTP 请求头（敏感请求头已被过滤）
 - **`ctx.response?.headers`** — HTTP 响应头
 - **`ctx.response?.status`** — HTTP 响应状态码
 - **`ctx.request`** — 请求元数据（方法、路径、requestId）
 - **`process.env`** — 环境变量（用于部署元数据）
-- **`ctx.event`** — 事件本身（用于计算/派生字段）
+- **`ctx.event`** — 事件本身（用于计算/派生字段）。

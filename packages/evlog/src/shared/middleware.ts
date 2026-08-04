@@ -2,11 +2,13 @@ import type { DrainContext, EnrichContext, RedactConfig, RequestLogger, RouteCon
 import type { AuditableLogger } from '../audit'
 import { createRequestLogger, getGlobalDrain, getGlobalPluginRunner, isEnabled, markWideEventDrainStarted, shouldKeep } from '../logger'
 import { isGloballyRedacted, redactEvent, resolveRedactConfig } from '../redact'
+import { elapsedMs } from '../utils'
 import { extractErrorStatus } from './errors'
 import type { EvlogPlugin, PluginRunner } from './plugin'
 import { createPluginRunner, getEmptyPluginRunner } from './plugin'
 import { shouldLog, getServiceForPath } from './routes'
 import { extendDeferredDrain } from './deferred-drain'
+import { hasWideEventPublisher, publishWideEvent } from './wideEventChannel'
 import { bindStreamingResponseLifecycle, shouldDeferEmitForResponse } from './streamResponse'
 
 /**
@@ -42,6 +44,28 @@ export interface BaseEvlogOptions {
    * Pass a bound method per request, e.g. `ctx.waitUntil.bind(ctx)`.
    */
   waitUntil?: (promise: Promise<unknown>) => void
+}
+
+/**
+ * Project any superset of {@link BaseEvlogOptions} onto just the middleware
+ * surface, dropping caller-specific extras.
+ *
+ * This is the single place listing the {@link BaseEvlogOptions} fields — adding
+ * an option here makes it flow through `defineEvlog()` and every integration
+ * that builds middleware options from its own richer option type.
+ */
+export function pickBaseEvlogOptions(options: BaseEvlogOptions): BaseEvlogOptions {
+  const out: BaseEvlogOptions = {}
+  if (options.include) out.include = options.include
+  if (options.exclude) out.exclude = options.exclude
+  if (options.routes) out.routes = options.routes
+  if (options.drain) out.drain = options.drain
+  if (options.enrich) out.enrich = options.enrich
+  if (options.keep) out.keep = options.keep
+  if (options.redact !== undefined) out.redact = options.redact
+  if (options.plugins) out.plugins = options.plugins
+  if (options.waitUntil) out.waitUntil = options.waitUntil
+  return out
 }
 
 /** Internal options accepted by `createMiddlewareLogger`. */
@@ -157,6 +181,7 @@ export async function runEnrichAndDrain(
     }
   }
 
+  publishWideEvent(emittedEvent)
   markWideEventDrainStarted(emittedEvent)
 
   const drain = options.drain ?? getGlobalDrain()
@@ -271,7 +296,7 @@ export function createMiddlewareLogger(options: MiddlewareLoggerOptions): Middle
       requestLogger.set({ status })
     }
 
-    const durationMs = Date.now() - startTime
+    const durationMs = elapsedMs(startTime)
 
     const resolvedStatus = error
       ? extractErrorStatus(error)
@@ -298,7 +323,7 @@ export function createMiddlewareLogger(options: MiddlewareLoggerOptions): Middle
 
     if (
       emittedEvent
-      && (options.enrich || options.drain || pluginRunner.hasEnrich || pluginRunner.hasDrain || getGlobalDrain())
+      && (options.enrich || options.drain || pluginRunner.hasEnrich || pluginRunner.hasDrain || getGlobalDrain() || hasWideEventPublisher())
     ) {
       await runEnrichAndDrain(emittedEvent, options, requestInfo, resolvedStatus, pluginRunner)
     }

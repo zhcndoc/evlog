@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { redactEvent, normalizeRedactConfig, resolveRedactConfig, builtinPatterns } from '../../src/redact'
+import { redactEvent, normalizeRedactConfig, resolveRedactConfig, builtinPatterns, hasFunctionRedactPolicy, compileRedactPathMatchers, redactPathsInTree } from '../../src/redact'
 import type { RedactConfig } from '../../src/types'
 import { createLogger, initLogger } from '../../src/logger'
 import { defined } from '../helpers/defined'
@@ -347,6 +347,101 @@ describe('redactEvent - edge cases', () => {
     expect(redacted).not.toHaveProperty('handler')
   })
 
+  it('leaves prototype accessors of native objects alone during path redaction', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const cause = new DOMException('Upstream request timed out', 'TimeoutError')
+    const redacted = redactEvent(
+      {
+        error: {
+          code: 'UPSTREAM_TIMEOUT',
+          cause,
+        },
+      },
+      { paths: ['*code'] },
+    )
+
+    expect(redacted).toMatchObject({
+      error: {
+        code: '[REDACTED]',
+        cause: expect.any(DOMException),
+      },
+    })
+    expect(cause.name).toBe('TimeoutError')
+    // `DOMException.code` matches `*code`, but it lives on the prototype: the walk
+    // never sees it, so there is nothing to fail to write.
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('leaves prototype accessors of native objects alone during pattern redaction', () => {
+    const cause = new DOMException('Contact alice@example.com', 'NetworkError')
+    const redacted = redactEvent(
+      {
+        message: 'Contact alice@example.com',
+        error: { cause },
+      },
+      { patterns: [/[\w.+-]+@[\w-]+\.[\w.]+/g] },
+    )
+
+    expect(redacted.message).toBe('Contact [REDACTED]')
+    expect(redacted).toMatchObject({
+      error: {
+        cause: expect.objectContaining({
+          message: 'Contact alice@example.com',
+        }),
+      },
+    })
+  })
+
+  it('leaves prototype accessors of native objects alone during built-in masking', () => {
+    const cause = new DOMException('Contact alice@example.com', 'NetworkError')
+    const config = defined(resolveRedactConfig({ builtins: ['email'] }), 'redact config')
+    const redacted = redactEvent(
+      {
+        message: 'Contact alice@example.com',
+        error: { cause },
+      },
+      config,
+    )
+
+    expect(redacted.message).toBe('Contact a***@***.com')
+    expect(redacted).toMatchObject({
+      error: {
+        cause: expect.objectContaining({
+          message: 'Contact alice@example.com',
+        }),
+      },
+    })
+  })
+
+  // Skipping every non-plain object would also skip these — a class instance
+  // reaching the walker un-cloned still carries its own fields in the open.
+  it('redacts own fields of a class instance', () => {
+    class Session {
+      constructor(public readonly userId: string, public token: string) {}
+    }
+
+    const tree: Record<string, unknown> = { session: new Session('u_1', 'sk_live_secret') }
+    redactPathsInTree(tree, defined(compileRedactPathMatchers(['token']), 'matchers'), '[REDACTED]')
+
+    expect((tree.session as Session).token).toBe('[REDACTED]')
+    expect((tree.session as Session).userId).toBe('u_1')
+  })
+
+  it('warns instead of throwing when a matched field cannot be rewritten', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const frozen = Object.defineProperty({}, 'token', {
+      value: 'sk_live_secret',
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    })
+
+    expect(() => {
+      redactPathsInTree({ frozen }, defined(compileRedactPathMatchers(['token']), 'matchers'), '[REDACTED]')
+    }).not.toThrow()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('frozen.token'))
+  })
+
   it('handles empty config gracefully', () => {
     let event: Record<string, unknown> = { user: { email: 'alice@example.com' } }
     event = redactEvent(event, {})
@@ -524,3 +619,230 @@ describe('normalizeRedactConfig', () => {
   })
 })
 
+describe('redactEvent - function replacement', () => {
+  it('derives the replacement from a path-matched value', () => {
+    const event = redactEvent(
+      { user: { email: 'alice@example.com' } },
+      { builtins: false, paths: ['user.email'], replacement: matched => `len:${String(matched).length}` },
+    )
+    expect((event.user as Record<string, unknown>).email).toBe('len:17')
+  })
+
+  it('passes the dot path and leaf key for path matches', () => {
+    const seen: Array<{ path: string, key: string }> = []
+    redactEvent(
+      { user: { email: 'a@b.co' }, items: [{ token: 'x' }] },
+      {
+        builtins: false,
+        paths: ['user.email', 'token'],
+        replacement: (_matched, ctx) => {
+          seen.push({ path: ctx.path, key: ctx.key })
+          return '[x]'
+        },
+      },
+    )
+    expect(seen).toEqual([
+      { path: 'user.email', key: 'email' },
+      { path: 'items.0.token', key: 'token' },
+    ])
+  })
+
+  it('receives the whole subtree when a path matches an object', () => {
+    let matched: unknown
+    redactEvent(
+      { payment: { card: { number: '4111', expiry: '12/26' } } },
+      {
+        builtins: false,
+        paths: ['payment.card'],
+        replacement: (value) => {
+          matched = value
+          return '[card]'
+        },
+      },
+    )
+    expect(matched).toEqual({ number: '4111', expiry: '12/26' })
+  })
+
+  it('derives the replacement from a pattern match, with capture groups', () => {
+    const event = redactEvent(
+      { path: '/public/claim/eyJhbGciOiJIUzI1NiJ9' },
+      {
+        builtins: false,
+        patterns: [/\/public\/claim\/([A-Za-z0-9._-]{12,})/g],
+        replacement: (_match, ctx) => `/public/claim/[tok:${defined(ctx.groups?.[0], 'group').slice(0, 6)}]`,
+      },
+    )
+    expect(event.path).toBe('/public/claim/[tok:eyJhbG]')
+  })
+
+  it('exposes capture groups alongside named groups', () => {
+    let groups: Array<string | undefined> | undefined
+    redactEvent(
+      { path: '/u/42' },
+      {
+        builtins: false,
+        patterns: [/\/u\/(?<id>\d+)/g],
+        replacement: (_match, ctx) => {
+          ({ groups } = ctx)
+          return '/u/[id]'
+        },
+      },
+    )
+    expect(groups).toEqual(['42'])
+  })
+
+  it('passes the path of the string field a pattern matched', () => {
+    let path: string | undefined
+    redactEvent(
+      { request: { headers: { authorization: 'token abcdef' } } },
+      {
+        builtins: false,
+        patterns: [/abcdef/g],
+        replacement: (_match, ctx) => {
+          ({ path } = ctx)
+          return '[x]'
+        },
+      },
+    )
+    expect(path).toBe('request.headers.authorization')
+  })
+
+  it('falls back to [REDACTED] when the replacement throws', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const event = redactEvent(
+      { token: 'secret-value' },
+      {
+        builtins: false,
+        paths: ['token'],
+        replacement: () => {
+          throw new Error('bad policy')
+        },
+      },
+    )
+    expect(event.token).toBe('[REDACTED]')
+    expect(error).toHaveBeenCalled()
+    error.mockRestore()
+  })
+
+  it('falls back to [REDACTED] when the replacement returns a non-string', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const event = redactEvent(
+      { token: 'secret-value' },
+      { builtins: false, paths: ['token'], replacement: (() => 42) as unknown as RedactConfig['replacement'] },
+    )
+    expect(event.token).toBe('[REDACTED]')
+    expect(error).toHaveBeenCalled()
+    error.mockRestore()
+  })
+
+  it('never leaks the raw value when a pattern replacement throws', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const event = redactEvent(
+      { path: '/claim/supersecrettoken' },
+      {
+        builtins: false,
+        patterns: [/supersecrettoken/g],
+        replacement: () => {
+          throw new Error('bad policy')
+        },
+      },
+    )
+    expect(event.path).toBe('/claim/[REDACTED]')
+    expect(error).toHaveBeenCalled()
+    error.mockRestore()
+  })
+})
+
+describe('redactEvent - transform', () => {
+  it('mutates the event in place without touching the source', () => {
+    const source: Record<string, unknown> = { tenant: 'regulated', query: 'name=alice' }
+    const event = redactEvent(source, {
+      builtins: false,
+      transform: (e) => {
+        if (e.tenant === 'regulated') delete e.query
+      },
+    })
+    expect(event).not.toHaveProperty('query')
+    expect(source.query).toBe('name=alice')
+  })
+
+  it('sees raw values, before the declarative stages run', () => {
+    let seen: unknown
+    redactEvent(
+      { user: { email: 'alice@example.com' } },
+      {
+        builtins: false,
+        paths: ['user.email'],
+        transform: (e) => {
+          seen = (e.user as Record<string, unknown>).email
+        },
+      },
+    )
+    expect(seen).toBe('alice@example.com')
+  })
+
+  it('still applies the declarative stages to what it leaves behind', () => {
+    const config = defined(resolveRedactConfig({ builtins: ['email'] }), 'redact config')
+    const event = redactEvent({ note: 'ping alice@example.com' }, {
+      ...config,
+      transform: (e) => {
+        e.extra = 'ping bob@example.com'
+      },
+    })
+    // A field the hook adds is masked by the built-ins that run after it.
+    expect(event.note).toBe('ping a***@***.com')
+    expect(event.extra).toBe('ping b***@***.com')
+  })
+
+  it('reports a throwing transform and keeps redacting', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const event = redactEvent(
+      { password: 'hunter2' },
+      {
+        builtins: false,
+        paths: ['password'],
+        transform: () => {
+          throw new Error('bad hook')
+        },
+      },
+    )
+    expect(event.password).toBe('[REDACTED]')
+    expect(error).toHaveBeenCalledWith('[evlog] redact transform failed:', expect.any(Error))
+    error.mockRestore()
+  })
+})
+
+describe('function-valued redact policy across the config bridge', () => {
+  it('passes a live function replacement through normalizeRedactConfig', () => {
+    const replacement = () => '[x]'
+    const config = normalizeRedactConfig({ paths: ['token'], replacement })
+    expect(config?.replacement).toBe(replacement)
+  })
+
+  it('passes a live transform through normalizeRedactConfig', () => {
+    const transform = () => {}
+    const config = normalizeRedactConfig({ transform })
+    expect(config?.transform).toBe(transform)
+  })
+
+  it('detects function-valued policy so config bridges can warn', () => {
+    expect(hasFunctionRedactPolicy({ replacement: () => '[x]' })).toBe(true)
+    expect(hasFunctionRedactPolicy({ transform: () => {} })).toBe(true)
+    expect(hasFunctionRedactPolicy({ paths: ['token'], replacement: '***' })).toBe(false)
+    expect(hasFunctionRedactPolicy(true)).toBe(false)
+    expect(hasFunctionRedactPolicy(undefined)).toBe(false)
+  })
+
+  it('drops function policy when the config is JSON-serialized, as the bridges do', () => {
+    const serialized = JSON.parse(JSON.stringify({
+      paths: ['token'],
+      replacement: () => '[x]',
+      transform: () => {},
+    })) as Record<string, unknown>
+
+    // The warning is the only signal left at this point — hence hasFunctionRedactPolicy
+    // being called before serialization, not after.
+    expect(hasFunctionRedactPolicy(serialized)).toBe(false)
+    expect(normalizeRedactConfig(serialized)?.replacement).toBeUndefined()
+  })
+})

@@ -2,7 +2,7 @@
 
 在审查代码的日志记录最佳实践和 evlog 采用情况时，请使用此清单。
 
-## 优先使用 `evlog map`，如果可以的话
+## 如果可以，请优先使用 `evlog map`
 
 在 **Nuxt、Nitro、Next.js App Router 和 TanStack Start** 中，如果用户愿意，先使用 `@evlog/cli` —— 一条命令就能找出薄弱入口点并命名需要修复的地方：
 
@@ -11,16 +11,25 @@ npx @evlog/cli map --no-write
 npx @evlog/cli map <file> --no-write   # 单个入口点的建议形式
 ```
 
-Map 规则 ID（会影响评分的要求）对应下面这些反模式：
+**要求**（将分数移至下方的反模式）：
 
-| Map rule id | What it expects | Related anti-pattern |
-|-------------|-----------------|----------------------|
-| `wide-event` | `useLogger()` / 请求日志器 | 处理器中没有日志 |
-| `context` | `log.set(...)` | 平坦 / 缺少请求上下文 |
-| `structured-errors` | `createError({ why, fix })` | `throw new Error('...')` |
-| `error-handling` | 在 `catch` 中记录日志或重新抛出 | `console.error(e); throw e` |
-| `audit` | 在敏感路由上使用 `log.audit(...)` | 认证/计费中缺少审计 |
-| `page-error-handling` | 页面上的 fetch 错误处理 | 未处理的页面 fetch |
+| Map 规则 ID | 权重 | 预期内容 | 相关反模式 |
+|-------------|--------|-----------------|----------------------|
+| `wide-event` | 40 | `useLogger()` / 请求日志记录器 | 处理程序中没有日志记录 |
+| `audit` | 25 | 在敏感路由上使用 `log.audit(...)` | auth/billing 缺少审计 |
+| `structured-errors` | 20 | `createError({ why, fix })` | `throw new Error('...')` |
+| `page-error-handling` | 20 | 页面上的 fetch 错误处理 | 未处理的页面 fetch |
+| `context` | 15 | `log.set(...)` | 请求上下文扁平或缺失 |
+| `error-handling` | 15 | 在 `catch` 中记录日志或重新抛出 | `console.error(e); throw e` |
+
+**机会项**（绝不会扣分；仅在项目已经使用该功能时触发）——将其作为建议而不是缺陷展示：
+
+| Map 规则 ID | 触发条件 | 相关技能章节 |
+|-------------|-----------|-----------------------|
+| `error-catalog` | 已声明错误目录，且相同的内联错误出现在 2 个或更多文件中 | 相关能力 → 错误目录 |
+| `audit-coverage` | 项目记录审计日志，但某个改变状态的处理程序没有审计记录 | 审计日志 |
+| `ai-logging` | `ai` 是依赖项，且调用 AI SDK 时未使用 `evlog/ai` | AI SDK 集成 |
+| `auth-identity` | `better-auth` 是依赖项，但未使用 `evlog/better-auth` | 相关能力 → Better Auth |
 
 完整规则参考：https://www.evlog.dev/cli/rules
 
@@ -101,26 +110,26 @@ export default defineEventHandler(async (event) => {
 #### 单个调试日志
 
 ```typescript
-// ❌ Before
+// ❌ 转换前
 console.log('处理用户：', userId)
 
-// ✅ After - if part of a larger operation
+// ✅ 转换后 - 如果是较大操作的一部分
 log.set({ user: { id: userId } })
 
-// ✅ After - if standalone debug
+// ✅ 转换后 - 如果是独立调试
 log.debug('user', `处理用户 ${userId}`)
 ```
 
 #### 多个相关日志
 
 ```typescript
-// ❌ Before
+// ❌ 转换前
 console.log('开始结账')
 console.log('用户：', user.id)
 console.log('购物车商品：', cart.items.length)
 console.log('总计：', cart.total)
 
-// ✅ After
+// ✅ 转换后
 log.info({
   action: 'checkout',
   user: { id: user.id },
@@ -133,7 +142,7 @@ log.info({
 ```typescript
 // server/api/process.post.ts
 
-// ❌ Before
+// ❌ 转换前
 export default defineEventHandler(async (event) => {
   console.log('请求已开始')
   const user = await getUser(event)
@@ -143,9 +152,9 @@ export default defineEventHandler(async (event) => {
   return result
 })
 
-// ✅ After (Nuxt - auto-imported, no import needed)
-// For Nitro v3: import { useLogger } from 'evlog/nitro/v3'
-// For Nitro v2: import { useLogger } from 'evlog/nitro'
+// ✅ 转换后（Nuxt - 自动导入，无需导入）
+// 对于 Nitro v3：import { useLogger } from 'evlog/nitro/v3'
+// 对于 Nitro v2：import { useLogger } from 'evlog/nitro'
 
 export default defineEventHandler(async (event) => {
   const log = useLogger(event)
@@ -157,7 +166,7 @@ export default defineEventHandler(async (event) => {
   log.set({ result: { id: result.id } })
 
   return result
-  // emit() called automatically
+  // emit() 会自动调用
 })
 ```
 
@@ -166,10 +175,10 @@ export default defineEventHandler(async (event) => {
 #### 通用错误
 
 ```typescript
-// ❌ Before
+// ❌ 转换前
 throw new Error('创建用户失败')
 
-// ✅ After
+// ✅ 转换后
 throw createError({
   message: '创建用户失败',
   why: '电子邮件地址已注册',
@@ -181,14 +190,14 @@ throw createError({
 #### 无上下文的包装错误
 
 ```typescript
-// ❌ Before
+// ❌ 转换前
 try {
   await externalApi.call()
 } catch (error) {
   throw new Error('API 调用失败')
 }
 
-// ✅ After
+// ✅ 转换后
 try {
   await externalApi.call()
 } catch (error) {
@@ -205,7 +214,7 @@ try {
 #### 记录后抛出反模式
 
 ```typescript
-// ❌ Before
+// ❌ 转换前
 try {
   await riskyOperation()
 } catch (error) {
@@ -213,7 +222,7 @@ try {
   throw error
 }
 
-// ✅ After
+// ✅ 转换后
 try {
   await riskyOperation()
 } catch (error) {
@@ -234,16 +243,16 @@ try {
 ```typescript
 // server/api/orders.post.ts
 
-// ❌ Before
+// ❌ 转换前
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const result = await processOrder(body)
   return result
 })
 
-// ✅ After (Nuxt - auto-imported, no import needed)
-// For Nitro v3: import { useLogger } from 'evlog/nitro/v3'
-// For Nitro v2: import { useLogger } from 'evlog/nitro'
+// ✅ 转换后（Nuxt - 自动导入，无需导入）
+// 对于 Nitro v3：import { useLogger } from 'evlog/nitro/v3'
+// 对于 Nitro v2：import { useLogger } from 'evlog/nitro'
 import { createError } from 'evlog'
 
 export default defineEventHandler(async (event) => {
@@ -264,7 +273,7 @@ export default defineEventHandler(async (event) => {
       fix: '检查订单数据后重试',
     })
   }
-  // emit() called automatically
+  // emit() 会自动调用
 })
 ```
 
@@ -299,7 +308,7 @@ export default defineEventHandler(async (event) => {
 - [ ] 用户上下文包括：id、套餐/订阅、相关业务数据
 - [ ] 请求上下文包括：method、path、requestId
 - [ ] 业务上下文是特定领域的，并且对调试有帮助
-- [ ] 日志中没有敏感数据（密码、令牌、完整卡号）
+- [ ] 日志中没有敏感数据（密码、令牌、完整卡号）。
 
 ## 反模式总结
 

@@ -1,178 +1,156 @@
 # 测试模板
 
-`packages/evlog/test/adapters/{name}.test.ts` 的完整测试模板。
+`packages/evlog/test/adapters/{name}.test.ts` 的完整测试模板，遵循 `packages/evlog/test/README.md` 中的约定。`loki.test.ts` 和 `clickhouse.test.ts` 是最新的参考实现。
 
-将 `{Name}`、`{name}` 替换为实际的服务名称。
+将 `{Name}`、`{name}`、`{NAME}` 替换为实际的服务名称。
+
+此处适用的测试 README 规则：
+
+- 使用 `mockFetch()` + `getFetchCall` / `getFetchJson` / `getFetchHeaders`，这些函数来自 `../helpers/fetch` —— 不要在适配器测试中手动实现 fetch spy（少数旧文件仍然这样做；请遵循这些辅助函数，而不是旧文件）。
+- 在 `afterEach` 中删除适配器读取的每一个环境变量 —— 泄漏的环境变量会导致后续测试依赖执行顺序。
+- 在各自的 `describe` 块中测试导出的纯函数辅助函数（`to{Name}Event`、`build{Name}Payload`、URL 解析器）——但只测试适配器实际导出的函数。如果适配器没有转换器（服务接受任意 JSON），则完全移除 `to{Name}Event` 的导入及其 `describe` 块。
+- 不要使用 `!` 非空断言 —— 如果需要进行类型收窄，请使用 `../helpers/defined` 中的 `defined()`。
+- 在 `encode-parity.test.ts` 中注册该适配器，以确保 drain 和 `sendBatchTo{Name}` 使用相同的编码器（目前还不是每个现有适配器都已注册；新适配器应当注册）。
 
 ```typescript
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WideEvent } from '../../src/types'
-import { sendBatchTo{Name}, sendTo{Name} } from '../../src/adapters/{name}'
+import { getFetchCall, getFetchHeaders, getFetchJson, mockFetch } from '../helpers/fetch'
+import {
+  create{Name}Drain,
+  sendBatchTo{Name},
+  sendTo{Name},
+  to{Name}Event,
+} from '../../src/adapters/{name}'
+
+function createTestEvent(overrides?: Partial<WideEvent>): WideEvent {
+  return {
+    timestamp: '2024-01-01T12:00:00.000Z',
+    level: 'info',
+    service: 'api',
+    environment: 'production',
+    ...overrides,
+  }
+}
 
 describe('{name} adapter', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>
 
-  // --- 设置：模拟 globalThis.fetch 返回 200 ---
   beforeEach(() => {
-    fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 200 }),
-    )
+    fetchSpy = mockFetch(new Response(null, { status: 200 }))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
+    delete process.env.NUXT_{NAME}_API_KEY
+    delete process.env.NUXT_{NAME}_ENDPOINT
+    delete process.env.{NAME}_API_KEY
+    delete process.env.{NAME}_ENDPOINT
   })
 
-  // --- 测试事件工厂 ---
-  const createTestEvent = (overrides?: Partial<WideEvent>): WideEvent => ({
-    timestamp: '2024-01-01T12:00:00.000Z',
-    level: 'info',
-    service: 'test-service',
-    environment: 'test',
-    ...overrides,
-  })
-
-  // --- 1. URL 构造 ---
-  describe('sendTo{Name}', () => {
-    it('发送事件到正确的 URL', async () => {
-      const event = createTestEvent()
-
-      await sendTo{Name}(event, {
-        apiKey: 'test-key',
+  // --- 1. 纯函数辅助函数 ---------------------------------------------------
+  describe('to{Name}Event', () => {
+    it('maps a wide event to the service shape', () => {
+      const event = createTestEvent({ path: '/api/users' })
+      expect(to{Name}Event(event)).toEqual({
+        timestamp: '2024-01-01T12:00:00.000Z',
+        level: 'info',
+        data: { service: 'api', environment: 'production', path: '/api/users' },
       })
+    })
+  })
 
-      expect(fetchSpy).toHaveBeenCalledTimes(1)
-      const [url] = fetchSpy.mock.calls[0] as [string, RequestInit]
-      // 验证默认端点 URL
+  // --- 2. 直接发送：URL、请求头、请求体 ---------------------------------
+  describe('sendTo{Name}', () => {
+    it('sends to the default endpoint', async () => {
+      await sendTo{Name}(createTestEvent(), { apiKey: 'test-key' })
+
+      const { url } = getFetchCall(fetchSpy)
       expect(url).toBe('https://api.{name}.com/v1/ingest')
     })
 
-    it('在提供自定义端点时使用自定义端点', async () => {
-      const event = createTestEvent()
-
-      await sendTo{Name}(event, {
+    it('uses a custom endpoint and tolerates trailing slashes', async () => {
+      await sendTo{Name}(createTestEvent(), {
         apiKey: 'test-key',
-        endpoint: 'https://custom.{name}.com',
+        endpoint: 'https://custom.{name}.com/',
       })
 
-      const [url] = fetchSpy.mock.calls[0] as [string, RequestInit]
+      const { url } = getFetchCall(fetchSpy)
       expect(url).toBe('https://custom.{name}.com/v1/ingest')
     })
 
-    // --- 2. 请求头 ---
-    it('设置正确的 Authorization 请求头', async () => {
-      const event = createTestEvent()
+    it('sets auth and content-type headers', async () => {
+      await sendTo{Name}(createTestEvent(), { apiKey: 'my-secret-key' })
 
-      await sendTo{Name}(event, {
-        apiKey: 'my-secret-key',
-      })
-
-      const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit]
-      expect(options.headers).toEqual(expect.objectContaining({
-        'Authorization': 'Bearer my-secret-key',
-      }))
+      const headers = getFetchHeaders(fetchSpy)
+      expect(headers.Authorization).toBe('Bearer my-secret-key')
+      expect(headers['Content-Type']).toBe('application/json')
     })
 
-    it('将 Content-Type 设置为 application/json', async () => {
-      const event = createTestEvent()
+    it('sends the event in the service format', async () => {
+      await sendTo{Name}(createTestEvent({ action: 'test-action' }), { apiKey: 'test-key' })
 
-      await sendTo{Name}(event, {
-        apiKey: 'test-key',
-      })
-
-      const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit]
-      expect(options.headers).toEqual(expect.objectContaining({
-        'Content-Type': 'application/json',
-      }))
-    })
-
-    // 在此添加服务特定的请求头测试
-    // 示例：orgId、project 请求头、region 请求头等。
-
-    // --- 3. 请求体 ---
-    it('以正确的格式发送事件', async () => {
-      const event = createTestEvent({ action: 'test-action', userId: '123' })
-
-      await sendTo{Name}(event, {
-        apiKey: 'test-key',
-      })
-
-      const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit]
-      const body = JSON.parse(options.body as string)
-      // 验证请求体符合预期格式
-      // 根据服务的预期负载结构进行调整
+      const body = getFetchJson(fetchSpy)
+      // 根据服务所需的请求负载结构进行调整
       expect(body).toBeInstanceOf(Array)
       expect(body).toHaveLength(1)
     })
-
-    // --- 4. 错误处理（只有直接辅助函数会抛出错误——
-    //      drain 本身会通过 `defineHttpDrain` 吞掉错误，
-    //      因此请求流水线永远不会被中断；这一契约由
-    //      `test/toolkit.test.ts` 覆盖。）
-    it('在非 OK 响应时抛出错误', async () => {
-      fetchSpy.mockResolvedValueOnce(
-        new Response('Bad Request', { status: 400, statusText: 'Bad Request' }),
-      )
-
-      const event = createTestEvent()
-
-      await expect(sendTo{Name}(event, {
-        apiKey: 'test-key',
-      })).rejects.toThrow('{Name} API error: 400 Bad Request')
-    })
   })
 
-  // --- 5. 批量操作 ---
+  // --- 3. 批量操作 -------------------------------------------------
   describe('sendBatchTo{Name}', () => {
-    it('在单个请求中发送多个事件', async () => {
+    it('sends multiple events in one request', async () => {
       const events = [
         createTestEvent({ requestId: '1' }),
         createTestEvent({ requestId: '2' }),
         createTestEvent({ requestId: '3' }),
       ]
 
-      await sendBatchTo{Name}(events, {
-        apiKey: 'test-key',
-      })
+      await sendBatchTo{Name}(events, { apiKey: 'test-key' })
 
       expect(fetchSpy).toHaveBeenCalledTimes(1)
-      const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit]
-      const body = JSON.parse(options.body as string)
-      expect(body).toHaveLength(3)
+      expect(getFetchJson(fetchSpy)).toHaveLength(3)
     })
 
-    it('当事件数组为空时跳过 fetch', async () => {
-      await sendBatchTo{Name}([], {
-        apiKey: 'test-key',
-      })
-
+    it('skips fetch when the batch is empty', async () => {
+      await sendBatchTo{Name}([], { apiKey: 'test-key' })
       expect(fetchSpy).not.toHaveBeenCalled()
     })
   })
 
-  // --- 6. 超时处理 ---
-  describe('timeout handling', () => {
-    it('使用默认 5000ms 超时', async () => {
-      const event = createTestEvent()
-      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+  // --- 4. Drain 工厂：配置解析 + 跳过行为 ------------------
+  describe('create{Name}Drain', () => {
+    it('resolves config from env vars', async () => {
+      process.env.{NAME}_API_KEY = 'env-key'
+      const drain = create{Name}Drain()
 
-      await sendTo{Name}(event, {
-        apiKey: 'test-key',
-      })
+      await drain({ event: createTestEvent() })
 
-      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5000)
+      const headers = getFetchHeaders(fetchSpy)
+      expect(headers.Authorization).toBe('Bearer env-key')
     })
 
-    it('在提供自定义超时时使用自定义超时', async () => {
-      const event = createTestEvent()
-      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    // “跳过”意味着：不发起请求，也不抛出异常。适配器仍会针对缺失的密钥调用 console.error
+    // （已由 beforeEach 中的 spy 抑制），以便让配置错误可见。
+    it('skips the request when apiKey is missing', async () => {
+      const drain = create{Name}Drain()
 
-      await sendTo{Name}(event, {
-        apiKey: 'test-key',
-        timeout: 10000,
-      })
+      await drain({ event: createTestEvent() })
 
-      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10000)
+      expect(fetchSpy).not.toHaveBeenCalled()
+    })
+
+    it('accepts an array of drain contexts', async () => {
+      const drain = create{Name}Drain({ apiKey: 'test-key' })
+
+      await drain([
+        { event: createTestEvent({ requestId: '1' }) },
+        { event: createTestEvent({ requestId: '2' }) },
+      ])
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(getFetchJson(fetchSpy)).toHaveLength(2)
     })
   })
 })
@@ -180,9 +158,14 @@ describe('{name} adapter', () => {
 
 ## 自定义说明
 
-- **URL 断言**：更新预期 URL 以匹配实际服务 API。
-- **认证请求头**：如果服务使用自定义认证请求头（例如 `X-API-Key` 而不是 `Authorization: Bearer`），请更新请求头断言。
-- **请求体格式**：调整请求体断言以匹配服务的预期负载。有些服务会将事件包装在对象中（PostHog：`{ api_key, batch }`），其他服务则接受原始数组（Axiom）。
-- **空批次**：该模板断言对空数组时 `fetchSpy` 不会被调用。如果你的适配器会发送空数组（如 Axiom），请将其改为匹配实际行为。
-- **事件转换**：如果你导出了 `to{Name}Event()` 转换器，请为其添加专门测试（可参考 `otlp.test.ts` 中的 `toOTLPLogRecord` 测试）。
-- **服务特定测试**：为任何服务特定功能添加测试（例如：Axiom 的 `orgId` 请求头、OTLP 的严重级别映射、PostHog 的 `distinct_id`）。
+- **URL 断言**：将预期 URL 更新为实际的服务 API；如果编码器能够容忍路径已存在的情况，也要包含该情况（参见 `resolveLokiPushUrl`）。
+- **身份验证请求头**：与服务保持一致（`X-API-Key`、HTTP Basic、`X-ClickHouse-User` 等）。
+- **请求体格式**：包装对象（PostHog `{ api_key, batch }`）、原始数组（Axiom）、NDJSON（ClickHouse）——断言真实结构，而不只是“是一个数组”。
+- **已弃用的别名**：如果适配器支持某个别名（`token` → `apiKey`），添加测试以验证该别名仍能解析，并验证两者同时设置时规范名称优先。
+- **错误吞咽**：drain 本身永远不会抛出异常——该契约由 `defineHttpDrain` 提供，并已在 `test/toolkit/toolkit.test.ts` 中覆盖；不要在每个适配器中重复测试。只有直接调用的辅助函数会暴露错误。
+- **服务专用辅助函数**：每个导出的辅助函数（`buildLokiPayload`、`toClickHouseRow`、严重性映射函数等）都应有自己的 `describe`，并覆盖边界情况（空输入、格式错误的时间戳、基数限制）。
+
+## 超越单元测试
+
+- **编码一致性**：将适配器添加到 `test/adapters/encode-parity.test.ts`。
+- **端到端测试**：创建由适配器环境变量控制的 `test/e2e/{name}.e2e.ts`；当服务可自行托管时，扩展 `test/e2e/docker-compose.yml` + `seed.mjs`。

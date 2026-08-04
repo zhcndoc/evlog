@@ -5,11 +5,11 @@ import type { AIToolExecution, AIEventData, ModelCost } from '../ai/index'
 import { initLogger, isLoggerInitialized, isLoggerLocked } from '../logger'
 import type { LoggerConfig } from '../types'
 import type { BaseEvlogOptions, MiddlewareLoggerOptions } from '../shared/middleware'
-import { createMiddlewareLogger } from '../shared/middleware'
+import { createMiddlewareLogger, pickBaseEvlogOptions } from '../shared/middleware'
 import {
   bindAsyncLocalStorage,
   clearAsyncLocalStorage,
-  patchAsyncLocalStorageEnterWith,
+  createSharedEnterWithStorage,
 } from '../shared/asyncStorageScope'
 
 const DEFAULT_MAX_SESSIONS = 256
@@ -107,6 +107,7 @@ const TURN_ONLY_KEYS = new Set([
   'path',
   'status',
   'duration',
+  'durationMs',
   'level',
   'error',
   'agent',
@@ -213,8 +214,10 @@ function ensureInit(options: EvlogEveOptions): void {
   setEveInitialized(true)
 }
 
-const turnLoggerStorage = new AsyncLocalStorage<AuditableLogger>()
-patchAsyncLocalStorageEnterWith(turnLoggerStorage)
+const turnLoggerStorage = createSharedEnterWithStorage(
+  'evlog:eve-turn',
+  () => new AsyncLocalStorage<AuditableLogger>(),
+)
 const activeTurnLoggers = new WeakSet<AuditableLogger>()
 
 function bindTurnLogger(logger: AuditableLogger): void {
@@ -527,14 +530,7 @@ function getOrCreateTurnState(
     method: 'EVE',
     path,
     requestId: turnId,
-    drain: options.drain,
-    enrich: options.enrich,
-    keep: options.keep,
-    redact: options.redact,
-    plugins: options.plugins,
-    include: options.include,
-    exclude: options.exclude,
-    routes: options.routes,
+    ...pickBaseEvlogOptions(options),
   }
 
   const { logger, finish, skipped } = createMiddlewareLogger(middlewareOptions)

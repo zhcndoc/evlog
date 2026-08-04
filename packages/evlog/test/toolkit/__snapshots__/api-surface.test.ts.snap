@@ -70,6 +70,15 @@ exports[`public API surface > matches snapshot for all subpath exports 1`] = `
     "defineError",
     "defineErrorCatalog",
   ],
+  "./clickhouse": [
+    "createClickHouseDrain",
+    "resolveClickHouseUrl",
+    "sendBatchToClickHouse",
+    "sendToClickHouse",
+    "toClickHouseDateTime",
+    "toClickHouseRow",
+    "toJSONEachRow",
+  ],
   "./client": [
     "clearIdentity",
     "initLog",
@@ -82,10 +91,16 @@ exports[`public API surface > matches snapshot for all subpath exports 1`] = `
     "formatDatadogMessageLine",
     "resolveDatadogIntakeUrl",
     "resolveDatadogLogStatus",
+    "resolveDatadogTraceContext",
     "sanitizeWideEventForDatadog",
     "sendBatchToDatadog",
     "sendToDatadog",
     "toDatadogLog",
+  ],
+  "./diagnostics": [
+    "EVLOG_EVENT_CHANNEL",
+    "enableDiagnosticsChannel",
+    "subscribeToWideEvents",
   ],
   "./elysia": [
     "evlog",
@@ -121,6 +136,7 @@ exports[`public API surface > matches snapshot for all subpath exports 1`] = `
   ],
   "./hono": [
     "evlog",
+    "useLogger",
   ],
   "./http": [
     "createHttpDrain",
@@ -132,6 +148,15 @@ exports[`public API surface > matches snapshot for all subpath exports 1`] = `
     "sendBatchToHyperDX",
     "sendToHyperDX",
     "toHyperDXOTLPConfig",
+  ],
+  "./loki": [
+    "buildLokiPayload",
+    "createLokiDrain",
+    "resolveLokiPushUrl",
+    "sendBatchToLoki",
+    "sendToLoki",
+    "toLokiLabels",
+    "toLokiTimestamp",
   ],
   "./memory": [
     "clearMemoryLogs",
@@ -264,9 +289,11 @@ exports[`public API surface > matches snapshot for all subpath exports 1`] = `
     "isStreamingResponse",
     "mergeEventField",
     "normalizeNumber",
+    "pickBaseEvlogOptions",
     "resolveAdapterConfig",
     "resolveMiddlewarePluginRunner",
     "runEnrichAndDrain",
+    "sendEncodedDrainRequest",
     "shouldDeferEmitForResponse",
     "shouldLog",
     "toLoggerConfig",
@@ -289,6 +316,7 @@ exports[`public API surface > matches snapshot for all subpath exports 1`] = `
     "createWorkersLogger",
     "defineWorkerFetch",
     "initWorkersLogger",
+    "withEvlog",
   ],
 }
 `;

@@ -245,13 +245,13 @@ const landingItems = [
         label: 'OpenTelemetry',
         icon: 'i-simple-icons-opentelemetry',
         description: '通过 OTLP 协议导出日志',
-        to: '/integrate/adapters/cloud/otlp'
+        to: '/integrate/adapters/hybrid/otlp'
       },
       {
         label: 'HyperDX',
         icon: 'i-custom-hyperdx',
         description: '通过 OTLP 将日志发送到 HyperDX',
-        to: '/integrate/adapters/cloud/hyperdx'
+        to: '/integrate/adapters/hybrid/hyperdx'
       },
       {
         label: 'PostHog',

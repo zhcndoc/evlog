@@ -21,47 +21,49 @@
 ### 范围
 当变更具有跨切面影响或影响整个仓库时，请省略范围。仅在指向某一个子系统时使用范围；整个 monorepo 是 `evlog`，因此 `evlog` 不是一个范围。
 
-- ai (AI SDK 集成)
-- axiom (Axiom drain 适配器)
-- bench (基准测试)
-- better-auth (Better Auth 集成)
-- better-stack (Better Stack drain 适配器)
-- cli (`@evlog/cli` 包)
-- core（logger、pipeline、error、redact、catalog 内部）
-- datadog (Datadog drain 适配器)
-- deps (依赖项)
-- docs (文档站点)
-- dx (开发者体验改进)
-- elysia (Elysia 插件)
-- eve (eve agent 集成)
-- express (Express 中间件)
-- fastify (Fastify 插件)
-- fs (文件系统 drain 适配器)
-- hono (Hono 中间件)
-- hyperdx (HyperDX drain 适配器)
-- nestjs (NestJS 中间件)
-- next (Next.js 集成)
-- nitro (Nitro 插件)
-- nuxt (Nuxt 模块)
-- orpc (oRPC 集成)
-- otlp (OTLP drain 适配器)
-- playground (playground 应用)
-- posthog (PostHog drain 适配器)
-- react-router (React Router 集成)
-- release (发布工作流 / 发布)
-- repo (仓库：工具、CI、脚本、根配置)
-- sentry (Sentry drain 适配器)
-- stream (进程内 stream + stream server)
-- sveltekit (SvelteKit 集成)
-- tanstack-start (TanStack Start 集成)
-- telemetry (`@evlog/telemetry` 包)
-- vite (Vite 插件)
-- workers (Cloudflare Workers 适配器)
+- ai（AI SDK 集成）
+- axiom（Axiom 日志输出适配器）
+- bench（基准测试）
+- better-auth（Better Auth 集成）
+- better-stack（Better Stack 日志输出适配器）
+- clickhouse（ClickHouse 日志输出适配器）
+- cli（`@evlog/cli` 包）
+- core（日志记录器、管道、错误、脱敏、目录内部模块）
+- datadog（Datadog 日志输出适配器）
+- deps（依赖项）
+- docs（文档网站）
+- dx（开发者体验改进）
+- elysia（Elysia 插件）
+- eve（eve 代理集成）
+- express（Express 中间件）
+- fastify（Fastify 插件）
+- fs（文件系统日志输出适配器）
+- hono（Hono 中间件）
+- hyperdx（HyperDX 日志输出适配器）
+- loki（Grafana Loki 日志输出适配器）
+- nestjs（NestJS 中间件）
+- next（Next.js 集成）
+- nitro（Nitro 插件）
+- nuxt（Nuxt 模块）
+- orpc（oRPC 集成）
+- otlp（OTLP 日志输出适配器）
+- playground（playground 应用）
+- posthog（PostHog 日志输出适配器）
+- react-router（React Router 集成）
+- release（发布流程 / 发布）
+- repo（仓库：工具、CI、脚本、根配置）
+- sentry（Sentry 日志输出适配器）
+- stream（进程内流 + 流服务器）
+- sveltekit（SvelteKit 集成）
+- tanstack-start（TanStack Start 集成）
+- telemetry（`@evlog/telemetry` 包）
+- vite（Vite 插件）
+- workers（Cloudflare Workers 适配器）
 -->
 
 ### 🔗 关联 issue
 
-<!-- 如果它解决了一个未关闭的 issue，请在此处链接该 issue。例如 "Resolves #123" -->
+<!-- 如果它解决了一个未关闭的 issue，请在此处链接该 issue。例如“解决 #123” -->
 
 ### 📚 描述
 
