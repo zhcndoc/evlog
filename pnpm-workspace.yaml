@@ -46,9 +46,19 @@ minimumReleaseAgeExclude:
   - '@vercel/*'
   - '@ai-sdk/*'
   - 'ai'
+  - '@github-tools/*'
   # Other
   - '@databuddy/nuxt'
   - '@changesets/cli@2.31.1'
-  - eve@0.24.3
+  - eve
   - satori@0.28.0
   - tsdown@0.22.8
+  - "@rolldown/*"
+  - "@workflow/*"
+  - experimental-ai-sdk-code-mode
+  - nitro
+  - rolldown
+  - workflow
+
+patchedDependencies:
+  '@github-tools/eve-extension@0.3.0': patches/@github-tools__eve-extension@0.3.0.patch

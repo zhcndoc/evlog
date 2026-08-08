@@ -26,6 +26,7 @@ const FS_FIELDS: ConfigField<FsConfig>[] = [
 ]
 
 const gitignoreWritten = new Set<string>()
+const unwritableDirs = new Set<string>()
 let warnedFsEdgeRuntime = false
 
 function isEdgeRuntime(): boolean {
@@ -35,7 +36,25 @@ function isEdgeRuntime(): boolean {
 function warnFsEdgeRuntimeOnce(): void {
   if (warnedFsEdgeRuntime) return
   warnedFsEdgeRuntime = true
-  console.warn('[evlog/fs] File system drain is not available on the Edge runtime. Use evlog/memory or a HTTP adapter instead.')
+  console.warn('[evlog/fs] File system drain is not available on the Edge runtime. Use evlog/memory or an HTTP adapter instead.')
+}
+
+/** Read-only or permission-denied, as opposed to a full disk or a real bug. */
+function isUnwritableError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'EROFS' || code === 'EACCES' || code === 'EPERM'
+}
+
+/**
+ * Record that `dir` cannot be written to, and say so once.
+ *
+ * Synchronous on purpose: concurrent batches that all fail their first write
+ * reach this together, and the check-then-add pair cannot interleave.
+ */
+function markUnwritable(dir: string): void {
+  if (unwritableDirs.has(dir)) return
+  unwritableDirs.add(dir)
+  console.warn(`[evlog/fs] "${dir}" is not writable, so the file system drain is disabled. This is expected on a serverless host, where only the temp directory is writable and does not outlive the instance — send events to an HTTP adapter instead, or set the drain's \`dir\` to a writable path.`)
 }
 
 async function ensureGitignore(dir: string): Promise<void> {
@@ -145,6 +164,12 @@ export async function writeBatchToFs(events: WideEvent[], config: FsConfig): Pro
  *   pretty: true,
  * }))
  * ```
+ *
+ * @remarks
+ * A write that fails with `EROFS`, `EACCES` or `EPERM` marks the configured
+ * directory unavailable and disables the drain for the rest of the process,
+ * after warning once. Attaching it on a host without a writable directory is
+ * therefore safe, though the events go nowhere.
  */
 export function createFsDrain(overrides?: Partial<FsConfig>) {
   return defineDrain<FsConfig>({
@@ -155,14 +180,26 @@ export function createFsDrain(overrides?: Partial<FsConfig>) {
         return null
       }
       const resolved = await resolveAdapterConfig<FsConfig>('fs', FS_FIELDS, overrides)
+      const dir = resolved.dir ?? '.evlog/logs'
+      if (unwritableDirs.has(dir)) return null
       return {
-        dir: resolved.dir ?? '.evlog/logs',
+        dir,
         pretty: resolved.pretty ?? false,
         maxFiles: resolved.maxFiles,
         maxSizePerFile: resolved.maxSizePerFile,
       }
     },
-    send: writeBatchToFs,
+    // The write itself is the probe. `mkdir` is a no-op on a directory that
+    // already exists, so it succeeds on a read-only one and proves nothing;
+    // only the append tells you whether this host will take the events.
+    send: async (events, config) => {
+      try {
+        await writeBatchToFs(events, config)
+      } catch (error) {
+        if (!isUnwritableError(error)) throw error
+        markUnwritable(config.dir)
+      }
+    },
   })
 }
 

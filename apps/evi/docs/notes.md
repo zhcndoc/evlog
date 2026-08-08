@@ -1,0 +1,99 @@
+# 备注
+
+那些需要花时间才能发现的事情。每一条都是此代理中的某些代码行之所以如此的原因——将它们保留在这里，这样代码就不必承载这些说明。
+
+## eve
+
+**Authored 通道报告为 `channel:<name>`，框架通道则报告不带前缀的名称。**
+`agent/channels/github.ts` 是 `channel:github`，而 `http`、`schedule` 和
+`subagent` 则直接以名称出现。比较 `ctx.channel.kind === 'github'` 永远不会匹配，
+而且不会发出任何提示。`agent/lib/channel.ts` 会对其进行规范化；工作区指令和
+花费标签都会经过它。
+
+**内置工具不会被 `eve info` 统计。**它只报告 authored 工具，
+因此 `Tools 0` 仍然意味着 `bash`、`read_file`、`write_file`、`glob`、`grep`、
+`web_fetch`、`todo` 和 `load_skill` 全部存在。
+
+**只有 GitHub 通道会检出仓库。**这发生在第一次模型调用之前，使用触发时的 ref，
+并在多轮对话中增量进行，而且仅限于支持防火墙的后端。在本地以及其他所有通道中，
+`/workspace` 都是空的。沙箱文件工具会拒绝相对于仓库的路径。
+
+**`disableTool()` 是静态的。**没有按会话移除内置工具的方法，因此某个工具在某个通道上
+没有用处时，仍会占用该通道的上下文。
+
+**推理级别按模型区分。**`GET /v1/models` 会公开 `reasoning_options`；
+DeepSeek V4 Flash 只声明了 `high` 和 `xhigh`。设置为 `low` 或 `medium` 不会报错，
+而是产生异常且不单调的推理量。
+
+**会话限制默认为 4000 万个输入 token，且没有输出上限**，按当前价格计算，
+一次失控的会话费用可能接近 8 美元。
+
+**评估运行会泄漏会话。**`t.succeeded()` 会接受一个健康的开放会话，因此每次运行都会
+留下一个针对已失效开发服务器、排队等待执行的 `sessionTimeoutWorkflow`。后续运行会输出
+越来越多的 `[world-local] Queue delivery failed`。排队的工作会在每次运行中增长，并掩盖
+输出中的真实失败。
+
+**从未观察到 `sessionEvent` 触发。**它会在会话完成时发出，而评估运行器从未到达
+会话完成这一步。
+
+## AI 网关
+
+**`sort: 'cost'` 优于硬编码的提供商顺序。** 路由请求落到了
+$0.20/$0.40 的部署上，而更便宜的 1M 上下文部署也能提供同一个模型。一轮基于事实的对话从 $0.084 降至 $0.006。排序会随着部署和促销活动的变化持续遵循价格。
+
+**`GET /v1/models` 返回真实的费率表**，包括 `input_cache_read`。
+根据它重建一次观测到的对话后，其结果与 eve 报告的 `costUsd` 精确到小数点后四位，这正是发现超支的方式。
+
+## github-tools
+
+**不带 `preset` 的 `include` 会请求每个 preset 的 scope 并集**，
+其中包括 `administration:write`。请将 `connect.scopes` 限定为工具实际调用的范围。
+
+**`maintainer` preset 自带的 gist 工具通过 Connect 时始终返回 403**——
+Gists API 会拒绝安装令牌——此外还包括仓库创建和合并功能。
+
+**`updateIssue` 还会设置 `state`**，因此自动批准它也会授予
+`closeIssue`，因为提供 `state` 就会关闭 issue。应根据输入进行控制，而不是根据工具名称。
+
+**`*Context` 工具可以减少往返次数。** `getIssueContext` 一次调用即可返回 issue、
+其标签以及最近的评论。
+
+## Vercel Connect
+
+**连接器类型不可互换。** Linear 通道的类型是 `Linear`
+（由代理应用加 Webhook 管理）；Linear MCP 的类型是 `OAuth`。`eve add
+linear` 会分别配置一个 — 这是一个命令，而不是一个连接器。
+
+**当连接器无法生成应用令牌时，应用范围的身份验证会静默失败。**
+由于应用范围的身份验证是非交互式的，eve 永远不会发出质询：
+`connection_search` 会成功，并报告 `needsAuthorization: true`，但没有任何
+人可以批准，在每一轮中都是如此。用户范围的身份验证至少会通过
+`principal_required` 明确失败。
+
+**配置错误的 OAuth 连接不会降级，而是会破坏整个运行过程。**
+在 EVL-213 中，Linear MCP 连接连带导致所有 GitHub 工具都不可用：五次
+调用全部抛出 `Cannot read properties of undefined (reading 'toLowerCase')`，
+错误源自
+`@vercel/connect/dist/eve/provision-oauth-connector.js` 中的
+`isProvisionableConnectorUid`。本地评估从未发现这一问题，因为没有 OIDC 令牌时，
+`provisionEveOAuthConnector` 会提前返回；而在生产环境中它会运行。在 Connect
+能够生成令牌之前，该连接会被移除 — 假设代理在没有该连接的情况下直接作答是错误的。
+
+**CLI 中的 `vercel connect token` 无法证明应用范围的身份验证有效** — 它
+通过你自己的 Vercel 身份进行解析，也就是用户范围的路径。
+
+## evlog
+
+**文件系统写入端既没有防护其 `mkdir`，也没有防护其 `appendFile`。** 在 Vercel
+上，`/tmp` 之外的所有位置都是只读的，因此将其附加到那里会在每轮抛出一次异常，并写入无人能够读取的事件。
+
+必须显式设置 `environment`，否则宽泛事件会将本地流量和评估流量都报告为
+`development`，而支出标签会将两者区分开来。现在两者都会读取
+`agent/lib/environment.ts`。
+
+## 待解决
+
+- 每个工具的输入令牌归因。`ai.tools[]` 记录了名称、耗时和成功与否，但没有记录每个结果增加了多少上下文；`docs__list-pages` 约占一次基于依据的交互输入的 85%，而这是通过手动差异对比才确认的。
+- 事件中的 `ai.provider`。系统记录了网关 slug，但没有记录实际提供服务的部署。
+- 工具结果中的 GitHub 速率限制标头。对于一个即将开始大量运行 Webhook 的代理来说，这通常是最先、也最悄无声息地出问题的部分。
+- 提供一个 `toTelemetry(output)`，作为 `toModelOutput` 的镜像，这样工具就可以携带诊断信息，而不会消耗上下文令牌。

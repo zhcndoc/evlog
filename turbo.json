@@ -1,13 +1,13 @@
 {
   "$schema": "https://turborepo.dev/schema.v2.json",
-  "ui": "tui",
   "noUpdateNotifier": true,
   "globalPassThroughEnv": [
     "CI",
     "GITHUB_ACTIONS",
     "GITHUB_EVENT_NAME",
     "GITHUB_REF",
-    "GITHUB_SHA"
+    "GITHUB_SHA",
+    "TMPDIR"
   ],
   "tasks": {
     "build": {
@@ -99,6 +99,11 @@
     },
     "typecheck": {
       "dependsOn": ["dev:prepare"]
+    },
+    "eval": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "env": ["AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN"]
     }
   }
 }

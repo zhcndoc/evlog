@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HookContext } from 'eve/hooks'
+import type { HookContext, HookEventMap } from 'eve/hooks'
 import { initLogger } from '../src/logger'
 import {
   resetEvlogEveForTests,
   defineEvlogHook,
+  defineEvlogInstrumentation,
+  evlogRuntimeContext,
   useLogger,
   detachActiveTurnLoggerForTests,
 } from '../src/eve/index'
@@ -43,6 +45,7 @@ async function runTurn(
   options: {
     turnId?: string
     fail?: boolean
+    cancel?: boolean
     steps?: number
     toolResults?: Array<{
       toolName: string
@@ -52,12 +55,26 @@ async function runTurn(
     }>
     toolRequests?: Array<{ toolName: string, callId: string }>
     message?: string
+    messageParts?: HookEventMap['message.received']['data']['parts']
     inputRequests?: Array<{ requestId: string, toolName: string, prompt: string }>
     subagents?: Array<{ phase: 'called' | 'completed', callId: string, name: string }>
+    costUsd?: number
+    stepFailures?: Array<{ code: string, message: string, stepIndex: number }>
+    authorizations?: Array<{
+      name: string
+      outcome?: HookEventMap['authorization.completed']['data']['outcome']
+      reason?: string
+    }>
+    compactions?: Array<{ modelId: string, usageInputTokens: number | null, complete?: boolean }>
+    clearContext?: boolean
+    reasoning?: string[]
+    response?: string | null
+    result?: HookEventMap['result.completed']['data']['result']
+    ctx?: HookContext
   } = {},
 ) {
   const turnId = options.turnId ?? TURN_ID
-  const ctx = hookContext()
+  const ctx = options.ctx ?? hookContext()
   const events = hook.events!
 
   events['turn.started']!({
@@ -68,7 +85,12 @@ async function runTurn(
   if (options.message !== undefined) {
     events['message.received']!({
       type: 'message.received',
-      data: { message: options.message, sequence: 1, turnId },
+      data: {
+        message: options.message,
+        ...(options.messageParts ? { parts: options.messageParts } : {}),
+        sequence: 1,
+        turnId,
+      },
     }, ctx)
   }
 
@@ -85,8 +107,89 @@ async function runTurn(
           inputTokens: 100,
           outputTokens: 50,
           cacheReadTokens: 10,
+          ...(options.costUsd !== undefined ? { costUsd: options.costUsd } : {}),
         },
       },
+    }, ctx)
+  }
+
+  for (const failure of options.stepFailures ?? []) {
+    events['step.failed']!({
+      type: 'step.failed',
+      data: { ...failure, sequence: 4, turnId },
+    }, ctx)
+  }
+
+  for (const [index, auth] of (options.authorizations ?? []).entries()) {
+    events['authorization.required']!({
+      type: 'authorization.required',
+      data: {
+        description: `sign in to ${auth.name}`,
+        name: auth.name,
+        sequence: 30 + index,
+        stepIndex: 0,
+        turnId,
+      },
+    }, ctx)
+    if (auth.outcome) {
+      events['authorization.completed']!({
+        type: 'authorization.completed',
+        data: {
+          name: auth.name,
+          outcome: auth.outcome,
+          ...(auth.reason ? { reason: auth.reason } : {}),
+          sequence: 31 + index,
+          stepIndex: 0,
+          turnId,
+        },
+      }, ctx)
+    }
+  }
+
+  for (const [index, compaction] of (options.compactions ?? []).entries()) {
+    events['compaction.requested']!({
+      type: 'compaction.requested',
+      data: {
+        modelId: compaction.modelId,
+        sequence: 40 + index,
+        sessionId: SESSION_ID,
+        turnId,
+        usageInputTokens: compaction.usageInputTokens,
+      },
+    }, ctx)
+    if (compaction.complete !== false) {
+      events['compaction.completed']!({
+        type: 'compaction.completed',
+        data: { modelId: compaction.modelId, sequence: 41 + index, sessionId: SESSION_ID, turnId },
+      }, ctx)
+    }
+  }
+
+  if (options.clearContext) {
+    events['context.cleared']!({
+      type: 'context.cleared',
+      data: { sequence: 45, sessionId: SESSION_ID, turnId },
+    }, ctx)
+  }
+
+  for (const [index, reasoning] of (options.reasoning ?? []).entries()) {
+    events['reasoning.completed']!({
+      type: 'reasoning.completed',
+      data: { reasoning, sequence: 50 + index, stepIndex: 0, turnId },
+    }, ctx)
+  }
+
+  if (options.response !== undefined) {
+    events['message.completed']!({
+      type: 'message.completed',
+      data: { finishReason: 'stop', message: options.response, sequence: 55, stepIndex: 0, turnId },
+    }, ctx)
+  }
+
+  if (options.result !== undefined) {
+    events['result.completed']!({
+      type: 'result.completed',
+      data: { result: options.result, sequence: 56, stepIndex: 0, turnId },
     }, ctx)
   }
 
@@ -181,7 +284,12 @@ async function runTurn(
     }, ctx)
   }
 
-  if (options.fail) {
+  if (options.cancel) {
+    await events['turn.cancelled']!({
+      type: 'turn.cancelled',
+      data: { sequence: 99, turnId },
+    }, ctx)
+  } else if (options.fail) {
     await events['turn.failed']!({
       type: 'turn.failed',
       data: {
@@ -299,6 +407,654 @@ describe('evlog/eve', () => {
       code: 'TURN_ERROR',
       message: 'turn exploded',
     })
+  })
+
+  it('emits a cancelled turn as a non-error wide event', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, { cancel: true })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.status).toBe(499)
+    expect(event?.level).toBe('info')
+    expect(event?.eve).toMatchObject({ phase: 'cancelled', cancelled: true })
+  })
+
+  it('releases turn state after a cancelled turn', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, { cancel: true })
+
+    expect(() => useLogger(toolContext())).toThrow(/could not find a logger/)
+
+    await runTurn(hook, { turnId: TURN_ID_1 })
+    await waitForDrainCalls(spies.drain, 2)
+    expect(findEventViaDrain(spies.drain, e => e.path?.includes(TURN_ID_1))).toBeDefined()
+  })
+
+  it('flushes an in-flight turn when the session fails without turn.failed', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+    const ctx = hookContext()
+
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 0, turnId: TURN_ID },
+    }, ctx)
+
+    await hook.events!['session.failed']!({
+      type: 'session.failed',
+      data: { code: 'SESSION_ERROR', message: 'session exploded', sessionId: SESSION_ID },
+    }, ctx)
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.status).toBe(500)
+    expect(event?.level).toBe('error')
+    expect(event?.eve).toMatchObject({
+      failure: { code: 'SESSION_ERROR', message: 'session exploded' },
+    })
+    expect(() => useLogger(toolContext())).toThrow(/could not find a logger/)
+  })
+
+  it('drops session context once the session completes', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+    const ctx = hookContext()
+
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 0, turnId: TURN_ID },
+    }, ctx)
+    useLogger(toolContext()).set({ customer: { slug: 'acme' } })
+
+    await hook.events!['session.completed']!({ type: 'session.completed' }, ctx)
+
+    await waitForDrainCalls(spies.drain)
+    const openTurn = findEventViaDrain(spies.drain, e => e.path?.includes(TURN_ID))
+    expect(openTurn?.status).toBe(200)
+    expect(() => useLogger(toolContext())).toThrow(/could not find a logger/)
+
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 0, turnId: TURN_ID_1 },
+    }, ctx)
+    await hook.events!['turn.completed']!({
+      type: 'turn.completed',
+      data: { sequence: 1, turnId: TURN_ID_1 },
+    }, ctx)
+
+    await waitForDrainCalls(spies.drain, 2)
+    const secondTurn = findEventViaDrain(spies.drain, e => e.path?.includes(TURN_ID_1))
+    expect(secondTurn?.customer).toBeUndefined()
+  })
+
+  it('finishes the remaining turns and clears session state when one turn fails to finish', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({
+      drain: spies.drain,
+      keep: (tail) => {
+        if (tail.path?.endsWith(TURN_ID)) throw new Error('keep exploded')
+      },
+    })
+    const ctx = hookContext()
+
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 0, turnId: TURN_ID },
+    }, ctx)
+    useLogger(toolContext()).set({ customer: { slug: 'acme' } })
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 1, turnId: TURN_ID_1 },
+    }, ctx)
+
+    await hook.events!['session.completed']!({ type: 'session.completed' }, ctx)
+
+    await waitForDrainCalls(spies.drain)
+    expect(findEventViaDrain(spies.drain, e => e.path?.endsWith(TURN_ID))).toBeUndefined()
+    expect(findEventViaDrain(spies.drain, e => e.path?.endsWith(TURN_ID_1))).toBeDefined()
+
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 2, turnId: 'turn_2' },
+    }, ctx)
+    await hook.events!['turn.completed']!({
+      type: 'turn.completed',
+      data: { sequence: 3, turnId: 'turn_2' },
+    }, ctx)
+
+    await waitForDrainCalls(spies.drain, 2)
+    const thirdTurn = findEventViaDrain(spies.drain, e => e.path?.endsWith('turn_2'))
+    expect(thirdTurn?.customer).toBeUndefined()
+  })
+
+  it('records runtime identity from session.started on every turn', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+    const ctx = hookContext()
+
+    hook.events!['session.started']!({
+      type: 'session.started',
+      data: {
+        runtime: {
+          agentId: 'agent_1',
+          agentName: 'support',
+          eveVersion: '0.30.8',
+          modelId: 'anthropic/claude-opus-5',
+          build: { gitSha: 'abc123', gitBranch: 'main', deployedAt: '2026-08-05T00:00:00Z' },
+        },
+      },
+    }, ctx)
+
+    await runTurn(hook, { ctx })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({
+      runtime: {
+        version: '0.30.8',
+        agentId: 'agent_1',
+        model: 'anthropic/claude-opus-5',
+        gitSha: 'abc123',
+        gitBranch: 'main',
+        deployedAt: '2026-08-05T00:00:00Z',
+      },
+    })
+    expect(event?.ai).toMatchObject({ model: 'anthropic/claude-opus-5' })
+  })
+
+  it('records parent lineage for a subagent session', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+    const ctx = {
+      ...hookContext(),
+      session: {
+        id: SESSION_ID,
+        parent: {
+          callId: 'call_delegate',
+          rootSessionId: 'sess_root',
+          sessionId: 'sess_parent',
+          turn: { id: 'turn_parent' },
+        },
+      },
+    } as HookContext
+
+    hook.events!['session.started']!({
+      type: 'session.started',
+      data: {
+        invocation: {
+          kind: 'subagent',
+          name: 'researcher',
+          parentCallId: 'call_delegate',
+          parentSessionId: 'sess_parent',
+          parentTurnId: 'turn_parent',
+        },
+      },
+    }, ctx)
+
+    await runTurn(hook, { ctx })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({
+      parent: {
+        sessionId: 'sess_parent',
+        rootSessionId: 'sess_root',
+        callId: 'call_delegate',
+        turnId: 'turn_parent',
+        subagent: 'researcher',
+      },
+    })
+  })
+
+  it('records the caller principal that triggered the turn', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+    const ctx = {
+      ...hookContext(),
+      session: {
+        id: SESSION_ID,
+        auth: {
+          current: {
+            principalId: 'github:1234',
+            principalType: 'user',
+            authenticator: 'github',
+            subject: 'someone@example.com',
+            attributes: { login: 'someone' },
+          },
+          initiator: null,
+        },
+      },
+    } as unknown as HookContext
+
+    await runTurn(hook, { ctx })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({
+      caller: {
+        principalId: 'github:1234',
+        principalType: 'user',
+        authenticator: 'github',
+      },
+    })
+  })
+
+  it('keeps the caller subject and attributes off the event', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+    const ctx = {
+      ...hookContext(),
+      session: {
+        id: SESSION_ID,
+        auth: {
+          current: {
+            principalId: 'github:1234',
+            principalType: 'user',
+            authenticator: 'github',
+            subject: 'someone@example.com',
+            attributes: { login: 'someone' },
+          },
+          initiator: null,
+        },
+      },
+    } as unknown as HookContext
+
+    await runTurn(hook, { ctx })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    const { caller } = event?.eve as { caller?: Record<string, unknown> }
+    expect(Object.keys(caller ?? {}).sort()).toEqual([
+      'authenticator',
+      'principalId',
+      'principalType',
+    ])
+  })
+
+  it('omits the caller when the session carries no authenticated principal', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook)
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).not.toHaveProperty('caller')
+  })
+
+  it('prefers the cost reported by eve over the configured pricing map', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({
+      drain: spies.drain,
+      cost: { 'gpt-5': { input: 1000, output: 2000 } },
+    })
+
+    await runTurn(hook, { steps: 2, costUsd: 0.0125 })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.ai).toMatchObject({ costUsd: 0.025 })
+    expect((event?.ai as Record<string, unknown>).estimatedCost).toBeUndefined()
+  })
+
+  it('records failed model steps on a turn that still completes', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, {
+      stepFailures: [{ code: 'RATE_LIMIT', message: 'slow down', stepIndex: 0 }],
+    })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.status).toBe(200)
+    expect(event?.eve).toMatchObject({
+      failedSteps: 1,
+      stepFailures: [{ code: 'RATE_LIMIT', message: 'slow down', stepIndex: 0 }],
+    })
+  })
+
+  it('records connection authorization outcomes', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, {
+      authorizations: [{ name: 'linear', outcome: 'declined', reason: 'user said no' }],
+    })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    const { authorizations } = (event?.eve as { authorizations?: Array<Record<string, unknown>> })
+    expect(authorizations).toHaveLength(1)
+    expect(authorizations?.[0]).toMatchObject({
+      name: 'linear',
+      outcome: 'declined',
+      reason: 'user said no',
+    })
+    expect(authorizations?.[0]?.durationMs).toBeTypeOf('number')
+  })
+
+  it('marks a turn awaiting an authorization that never completed', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, { authorizations: [{ name: 'github' }] })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({ phase: 'awaiting-authorization' })
+  })
+
+  it('sizes the model reasoning without recording its content', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain, message: 'full' })
+
+    await runTurn(hook, { reasoning: ['weighing the refund policy', 'checking the order'] })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({ reasoning: { blocks: 2, chars: 44 } })
+    expect(JSON.stringify(event)).not.toContain('weighing the refund policy')
+  })
+
+  it('records the response length even when the message is omitted', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, { response: 'Refund issued for order 4821.' })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.message).toEqual({ responseChars: 29 })
+  })
+
+  it('records the response text once the message mode allows it', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain, message: 'preview', messagePreviewLength: 10 })
+
+    await runTurn(hook, { response: 'x'.repeat(50) })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.message).toEqual({ responseChars: 50, response: `${'x'.repeat(10)}…` })
+  })
+
+  it('ignores a step that produced no assistant message', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain, message: 'full' })
+
+    await runTurn(hook, { response: null })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.message).toBeUndefined()
+  })
+
+  it('records the structured result of an agent with an output schema', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, { result: { refunded: true, orderId: '4821' } })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({ result: { refunded: true, orderId: '4821' } })
+  })
+
+  it('records compaction and context clearing', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, {
+      compactions: [{ modelId: 'gpt-5-mini', usageInputTokens: 180_000 }],
+      clearContext: true,
+    })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({
+      compaction: { count: 1, model: 'gpt-5-mini', inputTokensAtTrigger: 180_000 },
+      contextCleared: true,
+    })
+  })
+
+  it('reports a compaction that was requested but never completed', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, {
+      compactions: [{ modelId: 'gpt-5-mini', usageInputTokens: 180_000, complete: false }],
+    })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({
+      compaction: {
+        count: 0,
+        requested: 1,
+        model: 'gpt-5-mini',
+        inputTokensAtTrigger: 180_000,
+      },
+    })
+  })
+
+  it('keeps the first trigger when a turn compacts more than once', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+
+    await runTurn(hook, {
+      compactions: [
+        { modelId: 'gpt-5-mini', usageInputTokens: 180_000 },
+        { modelId: 'gpt-5-nano', usageInputTokens: 90_000 },
+      ],
+    })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.eve).toMatchObject({
+      compaction: { count: 2, model: 'gpt-5-mini', inputTokensAtTrigger: 180_000 },
+    })
+  })
+
+  it('marks a subagent started and times it to completion', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+    const ctx = hookContext()
+    const events = hook.events!
+
+    events['turn.started']!({ type: 'turn.started', data: { sequence: 0, turnId: TURN_ID } }, ctx)
+    events['subagent.called']!({
+      type: 'subagent.called',
+      data: {
+        callId: 'call_1',
+        childSessionId: 'child_1',
+        sessionId: SESSION_ID,
+        sequence: 20,
+        name: 'researcher',
+        toolName: 'delegate',
+        turnId: TURN_ID,
+        workflowId: 'wf_1',
+      },
+    }, ctx)
+    events['subagent.started']!({
+      type: 'subagent.started',
+      data: { callId: 'call_1', subagentName: 'researcher' },
+    }, ctx)
+    events['subagent.completed']!({
+      type: 'subagent.completed',
+      data: { callId: 'call_1', output: 'done', subagentName: 'researcher' },
+    }, ctx)
+    await events['turn.completed']!({
+      type: 'turn.completed',
+      data: { sequence: 99, turnId: TURN_ID },
+    }, ctx)
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    const { subagents } = (event?.eve as { subagents?: Array<Record<string, unknown>> })
+    expect(subagents?.[0]).toMatchObject({ callId: 'call_1', status: 'completed' })
+    expect(subagents?.[0]?.durationMs).toBeTypeOf('number')
+  })
+
+  it('summarizes attachment parts without their content in preview mode', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain, message: 'preview' })
+
+    await runTurn(hook, {
+      message: 'here is my passport',
+      messageParts: [{ type: 'file', mediaType: 'application/pdf', filename: 'john-doe-passport.pdf', data: 'JVBER' },],
+    })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect(event?.message).toEqual({
+      received: 'here is my passport',
+      parts: [{ type: 'file', mediaType: 'application/pdf' }],
+    })
+  })
+
+  it('keeps attachment parts verbatim in full mode', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain, message: 'full' })
+
+    await runTurn(hook, {
+      message: 'x'.repeat(600),
+      messageParts: [{ type: 'text', text: 'hello' }],
+    })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    const message = event?.message as { received: string, parts: unknown[] }
+    expect(message.received).toHaveLength(600)
+    expect(message.parts).toEqual([{ type: 'text', text: 'hello' }])
+  })
+
+  it('truncates the preview to messagePreviewLength', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain, message: 'preview', messagePreviewLength: 10 })
+
+    await runTurn(hook, { message: 'x'.repeat(50) })
+
+    await waitForDrainCalls(spies.drain)
+    const event = findEventViaDrain(spies.drain, () => true)
+    expect((event?.message as { received: string }).received).toBe(`${'x'.repeat(10)}…`)
+  })
+
+  it('emits a session wide event rolling up every turn when sessionEvent is on', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain, sessionEvent: true })
+    const ctx = hookContext()
+
+    await runTurn(hook, { ctx, costUsd: 0.01, toolResults: [{ toolName: 'search', status: 'completed' }] })
+    await runTurn(hook, { ctx, turnId: TURN_ID_1, cancel: true, costUsd: 0.02 })
+    await hook.events!['session.completed']!({ type: 'session.completed' }, ctx)
+
+    await waitForDrainCalls(spies.drain, 3)
+    const sessionEvent = findEventViaDrain(spies.drain, e => e.path === `/sessions/${SESSION_ID}`)
+    expect(sessionEvent?.eve).toMatchObject({
+      scope: 'session',
+      sessionId: SESSION_ID,
+      turns: 2,
+      cancelledTurns: 1,
+    })
+    expect(sessionEvent?.ai).toMatchObject({
+      calls: 2,
+      inputTokens: 200,
+      outputTokens: 100,
+      costUsd: 0.03,
+      toolCalls: ['search'],
+    })
+  })
+
+  it('counts a turn parked on an authorization as failed in the session rollup', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain, sessionEvent: true })
+    const ctx = hookContext()
+
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 0, turnId: TURN_ID },
+    }, ctx)
+    hook.events!['authorization.required']!({
+      type: 'authorization.required',
+      data: {
+        description: 'sign in to linear',
+        name: 'linear',
+        sequence: 1,
+        stepIndex: 0,
+        turnId: TURN_ID,
+      },
+    }, ctx)
+
+    await hook.events!['session.failed']!({
+      type: 'session.failed',
+      data: { code: 'SESSION_ERROR', message: 'session exploded', sessionId: SESSION_ID },
+    }, ctx)
+
+    await waitForDrainCalls(spies.drain, 2)
+    const turnEvent = findEventViaDrain(spies.drain, e => e.path?.endsWith(TURN_ID))
+    expect(turnEvent?.eve).toMatchObject({ phase: 'awaiting-authorization' })
+
+    const sessionEvent = findEventViaDrain(spies.drain, e => e.path === `/sessions/${SESSION_ID}`)
+    expect(sessionEvent?.eve).toMatchObject({
+      scope: 'session',
+      sessionId: SESSION_ID,
+      turns: 1,
+      failedTurns: 1,
+    })
+  })
+
+  it('rolls up the estimated cost when eve reports no cost', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({
+      drain: spies.drain,
+      sessionEvent: true,
+      cost: { 'gpt-5': { input: 1000, output: 2000 } },
+    })
+    const ctx = hookContext()
+
+    await runTurn(hook, { ctx })
+    await hook.events!['session.completed']!({ type: 'session.completed' }, ctx)
+
+    await waitForDrainCalls(spies.drain, 2)
+    const sessionEvent = findEventViaDrain(spies.drain, e => e.path === `/sessions/${SESSION_ID}`)
+    expect(sessionEvent?.ai).toMatchObject({ estimatedCost: 0.2 })
+    expect((sessionEvent?.ai as Record<string, unknown>).costUsd).toBeUndefined()
+  })
+
+  it('reports both cost sources when a session mixes them', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({
+      drain: spies.drain,
+      sessionEvent: true,
+      cost: { 'gpt-5': { input: 1000, output: 2000 } },
+    })
+    const ctx = hookContext()
+
+    await runTurn(hook, { ctx, costUsd: 0.01 })
+    await runTurn(hook, { ctx, turnId: TURN_ID_1 })
+    await hook.events!['session.completed']!({ type: 'session.completed' }, ctx)
+
+    await waitForDrainCalls(spies.drain, 3)
+    const sessionEvent = findEventViaDrain(spies.drain, e => e.path === `/sessions/${SESSION_ID}`)
+    expect(sessionEvent?.ai).toMatchObject({ costUsd: 0.01, estimatedCost: 0.2 })
+  })
+
+  it('emits no session wide event by default', async () => {
+    const spies = createPipelineSpies()
+    const hook = defineEvlogHook({ drain: spies.drain })
+    const ctx = hookContext()
+
+    await runTurn(hook, { ctx })
+    await hook.events!['session.completed']!({ type: 'session.completed' }, ctx)
+
+    await waitForDrainCalls(spies.drain)
+    expect(findEventViaDrain(spies.drain, e => e.path === `/sessions/${SESSION_ID}`)).toBeUndefined()
   })
 
   it('does not throw when an internal handler fails', async () => {
@@ -770,6 +1526,7 @@ describe('evlog/eve', () => {
         childSessionId: 'child_sub_1',
         status: 'completed',
         output: 'done',
+        durationMs: expect.any(Number),
       },
     ])
   })
@@ -948,5 +1705,125 @@ describe('evlog/eve', () => {
 
     expect(initSpy).not.toHaveBeenCalled()
     initSpy.mockRestore()
+  })
+})
+
+describe('defineEvlogInstrumentation', () => {
+  beforeEach(() => {
+    resetEvlogEveForTests()
+    initLogger({ env: { service: 'eve-test' } })
+  })
+
+  afterEach(() => {
+    resetEvlogEveForTests()
+  })
+
+  function stepStartedInput(turnId = TURN_ID) {
+    return {
+      channel: { kind: 'http' },
+      modelInput: { instructions: undefined, messages: [] },
+      session: { id: SESSION_ID, auth: { current: null, initiator: null } },
+      step: { index: 0 },
+      turn: { id: turnId, sequence: 0 },
+    } as Parameters<
+      NonNullable<NonNullable<ReturnType<typeof defineEvlogInstrumentation>['events']>['step.started']>
+    >[0]
+  }
+
+  it('links the model-call span to the wide event of the active turn', () => {
+    const hook = defineEvlogHook({})
+    const instrumentation = defineEvlogInstrumentation()
+
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 0, turnId: TURN_ID },
+    }, hookContext())
+
+    expect(instrumentation.events!['step.started']!(stepStartedInput())).toEqual({
+      runtimeContext: {
+        'evlog.request_id': TURN_ID,
+        'evlog.session_id': SESSION_ID,
+      },
+    })
+  })
+
+  it('contributes no context outside a tracked turn', () => {
+    const instrumentation = defineEvlogInstrumentation()
+
+    expect(instrumentation.events!['step.started']!(stepStartedInput())).toBeUndefined()
+  })
+
+  it('does not throw when no hook is registered', () => {
+    const instrumentation = defineEvlogInstrumentation()
+
+    expect(() => instrumentation.events!['step.started']!(stepStartedInput())).not.toThrow()
+  })
+
+  it('passes capture settings and setup through to eve', () => {
+    const setup = vi.fn()
+    const instrumentation = defineEvlogInstrumentation({
+      functionId: 'support-agent',
+      recordInputs: false,
+      recordOutputs: false,
+      traceChannelRequests: true,
+      setup,
+    })
+
+    expect(instrumentation).toMatchObject({
+      functionId: 'support-agent',
+      recordInputs: false,
+      recordOutputs: false,
+      traceChannelRequests: true,
+    })
+    instrumentation.setup!({ agentName: 'support-agent' })
+    expect(setup).toHaveBeenCalledWith({ agentName: 'support-agent' })
+  })
+
+  it('declares nothing beyond the event hook when unconfigured', () => {
+    expect(Object.keys(defineEvlogInstrumentation())).toEqual(['events'])
+  })
+})
+
+describe('evlogRuntimeContext', () => {
+  beforeEach(() => {
+    resetEvlogEveForTests()
+    initLogger({ env: { service: 'eve-test' } })
+  })
+
+  afterEach(() => {
+    resetEvlogEveForTests()
+  })
+
+  function stepStartedInput(turnId = TURN_ID) {
+    return {
+      channel: { kind: 'http' },
+      modelInput: { instructions: undefined, messages: [] },
+      session: { id: SESSION_ID, auth: { current: null, initiator: null } },
+      step: { index: 0 },
+      turn: { id: turnId, sequence: 0 },
+    } as Parameters<typeof evlogRuntimeContext>[0]
+  }
+
+  it('returns attributes that spread into an authored runtime context', () => {
+    const hook = defineEvlogHook({})
+
+    hook.events!['turn.started']!({
+      type: 'turn.started',
+      data: { sequence: 0, turnId: TURN_ID },
+    }, hookContext())
+
+    expect({
+      ...evlogRuntimeContext(stepStartedInput()),
+      posthog_distinct_id: 'user_1',
+    }).toEqual({
+      'evlog.request_id': TURN_ID,
+      'evlog.session_id': SESSION_ID,
+      posthog_distinct_id: 'user_1',
+    })
+  })
+
+  it('spreads to nothing outside a tracked turn', () => {
+    expect(evlogRuntimeContext(stepStartedInput())).toBeUndefined()
+    expect({ ...evlogRuntimeContext(stepStartedInput()) }).toEqual({})
   })
 })

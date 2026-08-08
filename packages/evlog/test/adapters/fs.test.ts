@@ -336,5 +336,85 @@ describe('fs adapter', () => {
         warnSpy.mockRestore()
       }
     })
+
+    it('warns once and disables itself when the directory is read-only', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        vi.resetModules()
+        mockedAppendFile.mockRejectedValue(Object.assign(new Error('EROFS'), { code: 'EROFS' }))
+        const { createFsDrain: createFsDrainFresh } = await import('../../src/adapters/fs')
+        const drain = createFsDrainFresh({ dir: '/var/task/.evlog/logs' })
+
+        await drain(createDrainContext({ action: 'readonly' }))
+        await drain(createDrainContext({ action: 'readonly_again' }))
+
+        expect(warnSpy).toHaveBeenCalledTimes(1)
+        expect(warnSpy.mock.calls[0]?.[0]).toContain('not writable')
+        // The first batch attempts the write; the second never reaches it.
+        expect(mockedAppendFile).toHaveBeenCalledTimes(1)
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('disables itself when the directory exists but rejects the write', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        vi.resetModules()
+        // `mkdir` is a no-op on an existing directory, so it succeeds even when
+        // that directory is read-only. Only the append reveals it.
+        mockedMkdir.mockResolvedValue(undefined)
+        mockedAppendFile.mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
+        const { createFsDrain: createFsDrainFresh } = await import('../../src/adapters/fs')
+        const drain = createFsDrainFresh({ dir: '/var/task/.evlog/logs' })
+
+        await drain(createDrainContext())
+        await drain(createDrainContext())
+
+        expect(warnSpy).toHaveBeenCalledTimes(1)
+        expect(mockedAppendFile).toHaveBeenCalledTimes(1)
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('warns once when concurrent batches all fail their first write', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        vi.resetModules()
+        mockedAppendFile.mockRejectedValue(Object.assign(new Error('EROFS'), { code: 'EROFS' }))
+        const { createFsDrain: createFsDrainFresh } = await import('../../src/adapters/fs')
+        const drain = createFsDrainFresh({ dir: '/var/task/.evlog/logs' })
+
+        await Promise.all([
+          drain(createDrainContext({ action: 'a' })),
+          drain(createDrainContext({ action: 'b' })),
+          drain(createDrainContext({ action: 'c' })),
+        ])
+
+        expect(warnSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('reports a write failure that is not a permission problem', async () => {
+      vi.resetModules()
+      mockedAppendFile.mockRejectedValue(Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }))
+      const { createFsDrain: createFsDrainFresh } = await import('../../src/adapters/fs')
+      const drain = createFsDrainFresh({ dir: '.evlog/logs' })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      try {
+        await drain(createDrainContext())
+        expect(errorSpy).toHaveBeenCalled()
+        expect(String(errorSpy.mock.calls[0]?.[1])).toContain('ENOSPC')
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
   })
 })

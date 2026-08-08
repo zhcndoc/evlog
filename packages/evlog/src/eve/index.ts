@@ -1,5 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { defineHook, type HookContext, type HookDefinition } from 'eve/hooks'
+import {
+  defineInstrumentation,
+  type InstrumentationDefinition,
+  type InstrumentationSetupContext,
+  type InstrumentationStepStartedEventInput,
+  type InstrumentationStepStartedEventResult,
+} from 'eve/instrumentation'
 import type { AuditableLogger } from '../audit'
 import type { AIToolExecution, AIEventData, ModelCost } from '../ai/index'
 import { initLogger, isLoggerInitialized, isLoggerLocked } from '../logger'
@@ -14,23 +21,51 @@ import {
 
 const DEFAULT_MAX_SESSIONS = 256
 
+/** Client-closed-request status used for turns eve cancelled before a terminal outcome. */
+const CANCELLED_STATUS = 499
+
+/**
+ * How much of the user message from `message.received` reaches the wide event.
+ *
+ * - `omit` — no message content at all (default)
+ * - `preview` — text truncated to `messagePreviewLength`, attachments reduced
+ *   to their type and media type
+ * - `full` — text and attachment parts verbatim
+ */
+export type EveMessageMode = 'omit' | 'preview' | 'full'
+
 /** Options for {@link defineEvlogHook}. */
 export interface EvlogEveOptions extends BaseEvlogOptions {
   /** Passed to {@link initLogger} on the first hook invocation. */
   init?: LoggerConfig
   /**
-   * When `true` (default), user message content from `message.received` is
-   * omitted from the wide event. Set to `false` to include a truncated preview.
+   * How much of the user message to record. Default `'omit'`.
+   *
+   * `'full'` records message text and attachment parts as sent — review your
+   * PII policy before enabling it.
+   */
+  message?: EveMessageMode
+  /** Max characters kept in `'preview'` mode. Default `500`. */
+  messagePreviewLength?: number
+  /**
+   * @deprecated Use {@link EvlogEveOptions.message}. `true` maps to `'omit'`,
+   * `false` to `'preview'`.
    */
   redactMessage?: boolean
   /**
    * Pricing map for {@link AIEventData.estimatedCost}. Keys are model IDs,
    * values are dollars per 1M tokens — same shape as `evlog/ai`.
+   *
+   * Only used as a fallback: when eve reports `usage.costUsd`, that value is
+   * recorded as `ai.costUsd` instead.
    */
   cost?: Record<string, ModelCost>
   /**
    * Model ID used with `cost` when eve stream events do not expose the model
    * name. When `cost` has exactly one entry, that key is used automatically.
+   *
+   * Only used as a fallback: `session.started` reports the configured model,
+   * which is used when this is unset.
    */
   model?: string
   /**
@@ -38,6 +73,11 @@ export interface EvlogEveOptions extends BaseEvlogOptions {
    * Oldest sessions are evicted when exceeded. Default `256`.
    */
   maxSessions?: number
+  /**
+   * Emit one extra wide event per session on `session.completed` /
+   * `session.failed`, rolling up every turn of that session. Default `false`.
+   */
+  sessionEvent?: boolean
 }
 
 /** Minimal session shape accepted by {@link useLogger} as a fallback lookup key. */
@@ -62,6 +102,27 @@ interface EveApprovalPending {
 interface SessionRollup {
   turnCount: number
   lastAccess: number
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  costUsd: number
+  estimatedCost: number
+  tools: Set<string>
+  compactions: number
+  authorizations: number
+  failedTurns: number
+  cancelledTurns: number
+}
+
+/** Identity of the eve instance serving a session, from `session.started`. */
+interface EveRuntimeInfo {
+  version?: string
+  agentId?: string
+  model?: string
+  gitSha?: string
+  gitBranch?: string
+  deployedAt?: string
+  subagent?: string
 }
 
 interface EveSubagentRecord {
@@ -69,8 +130,23 @@ interface EveSubagentRecord {
   name: string
   toolName?: string
   childSessionId?: string
-  status: 'called' | 'completed'
+  status: 'called' | 'started' | 'completed'
   output?: string
+  startedAt?: number
+  durationMs?: number
+}
+
+interface EveAuthorizationRecord {
+  name: string
+  outcome?: string
+  reason?: string
+  durationMs?: number
+}
+
+interface EveStepFailure {
+  code: string
+  message: string
+  stepIndex: number
 }
 
 interface TurnAccumulator {
@@ -80,9 +156,22 @@ interface TurnAccumulator {
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  costUsd: number
   finishReason?: string
   toolExecutions: AIToolExecution[]
   subagents: EveSubagentRecord[]
+  authorizations: EveAuthorizationRecord[]
+  stepFailures: EveStepFailure[]
+  compactions: number
+  compactionsRequested: number
+  compactionModel?: string
+  compactionInputTokens?: number
+  contextCleared: boolean
+  reasoningBlocks: number
+  reasoningChars: number
+  response?: string
+  responseChars: number
+  result?: unknown
   pausedForInput: boolean
   stepStartedAt?: number
   costMap?: Record<string, ModelCost>
@@ -133,8 +222,17 @@ function freshAccumulator(options: EvlogEveOptions): TurnAccumulator {
     outputTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    costUsd: 0,
     toolExecutions: [],
     subagents: [],
+    authorizations: [],
+    stepFailures: [],
+    compactions: 0,
+    compactionsRequested: 0,
+    contextCleared: false,
+    reasoningBlocks: 0,
+    reasoningChars: 0,
+    responseChars: 0,
     pausedForInput: false,
     costMap: options.cost,
     costModel: resolveCostModel(options),
@@ -146,6 +244,10 @@ function resolveCostModel(options: EvlogEveOptions): string | undefined {
   const keys = options.cost ? Object.keys(options.cost) : []
   if (keys.length === 1) return keys[0]
   return undefined
+}
+
+function roundCost(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000
 }
 
 function computeEstimatedCost(state: TurnAccumulator): number | undefined {
@@ -171,8 +273,12 @@ function buildAiField(state: TurnAccumulator): AIEventData {
   if (state.cacheReadTokens > 0) data.cacheReadTokens = state.cacheReadTokens
   if (state.cacheWriteTokens > 0) data.cacheWriteTokens = state.cacheWriteTokens
   if (state.finishReason) data.finishReason = state.finishReason
-  const estimatedCost = computeEstimatedCost(state)
-  if (estimatedCost !== undefined) data.estimatedCost = estimatedCost
+  if (state.costUsd > 0) {
+    data.costUsd = roundCost(state.costUsd)
+  } else {
+    const estimatedCost = computeEstimatedCost(state)
+    if (estimatedCost !== undefined) data.estimatedCost = estimatedCost
+  }
   if (state.toolExecutions.length > 0) {
     data.tools = state.toolExecutions.map(t => ({ ...t }))
   }
@@ -197,9 +303,27 @@ function extractCallId(result: unknown): string | undefined {
   return undefined
 }
 
-function truncateMessage(message: string, maxLength = 500): string {
+const DEFAULT_MESSAGE_PREVIEW_LENGTH = 500
+
+function truncateMessage(message: string, maxLength = DEFAULT_MESSAGE_PREVIEW_LENGTH): string {
   if (message.length <= maxLength) return message
   return `${message.slice(0, maxLength)}…`
+}
+
+function resolveMessageMode(options: EvlogEveOptions): EveMessageMode {
+  if (options.message) return options.message
+  if (options.redactMessage === false) return 'preview'
+  return 'omit'
+}
+
+/** Attachment parts stripped of everything but their kind — filenames carry PII. */
+function summarizeMessageParts(parts: readonly unknown[]): Array<Record<string, unknown>> {
+  return parts.map((part) => {
+    const record = part as Record<string, unknown>
+    const summary: Record<string, unknown> = { type: record.type }
+    if (typeof record.mediaType === 'string') summary.mediaType = record.mediaType
+    return summary
+  })
 }
 
 function ensureInit(options: EvlogEveOptions): void {
@@ -305,10 +429,13 @@ export function useLogger(ctx?: EveTurnSessionContext): AuditableLogger {
 interface EveGlobalState {
   turnStates: Map<string, TurnState>
   activeTurnBySession: Map<string, string>
+  sessionTurnIds: Map<string, Set<string>>
   sessionSnapshots: Map<string, Record<string, unknown>>
   sessionPendingActions: Map<string, Map<string, PendingAction>>
   sessionApprovals: Map<string, EveApprovalPending[]>
   sessionRollups: Map<string, SessionRollup>
+  sessionRuntimes: Map<string, EveRuntimeInfo>
+  sessionAuthorizationStarts: Map<string, Map<string, number>>
   maxSessions: number
   initialized: boolean
 }
@@ -323,10 +450,13 @@ function getEveGlobalState(): EveGlobalState {
     host[EVE_GLOBAL_STATE] = {
       turnStates: new Map(),
       activeTurnBySession: new Map(),
+      sessionTurnIds: new Map(),
       sessionSnapshots: new Map(),
       sessionPendingActions: new Map(),
       sessionApprovals: new Map(),
       sessionRollups: new Map(),
+      sessionRuntimes: new Map(),
+      sessionAuthorizationStarts: new Map(),
       maxSessions: DEFAULT_MAX_SESSIONS,
       initialized: false,
     }
@@ -340,6 +470,15 @@ function turnStates(): Map<string, TurnState> {
 
 function activeTurnBySession(): Map<string, string> {
   return getEveGlobalState().activeTurnBySession
+}
+
+function sessionTurnIds(): Map<string, Set<string>> {
+  return getEveGlobalState().sessionTurnIds
+}
+
+/** Turn ids still open for a session, as a snapshot safe to iterate while finishing. */
+function openTurnIds(sessionId: string): string[] {
+  return [...(sessionTurnIds().get(sessionId) ?? [])]
 }
 
 function sessionSnapshots(): Map<string, Record<string, unknown>> {
@@ -358,9 +497,34 @@ function sessionRollups(): Map<string, SessionRollup> {
   return getEveGlobalState().sessionRollups
 }
 
+function sessionRuntimes(): Map<string, EveRuntimeInfo> {
+  return getEveGlobalState().sessionRuntimes
+}
+
+function sessionAuthorizationStarts(): Map<string, Map<string, number>> {
+  return getEveGlobalState().sessionAuthorizationStarts
+}
+
+function freshRollup(): SessionRollup {
+  return {
+    turnCount: 0,
+    lastAccess: 0,
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    estimatedCost: 0,
+    tools: new Set(),
+    compactions: 0,
+    authorizations: 0,
+    failedTurns: 0,
+    cancelledTurns: 0,
+  }
+}
+
 function touchSession(sessionId: string): void {
   const rollups = sessionRollups()
-  const rollup = rollups.get(sessionId) ?? { turnCount: 0, lastAccess: 0 }
+  const rollup = rollups.get(sessionId) ?? freshRollup()
   rollup.lastAccess = Date.now()
   rollups.set(sessionId, rollup)
   evictStaleSessions()
@@ -371,6 +535,9 @@ function clearSessionState(sessionId: string): void {
   sessionRollups().delete(sessionId)
   sessionPendingActions().delete(sessionId)
   sessionApprovals().delete(sessionId)
+  sessionTurnIds().delete(sessionId)
+  sessionRuntimes().delete(sessionId)
+  sessionAuthorizationStarts().delete(sessionId)
 }
 
 function evictStaleSessions(): void {
@@ -409,10 +576,13 @@ function derivePhase(
   accumulator: TurnAccumulator,
   httpStatus: number,
 ): string | undefined {
+  const eve = ctx.eve as { cancelled?: boolean } | undefined
+  if (eve?.cancelled) return 'cancelled'
   const approval = ctx.approval as { status?: string } | undefined
   if (approval?.status === 'rejected') return 'rejected'
   if (approval?.status === 'pending' || accumulator.pausedForInput) return 'awaiting-approval'
-  if (httpStatus >= 400) return 'failed'
+  if (accumulator.authorizations.some(a => !a.outcome)) return 'awaiting-authorization'
+  if (httpStatus >= 400 && httpStatus !== CANCELLED_STATUS) return 'failed'
   return undefined
 }
 
@@ -505,12 +675,95 @@ function persistSessionContext(sessionId: string, logger: AuditableLogger): void
 }
 
 function flushEveMetadata(state: TurnState): void {
-  if (state.accumulator.subagents.length === 0) return
-  state.logger.set({
-    eve: {
-      subagents: state.accumulator.subagents.map(s => ({ ...s })),
-    },
-  })
+  const acc = state.accumulator
+  const eve: Record<string, unknown> = {}
+
+  if (acc.subagents.length > 0) {
+    eve.subagents = acc.subagents.map(({ startedAt, ...record }) => ({ ...record }))
+  }
+  if (acc.authorizations.length > 0) {
+    eve.authorizations = acc.authorizations.map(a => ({ ...a }))
+  }
+  if (acc.stepFailures.length > 0) {
+    eve.stepFailures = acc.stepFailures.map(f => ({ ...f }))
+    eve.failedSteps = acc.stepFailures.length
+  }
+  // A compaction requested but not yet completed still carries the most
+  // actionable signal — the context was full enough to trigger one.
+  if (acc.compactions > 0 || acc.compactionsRequested > 0) {
+    eve.compaction = {
+      count: acc.compactions,
+      ...(acc.compactionsRequested > acc.compactions
+        ? { requested: acc.compactionsRequested }
+        : {}),
+      ...(acc.compactionModel ? { model: acc.compactionModel } : {}),
+      ...(acc.compactionInputTokens !== undefined
+        ? { inputTokensAtTrigger: acc.compactionInputTokens }
+        : {}),
+    }
+  }
+  if (acc.contextCleared) eve.contextCleared = true
+  // Reasoning size only — the reasoning text itself is never recorded.
+  if (acc.reasoningBlocks > 0) {
+    eve.reasoning = { blocks: acc.reasoningBlocks, chars: acc.reasoningChars }
+  }
+  if (acc.result !== undefined) eve.result = acc.result
+
+  if (Object.keys(eve).length > 0) state.logger.set({ eve })
+
+  // Response length is recorded in every message mode; the response text is
+  // only present when the mode allowed the handler to keep it.
+  if (acc.responseChars > 0) {
+    state.logger.set({
+      message: {
+        responseChars: acc.responseChars,
+        ...(acc.response !== undefined ? { response: acc.response } : {}),
+      },
+    })
+  }
+}
+
+/** Wide-event view of the eve instance and the parent session, when there is one. */
+/**
+ * Who triggered this turn, from the caller principal eve resolved at dispatch.
+ *
+ * Only the identifiers eve itself routes on: `principalId` is opaque on every
+ * channel eve ships (`github:<id>`, a Slack user id), and `subject` and
+ * `attributes` are deliberately left out because a channel may put a name or an
+ * email in them.
+ */
+function buildCaller(ctx: HookContext): Record<string, string> | null {
+  const auth = ctx.session.auth?.current
+  if (!auth) return null
+  return {
+    principalId: auth.principalId,
+    principalType: auth.principalType,
+    authenticator: auth.authenticator,
+  }
+}
+
+function buildLineage(sessionId: string, ctx: HookContext): Record<string, unknown> {
+  const eve: Record<string, unknown> = {}
+  const runtime = sessionRuntimes().get(sessionId)
+  if (runtime) {
+    const { subagent, ...identity } = runtime
+    if (Object.keys(identity).length > 0) eve.runtime = identity
+  }
+
+  const caller = buildCaller(ctx)
+  if (caller) eve.caller = caller
+
+  const { parent } = ctx.session
+  if (parent) {
+    eve.parent = {
+      sessionId: parent.sessionId,
+      rootSessionId: parent.rootSessionId,
+      callId: parent.callId,
+      ...(parent.turn?.id ? { turnId: parent.turn.id } : {}),
+      ...(runtime?.subagent ? { subagent: runtime.subagent } : {}),
+    }
+  }
+  return eve
 }
 
 function getOrCreateTurnState(
@@ -551,6 +804,7 @@ function getOrCreateTurnState(
     eve: {
       sessionId,
       turnId,
+      ...buildLineage(sessionId, ctx),
     },
     agent: {
       name: ctx.agent.name,
@@ -564,11 +818,19 @@ function getOrCreateTurnState(
 
   turnStates().set(key, state)
   activeTurnBySession().set(sessionId, turnId)
+  const open = sessionTurnIds().get(sessionId) ?? new Set<string>()
+  open.add(turnId)
+  sessionTurnIds().set(sessionId, open)
   return state
 }
 
 function flushAi(state: TurnState): void {
-  state.logger.set({ ai: buildAiField(state.accumulator) })
+  const ai = buildAiField(state.accumulator)
+  if (!ai.model) {
+    const model = sessionRuntimes().get(state.sessionId)?.model
+    if (model) ai.model = model
+  }
+  state.logger.set({ ai })
 }
 
 async function finishTurn(
@@ -587,6 +849,7 @@ async function finishTurn(
     const ctx = state.logger.getContext() as Record<string, unknown>
     const phase = derivePhase(ctx, state.accumulator, httpStatus)
     const sessionTurns = bumpSessionTurnCount(sessionId)
+    accumulateSessionTotals(sessionId, state.accumulator, httpStatus)
     state.logger.set({
       eve: {
         ...(phase ? { phase } : {}),
@@ -601,7 +864,115 @@ async function finishTurn(
     if (activeTurnBySession().get(sessionId) === turnId) {
       activeTurnBySession().delete(sessionId)
     }
+    const open = sessionTurnIds().get(sessionId)
+    open?.delete(turnId)
+    if (open?.size === 0) sessionTurnIds().delete(sessionId)
     pruneEmptySessionMaps(sessionId)
+  }
+}
+
+/** Fold one finished turn into its session rollup, for the session wide event. */
+function accumulateSessionTotals(
+  sessionId: string,
+  acc: TurnAccumulator,
+  httpStatus: number,
+): void {
+  const rollup = sessionRollups().get(sessionId)
+  if (!rollup) return
+
+  rollup.calls += acc.calls
+  rollup.inputTokens += acc.inputTokens
+  rollup.outputTokens += acc.outputTokens
+  // Mirrors the per-turn rule in `buildAiField`: a turn contributes to one cost
+  // bucket or the other, never both, so the two session totals cannot overlap.
+  if (acc.costUsd > 0) rollup.costUsd += acc.costUsd
+  else rollup.estimatedCost += computeEstimatedCost(acc) ?? 0
+  rollup.compactions += acc.compactions
+  rollup.authorizations += acc.authorizations.length
+  for (const tool of acc.toolExecutions) rollup.tools.add(tool.name)
+  // Classified from the terminal status, not the phase: a turn that fails while
+  // parked on an approval or an authorization reports that phase, not 'failed'.
+  if (httpStatus === CANCELLED_STATUS) rollup.cancelledTurns += 1
+  else if (httpStatus >= 400) rollup.failedTurns += 1
+}
+
+/**
+ * Emit one wide event summarizing a whole session. Opt-in through
+ * {@link EvlogEveOptions.sessionEvent}: it is the "one row per conversation"
+ * view, complementing the per-turn events.
+ */
+async function emitSessionEvent(
+  sessionId: string,
+  options: EvlogEveOptions,
+  ctx: HookContext,
+  outcome: { status?: number; error?: Error },
+): Promise<void> {
+  const rollup = sessionRollups().get(sessionId)
+  if (!rollup) return
+
+  const { logger, finish, skipped } = createMiddlewareLogger({
+    method: 'EVE',
+    path: `/sessions/${sessionId}`,
+    requestId: sessionId,
+    ...pickBaseEvlogOptions(options),
+  })
+  if (skipped) return
+
+  applySessionContext(sessionId, logger)
+  logger.set({
+    eve: {
+      sessionId,
+      scope: 'session',
+      turns: rollup.turnCount,
+      ...(rollup.failedTurns > 0 ? { failedTurns: rollup.failedTurns } : {}),
+      ...(rollup.cancelledTurns > 0 ? { cancelledTurns: rollup.cancelledTurns } : {}),
+      ...(rollup.compactions > 0 ? { compactions: rollup.compactions } : {}),
+      ...(rollup.authorizations > 0 ? { authorizations: rollup.authorizations } : {}),
+      ...buildLineage(sessionId, ctx),
+    },
+    agent: {
+      name: ctx.agent.name,
+      ...(ctx.agent.nodeId ? { nodeId: ctx.agent.nodeId } : {}),
+    },
+    channel: { kind: ctx.channel.kind ?? 'unknown' },
+    ai: {
+      calls: rollup.calls,
+      inputTokens: rollup.inputTokens,
+      outputTokens: rollup.outputTokens,
+      totalTokens: rollup.inputTokens + rollup.outputTokens,
+      ...(rollup.costUsd > 0 ? { costUsd: roundCost(rollup.costUsd) } : {}),
+      ...(rollup.estimatedCost > 0
+        ? { estimatedCost: roundCost(rollup.estimatedCost) }
+        : {}),
+      ...(rollup.tools.size > 0 ? { toolCalls: [...rollup.tools] } : {}),
+    },
+  })
+
+  await finish(outcome)
+}
+
+/**
+ * Emit every turn still open for a session. eve ends a session with
+ * `session.completed` / `session.failed`; a turn left open at that point never
+ * received its own terminal event, so without this it would neither be emitted
+ * nor released.
+ *
+ * Each turn is finished independently: a user `keep` callback that throws
+ * rejects that turn's `finish`, and must not take the remaining turns with it.
+ */
+async function finishOpenTurns(
+  sessionId: string,
+  opts: { status?: number; error?: Error },
+  decorate?: (state: TurnState) => void,
+): Promise<void> {
+  for (const turnId of openTurnIds(sessionId)) {
+    try {
+      const state = getTurnState(sessionId, turnId)
+      if (state && decorate) decorate(state)
+      await finishTurn(sessionId, turnId, opts)
+    } catch (err) {
+      console.error('[evlog] eve hook handler failed:', err)
+    }
   }
 }
 
@@ -643,10 +1014,29 @@ function getTurnState(sessionId: string, turnId: string): TurnState | undefined 
  * ```
  */
 export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
-  const redactMessage = options.redactMessage ?? true
+  const messageMode = resolveMessageMode(options)
+  const previewLength = options.messagePreviewLength ?? DEFAULT_MESSAGE_PREVIEW_LENGTH
 
   return defineHook({
     events: {
+      'session.started'(event, ctx) {
+        runSafe(() => {
+          ensureInit(options)
+          const { runtime, invocation } = event.data
+          if (!runtime && !invocation) return
+          touchSession(ctx.session.id)
+          sessionRuntimes().set(ctx.session.id, {
+            ...(runtime?.eveVersion ? { version: runtime.eveVersion } : {}),
+            ...(runtime?.agentId ? { agentId: runtime.agentId } : {}),
+            ...(runtime?.modelId ? { model: runtime.modelId } : {}),
+            ...(runtime?.build?.gitSha ? { gitSha: runtime.build.gitSha } : {}),
+            ...(runtime?.build?.gitBranch ? { gitBranch: runtime.build.gitBranch } : {}),
+            ...(runtime?.build?.deployedAt ? { deployedAt: runtime.build.deployedAt } : {}),
+            ...(invocation?.name ? { subagent: invocation.name } : {}),
+          })
+        })
+      },
+
       'turn.started'(event, ctx) {
         try {
           ensureInit(options)
@@ -662,11 +1052,18 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
 
       'message.received'(event, ctx) {
         runSafe(() => {
-          if (redactMessage) return
+          if (messageMode === 'omit') return
           const state = getTurnState(ctx.session.id, event.data.turnId)
           if (!state) return
+          const { message, parts } = event.data
+          const full = messageMode === 'full'
           state.logger.set({
-            message: { received: truncateMessage(event.data.message) },
+            message: {
+              received: full ? message : truncateMessage(message, previewLength),
+              ...(parts?.length
+                ? { parts: full ? parts.map(p => ({ ...p })) : summarizeMessageParts(parts) }
+                : {}),
+            },
           })
         })
       },
@@ -693,7 +1090,119 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
             acc.outputTokens += usage.outputTokens ?? 0
             acc.cacheReadTokens += usage.cacheReadTokens ?? 0
             acc.cacheWriteTokens += usage.cacheWriteTokens ?? 0
+            acc.costUsd += usage.costUsd ?? 0
           }
+        })
+      },
+
+      'step.failed'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state) return
+          state.accumulator.stepFailures.push({
+            code: event.data.code,
+            message: event.data.message,
+            stepIndex: event.data.stepIndex,
+          })
+        })
+      },
+
+      'authorization.required'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state) return
+          const starts = sessionAuthorizationStarts().get(ctx.session.id) ?? new Map<string, number>()
+          starts.set(event.data.name, Date.now())
+          sessionAuthorizationStarts().set(ctx.session.id, starts)
+          state.accumulator.authorizations.push({ name: event.data.name })
+        })
+      },
+
+      'authorization.completed'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state) return
+          const starts = sessionAuthorizationStarts().get(ctx.session.id)
+          const startedAt = starts?.get(event.data.name)
+          starts?.delete(event.data.name)
+          if (starts?.size === 0) sessionAuthorizationStarts().delete(ctx.session.id)
+
+          const record: EveAuthorizationRecord = {
+            name: event.data.name,
+            outcome: event.data.outcome,
+            ...(event.data.reason ? { reason: event.data.reason } : {}),
+            ...(startedAt !== undefined ? { durationMs: Math.max(0, Date.now() - startedAt) } : {}),
+          }
+          // The `required` event may belong to an earlier turn: eve parks the
+          // session across the sign-in, so only same-turn records are updated.
+          const pending = state.accumulator.authorizations.find(
+            a => a.name === event.data.name && !a.outcome,
+          )
+          if (pending) Object.assign(pending, record)
+          else state.accumulator.authorizations.push(record)
+        })
+      },
+
+      'compaction.requested'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state) return
+          const acc = state.accumulator
+          acc.compactionsRequested += 1
+          // Keep the first trigger of the turn: `inputTokensAtTrigger` reports
+          // how full the context was when compaction first kicked in.
+          if (acc.compactionModel === undefined) {
+            acc.compactionModel = event.data.modelId
+            if (event.data.usageInputTokens !== null) {
+              acc.compactionInputTokens = event.data.usageInputTokens
+            }
+          }
+        })
+      },
+
+      'compaction.completed'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state) return
+          state.accumulator.compactions += 1
+        })
+      },
+
+      'context.cleared'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state) return
+          state.accumulator.contextCleared = true
+        })
+      },
+
+      'reasoning.completed'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state) return
+          state.accumulator.reasoningBlocks += 1
+          state.accumulator.reasoningChars += event.data.reasoning.length
+        })
+      },
+
+      'message.completed'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state || event.data.message === null) return
+          const acc = state.accumulator
+          acc.responseChars += event.data.message.length
+          if (messageMode === 'omit') return
+          acc.response = messageMode === 'full'
+            ? event.data.message
+            : truncateMessage(event.data.message, previewLength)
+        })
+      },
+
+      'result.completed'(event, ctx) {
+        runSafe(() => {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          if (!state) return
+          state.accumulator.result = event.data.result
         })
       },
 
@@ -787,7 +1296,18 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
             toolName: event.data.toolName,
             childSessionId: event.data.childSessionId,
             status: 'called',
+            startedAt: Date.now(),
           })
+        })
+      },
+
+      'subagent.started'(event, ctx) {
+        runSafe(() => {
+          const turnId = activeTurnBySession().get(ctx.session.id)
+          if (!turnId) return
+          const state = getTurnState(ctx.session.id, turnId)
+          const existing = state?.accumulator.subagents.find(s => s.callId === event.data.callId)
+          if (existing) existing.status = 'started'
         })
       },
 
@@ -802,6 +1322,9 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
           if (existing) {
             existing.status = 'completed'
             existing.output = event.data.output
+            if (existing.startedAt !== undefined) {
+              existing.durationMs = Math.max(0, Date.now() - existing.startedAt)
+            }
           } else {
             state.accumulator.subagents.push({
               callId: event.data.callId,
@@ -818,6 +1341,54 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
           await finishTurn(ctx.session.id, event.data.turnId, { status: 200 })
         } catch (err) {
           console.error('[evlog] eve hook handler failed:', err)
+        }
+      },
+
+      async 'turn.cancelled'(event, ctx) {
+        try {
+          const state = getTurnState(ctx.session.id, event.data.turnId)
+          state?.logger.set({ eve: { cancelled: true } })
+          await finishTurn(ctx.session.id, event.data.turnId, { status: CANCELLED_STATUS })
+        } catch (err) {
+          console.error('[evlog] eve hook handler failed:', err)
+        }
+      },
+
+      async 'session.completed'(_event, ctx) {
+        try {
+          await finishOpenTurns(ctx.session.id, { status: 200 })
+          if (options.sessionEvent) {
+            await emitSessionEvent(ctx.session.id, options, ctx, { status: 200 })
+          }
+        } catch (err) {
+          console.error('[evlog] eve hook handler failed:', err)
+        } finally {
+          clearSessionState(ctx.session.id)
+        }
+      },
+
+      async 'session.failed'(event, ctx) {
+        try {
+          const error = new Error(event.data.message)
+          error.name = event.data.code
+          await finishOpenTurns(ctx.session.id, { error, status: 500 }, (state) => {
+            state.logger.set({
+              eve: {
+                failure: {
+                  code: event.data.code,
+                  message: event.data.message,
+                  ...(event.data.details ? { details: event.data.details } : {}),
+                },
+              },
+            })
+          })
+          if (options.sessionEvent) {
+            await emitSessionEvent(ctx.session.id, options, ctx, { error, status: 500 })
+          }
+        } catch (err) {
+          console.error('[evlog] eve hook handler failed:', err)
+        } finally {
+          clearSessionState(ctx.session.id)
         }
       },
 
@@ -844,6 +1415,121 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
   })
 }
 
+/** Options for {@link defineEvlogInstrumentation}. */
+export interface EvlogEveInstrumentationOptions {
+  /** Overrides `ai.telemetry.functionId` on spans. Defaults to the agent name. */
+  functionId?: string
+  /** Whether the AI SDK records full model inputs on spans. eve defaults to `true`. */
+  recordInputs?: boolean
+  /** Whether the AI SDK records model outputs on spans. eve defaults to `true`. */
+  recordOutputs?: boolean
+  /** Whether eve emits the inbound HTTP `SERVER` span wrapping each channel request. */
+  traceChannelRequests?: boolean
+  /**
+   * Runs at server startup with the resolved agent name — register your OTel
+   * provider here, exactly as in a hand-written `defineInstrumentation`. Omit it
+   * and eve keeps writing its local traces.
+   */
+  setup?: (context: InstrumentationSetupContext) => void
+}
+
+/**
+ * Per-model-call attributes linking an AI SDK span back to the evlog wide event
+ * for the same turn, ready to spread into your own runtime context.
+ *
+ * Use this when the agent already has an `agent/instrumentation.ts` — from
+ * `eve add instrumentation/...` or written by hand. Every observability
+ * integration writes that one file, so evlog contributes attributes to yours
+ * rather than asking you to nest it inside a wrapper:
+ *
+ * @example
+ * ```ts
+ * // agent/instrumentation.ts
+ * import { defineInstrumentation } from 'eve/instrumentation'
+ * import { evlogRuntimeContext } from 'evlog/eve'
+ *
+ * export default defineInstrumentation({
+ *   setup: ({ agentName }) => registerOTel({ serviceName: agentName }),
+ *   events: {
+ *     'step.started': input => ({
+ *       runtimeContext: {
+ *         ...evlogRuntimeContext(input),
+ *         posthog_distinct_id: input.session.auth.current?.principalId ?? '',
+ *       },
+ *     }),
+ *   },
+ * })
+ * ```
+ *
+ * Returns `undefined` outside a tracked turn — spreading that adds nothing,
+ * which is the point. {@link defineEvlogInstrumentation} is the shortcut for an
+ * agent with no other instrumentation to compose with.
+ */
+export function evlogRuntimeContext(
+  input: InstrumentationStepStartedEventInput,
+): Record<string, string> | undefined {
+  const state = getTurnState(input.session.id, input.turn.id)
+  if (!state) return undefined
+
+  return {
+    'evlog.request_id': state.turnId,
+    'evlog.session_id': state.sessionId,
+  }
+}
+
+function buildInstrumentationContext(
+  input: InstrumentationStepStartedEventInput,
+): InstrumentationStepStartedEventResult | undefined {
+  const runtimeContext = evlogRuntimeContext(input)
+  return runtimeContext ? { runtimeContext } : undefined
+}
+
+/**
+ * Create an eve instrumentation definition that stamps evlog's turn identity
+ * onto the AI SDK telemetry spans.
+ *
+ * Export the result as the default export of `agent/instrumentation.ts`. Every
+ * model-call span — and its children — then carries `evlog.request_id`, the
+ * same value the wide event reports as `requestId`, so a trace in Braintrust,
+ * Datadog or Agent Runs joins to the wide event in your drain, and back.
+ *
+ * `eve.` is reserved for framework-owned context, so evlog writes under
+ * `evlog.`. Passing no `setup` leaves OpenTelemetry export untouched: eve keeps
+ * recording its local traces and only the runtime context is added.
+ *
+ * @example
+ * ```ts
+ * // agent/instrumentation.ts
+ * import { defineEvlogInstrumentation } from 'evlog/eve'
+ * import { registerOTel } from '@vercel/otel'
+ *
+ * export default defineEvlogInstrumentation({
+ *   setup: ({ agentName }) => registerOTel({ serviceName: agentName }),
+ * })
+ * ```
+ *
+ * This is the shortcut for an agent whose instrumentation is evlog's alone. It
+ * owns the file's `events` slot, so once another integration needs it — PostHog
+ * links spans to the initiating user there — drop the wrapper and spread
+ * {@link evlogRuntimeContext} into your own `defineInstrumentation` instead.
+ */
+export function defineEvlogInstrumentation(
+  options: EvlogEveInstrumentationOptions = {},
+): InstrumentationDefinition {
+  return defineInstrumentation({
+    ...(options.functionId !== undefined ? { functionId: options.functionId } : {}),
+    ...(options.recordInputs !== undefined ? { recordInputs: options.recordInputs } : {}),
+    ...(options.recordOutputs !== undefined ? { recordOutputs: options.recordOutputs } : {}),
+    ...(options.traceChannelRequests !== undefined
+      ? { traceChannelRequests: options.traceChannelRequests }
+      : {}),
+    ...(options.setup !== undefined ? { setup: options.setup } : {}),
+    events: {
+      'step.started': buildInstrumentationContext,
+    },
+  })
+}
+
 /** @internal Simulates eve tool execution where AsyncLocalStorage did not propagate. */
 export function detachActiveTurnLoggerForTests(): void {
   const logger = turnLoggerStorage.getStore()
@@ -855,10 +1541,13 @@ export function resetEvlogEveForTests(): void {
   clearAsyncLocalStorage(turnLoggerStorage)
   turnStates().clear()
   activeTurnBySession().clear()
+  sessionTurnIds().clear()
   sessionSnapshots().clear()
   sessionPendingActions().clear()
   sessionApprovals().clear()
   sessionRollups().clear()
+  sessionRuntimes().clear()
+  sessionAuthorizationStarts().clear()
   setEveInitialized(false)
   delete (globalThis as typeof globalThis & { [EVE_GLOBAL_STATE]?: EveGlobalState })[EVE_GLOBAL_STATE]
 }
