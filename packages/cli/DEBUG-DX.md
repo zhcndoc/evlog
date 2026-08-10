@@ -19,11 +19,11 @@ export default defineEvlogCommand('audit', {
   async run({ args, cli, log, ui }) {
     const data = await log.step('load', () => load(cli.cwd))
     if (!data) {
-      log.finding(cliErrors.LOGS_SINK_MISSING, { id: 'logs' })
-      ui.done({ human: '没有 sink。', summary: { ok: 0, warn: 1, fail: 0 } })
+      log.finding(cliErrors.EVLOG_DECLARED_NOT_INSTALLED, { id: 'evlog' })
+      ui.done({ human: 'No evlog.', summary: { ok: 0, warn: 1, fail: 0 } })
       return
     }
-    // step 内部的意外抛错 → steps trail + 在 --debug 时显示 cli.COMMAND_FAILED
+    // step 内部的意外抛错 → 步骤轨迹 + 在 --debug 时显示 cli.COMMAND_FAILED
     ui.done({
       jsonMode: args.json,
       json: { data },
@@ -36,9 +36,9 @@ export default defineEvlogCommand('audit', {
 
 规则：
 
-1. **Filet**（header、debug 事件、catch throw）= 命令中零行  
-2. **Récit** = 仅在有用时使用 `log.step` / `log.finding(cliErrors.X)`  
-3. **Pixels / JSON / exit** = 仅使用 `ui.*` — 绝不要在命令中触碰 `process.stdout` / `exitCode`  
+1. **骨架**（header、debug 事件、catch throw）= 命令中零行  
+2. **叙事** = 仅在有用时使用 `log.step` / `log.finding(cliErrors.X)`  
+3. **输出 / JSON / 退出** = 仅使用 `ui.*` — 绝不要在命令中触碰 `process.stdout` / `exitCode`  
 
 ## 目标流程
 

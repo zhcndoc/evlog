@@ -12,11 +12,15 @@
     "dev": "eve dev",
     "eval": "EVE_RUN_MODE=eval eve eval",
     "start": "eve start",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@github-tools/eve-extension": "^0.3.0",
+    "@agent-browser/eve": "^0.33.2",
+    "@github-tools/eve-extension": "^0.3.2",
+    "@vercel/blob": "^2.7.0",
     "@vercel/connect": "^0.6.1",
+    "@vercel/oidc": "^3.8.2",
     "ai": "^7.0.38",
     "eve": "^0.30.6",
     "evlog": "workspace:*",
@@ -25,6 +29,7 @@
   "devDependencies": {
     "@types/node": "24.x",
     "microsandbox": "^0.6.8",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vitest": "^4.1.10"
   }
 }

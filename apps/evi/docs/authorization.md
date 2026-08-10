@@ -1,12 +1,12 @@
 # GitHub 频道上的授权
 
-设计说明，尚未实现。撰写时 Evi 仍受限于单个用户
-（`onComment` 会拒绝除 `hugorcd` 之外的所有人）。应在解除该限制之前，
+设计说明，尚未实现。撰写时 Evi 仍受限于单个用户  
+（`onComment` 会拒绝除 `hugorcd` 之外的所有人）。应在解除该限制之前，  
 或在接入自主 webhook 钩子之前处理此事项。无论实现哪一项，都必须先完成该限制。
 
 ## 此处的批准并不是授权控制
 
-Evi 现在具备完整的维护者工具权限面，并且每个写入工具都通过 SDK 的 `always()` 批准机制运行。在 Slack 或 Web 上，这是真正的控制措施。
+Evi 现在具备完整的维护者工具权限面，并且每个写入工具都通过 SDK 的 `always()` 批准机制运行。在 Slack 或 Web 上，这是真正的控制措施。  
 但在 GitHub 上并非如此，原因有三，而且会相互叠加：
 
 1. **不存在批准卡片。** 根据 eve 的 GitHub channel 文档，`input.requested` 事件“会以评论提示的形式发布，而用户的回复评论会映射回待处理的输入请求。”它就是一条评论。
@@ -90,15 +90,19 @@ requireApproval: {
 仅限可逆操作，且仅限于维护者发起的线程。在其他任何线程中，
 出于以下原因，此列表中的操作仍需获得批准：
 
-`addIssueComment`、`updateIssueComment`、`addPullRequestComment`、
-`updatePullRequestComment`、`addIssueReaction`、`addCommentReaction`、
-`addLabels`、`removeLabel`、`addAssignees`、`removeAssignees`、
-`requestReviewers`、`addDiscussionComment`。
+`addIssueComment`, `updateIssueComment`, `addPullRequestComment`,
+`updatePullRequestComment`, `addIssueReaction`, `addCommentReaction`,
+`addLabels`, `removeLabel`, `addAssignees`, `removeAssignees`,
+`addDiscussionComment`.
 
-其他所有操作即使对于管理员也仍需实际批准：`createIssue`、`closeIssue`、
-`deleteIssueComment`、`deletePullRequestComment`、`createBranch`、
-`createOrUpdateFile`、`createPullRequest`、`updatePullRequest`、
-`createPullRequestReview`。
+`requestReviewers` 在所有类型的运行中都无需批准，而不仅限于管理员：
+请求审查是可逆的，也不会授予任何权限，并且指令要求在每个非草稿 PR
+中执行此操作。
+
+其他所有操作即使对于管理员也仍需获得实际批准：`createIssue`、`closeIssue`、
+`deleteIssueComment`、`deletePullRequestComment`、`createPullRequest`、
+`updatePullRequest`、`createPullRequestReview`。代码本身不会通过 API 移动：
+它会通过 `git__push` 从沙盒发布，而该工具仅挂载在维护者会话中。
 
 发布相关的写入操作根本不在列表中：`AGENTS.md` 禁止代理创建发布版本，
 因此工具集只提供读取这些内容的能力。
@@ -140,14 +144,7 @@ updateIssue: ({ session, toolInput }) => {
 
 上面的所有机制都在审批层执行，这意味着每个工具仍然存在于每个调用者的上下文中——仅维护者界面的 schema 每轮就大约要消耗 7k 个 token——而一次被拒绝的调用还会浪费模型的一步，让它得知该调用被拒绝。
 
-真正干净的解决方案是让工具界面根据调用者而变化，而这个扩展距离支持这一点只差一个小改动。它已经在动态解析器中解析工具，只是简单地忽略了 eve 传给它的上下文：
-
-```js
-// dist/extension/tools/github.mjs
-defineDynamic({ events: { "session.started": async () => { … } } })
-```
-
-eve 会在那里传入 `(event, ctx)`，其中可以使用 `ctx.session.auth.current`。如果 `include` / `exclude` / `preset` 除了静态值之外，还接受一个针对该上下文的解析器，那么代理就可以为管理员提供完整的工具界面，而为其他人提供只读界面，并让二者使用相匹配的 schema。值得向上游提出这个建议——任何运行在公共仓库上的代理都能从中受益，而不只是这个代理。
+真正干净的解决方案是让工具界面因调用者而异。该扩展已经在 `step.started` 上的动态解析器中解析工具，只是忽略了 eve 传递给它的上下文。如果 `include` / `exclude` / `preset` 能够接受一个基于该上下文的解析器以及静态值，那么代理就可以向管理员提供完整的工具界面，而向其他人提供只读界面，并匹配相应的 schema。值得向上游提议——这对任何公共仓库中的代理都有用，而不仅仅是这个代理。
 
 ## 仍待解决
 
