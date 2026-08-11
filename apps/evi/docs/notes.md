@@ -36,23 +36,32 @@ DeepSeek V4 Flash 只声明了 `high` 和 `xhigh`。设置为 `low` 或 `medium`
 **从未观察到 `sessionEvent` 触发。**它会在会话完成时发出，而评估运行器从未到达
 会话完成这一步。
 
+### 动态工具：执行保持内联
+
+eve 的打包器转换只有在动态工具的 `execute` 函数位于解析器主体内联位置时，
+才会将其注册为持久步骤函数。由工厂构建的工具映射（`return myTools()`）能够通过类型检查，
+并且在新会话中正常工作，但在任何恢复的会话中都会失败，并显示
+`references step function "..." which is not registered`。因此，每个
+`agent/tools/*.ts` 动态文件都会在单个 `turn.started` 解析器中以内联方式定义其工具。
+
 ## 计划
 
-**Chat-sdk 频道会从计划中获取提供商原生的 `threadId`。**
-`receive(photon, { target })` 接收的是 `{ adapterName: 'imessage', threadId }`，而不是
-会话句柄。对于直接聊天，可以推导出该 ID，无需捕获：
-Spectrum 直接聊天的 GUID 为 `any;-;<address>`，因此线程为
-`imessage:any;-;<phone>`。完整格式中可选的 `~<phone>` 后缀用于选择发送线路；在 Photon
-项目只有一个号码时无关紧要。
+**Chat-sdk 频道的目标是来自计划的 provider-native `threadId`。**
+`to(photon, target).send(...)` 接收 `{ adapterName: 'imessage', threadId }`，
+而不是会话句柄。对于直接聊天，该 id 可以推导出来，无需捕获：
+Spectrum 直接聊天的 guid 是 `any;-;<address>`，因此线程是
+`imessage:any;-;<phone>`。完整格式中可选的 `~<phone>` 后缀用于选择发送线路；
+由于 Photon 项目目前只有一个号码，因此无关紧要。
 
 **Vercel 会以 UTC 评估计划 cron。** `0 5 * * *` 在夏季（BST）会于伦敦时间
 06:00 触发，在冬季（GMT）则变为 05:00。`eve dev` 永远不会触发 cron；
 `POST /eve/v1/dev/schedules/digest` 可在本地触发一次。
 
-**上游同步计划轮次会推送功能分支，但不会附带审批卡片。** 推送本身不会产生实际影响：
-它只会创建一个分支，`validatePushBranch` 会拒绝 `main`/`master`，而引用该分支的草稿 PR 会携带卡片。
+**上游同步和自审计划会在没有审批卡的情况下将推送功能分支转换为 PR。**
+该推送不会产生实际影响：它只会创建一个分支，`validatePushBranch`
+会拒绝 `main`/`master`，而引用该分支的草稿 PR 会携带审批卡。
 计划轮次的身份是 `eve:app`，而不是维护者，因此
-`github__createPullRequest` 仍会向线程发布审批卡片。
+`github__createPullRequest` 仍会向线程发布审批卡。
 
 ## AI 网关
 
