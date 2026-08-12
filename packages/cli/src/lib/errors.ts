@@ -168,12 +168,39 @@ export const cliErrors = defineErrorCatalog('cli', {
     link: 'https://evlog.dev/cli/ci',
     tags: ['map', 'baseline'],
   },
+  MAP_BASELINE_REF_NOT_FOUND: {
+    status: 404,
+    message: ({ ref }: { ref: string }) =>
+      `No git ref ${ref}`,
+    why: '--baseline git:<ref> reads the committed evlog.map.json from that ref, and the ref does not exist',
+    fix: 'Point --baseline at a branch or tag that exists, e.g. git:origin/main',
+    link: 'https://evlog.dev/cli/ci',
+    tags: ['map', 'baseline'],
+  },
+  MAP_BASELINE_NOT_COMMITTED: {
+    status: 404,
+    message: ({ ref }: { ref: string }) =>
+      `No evlog.map.json in ${ref}, and the ratchet needs a committed map`,
+    why: 'The ratchet compares against a committed evlog.map.json, so a file that was never tracked cannot be read through git',
+    fix: 'Commit one from the base branch: evlog map && git add -f evlog.map.json',
+    link: 'https://evlog.dev/cli/ci',
+    tags: ['map', 'baseline'],
+  },
   MAP_BASELINE_INVALID: {
     status: 400,
     message: ({ source, reason }: { source: string, reason: string }) =>
       `Baseline ${source} is unusable — ${reason}`,
     why: 'The baseline has to be an evlog.map.json written by this CLI to be comparable',
     fix: 'Regenerate it with evlog map, or point --baseline at the right file',
+    link: 'https://evlog.dev/cli/ci',
+    tags: ['map', 'baseline'],
+  },
+  MAP_BASELINE_VERSION_MISMATCH: {
+    status: 400,
+    message: ({ baselineCli, runningCli, baselineRuleSet, runningRuleSet }: { baselineCli: string, runningCli: string, baselineRuleSet: number, runningRuleSet: number }) =>
+      `baseline was written by @evlog/cli ${baselineCli}, running @evlog/cli ${runningCli} (rule set ${baselineRuleSet} \u2192 ${runningRuleSet})`,
+    why: 'The rule set changed between the two versions, so a per-check diff could blame code the PR did not touch',
+    fix: 'Regenerate the baseline: evlog map && git add evlog.map.json',
     link: 'https://evlog.dev/cli/ci',
     tags: ['map', 'baseline'],
   },

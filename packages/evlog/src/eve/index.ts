@@ -210,6 +210,11 @@ const TURN_ONLY_KEYS = new Set([
   'spanId',
 ])
 
+/**
+ * Globally unique id for one turn. eve numbers turns within a session, so
+ * `turn_0` is the first turn of *every* session and cannot correlate anything
+ * on its own.
+ */
 function turnKey(sessionId: string, turnId: string): string {
   return `${sessionId}:${turnId}`
 }
@@ -782,7 +787,7 @@ function getOrCreateTurnState(
   const middlewareOptions: MiddlewareLoggerOptions = {
     method: 'EVE',
     path,
-    requestId: turnId,
+    requestId: key,
     ...pickBaseEvlogOptions(options),
   }
 
@@ -1451,12 +1456,16 @@ export interface EvlogEveInstrumentationOptions {
  * export default defineInstrumentation({
  *   setup: ({ agentName }) => registerOTel({ serviceName: agentName }),
  *   events: {
- *     'step.started': input => ({
- *       runtimeContext: {
- *         ...evlogRuntimeContext(input),
- *         posthog_distinct_id: input.session.auth.current?.principalId ?? '',
- *       },
- *     }),
+ *     'step.started': (input) => {
+ *       const principalId = input.session.auth.current?.principalId
+ *       return {
+ *         runtimeContext: {
+ *           ...evlogRuntimeContext(input),
+ *           // Omitted rather than blank: a backend reads an empty id as an id.
+ *           ...(principalId ? { posthog_distinct_id: principalId } : {}),
+ *         },
+ *       }
+ *     },
  *   },
  * })
  * ```
@@ -1472,7 +1481,7 @@ export function evlogRuntimeContext(
   if (!state) return undefined
 
   return {
-    'evlog.request_id': state.turnId,
+    'evlog.request_id': turnKey(state.sessionId, state.turnId),
     'evlog.session_id': state.sessionId,
   }
 }

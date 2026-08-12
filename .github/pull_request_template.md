@@ -28,12 +28,13 @@
 - better-stack（Better Stack 日志排出适配器）
 - clickhouse（ClickHouse 日志排出适配器）
 - cli（`@evlog/cli` 包）
-- core（日志记录器、管道、错误、脱敏、目录内部模块）
+- core（日志记录器、管道、错误、脱敏、目录内部实现）
 - datadog（Datadog 日志排出适配器）
 - deps（依赖项）
-- docs（文档网站）
+- docs（文档站点）
 - dx（开发者体验改进）
 - elysia（Elysia 插件）
+- evals（Evi 评估套件）
 - eve（eve 代理集成）
 - evi（Evi 代理）
 - express（Express 中间件）
@@ -51,10 +52,10 @@
 - playground（playground 应用）
 - posthog（PostHog 日志排出适配器）
 - react-router（React Router 集成）
-- release（发布工作流 / 发布）
+- release（发布流程 / 发布）
 - repo（仓库：工具、CI、脚本、根配置）
 - sentry（Sentry 日志排出适配器）
-- stream（进程内流和流服务器）
+- stream（进程内流 + 流服务器）
 - sveltekit（SvelteKit 集成）
 - tanstack-start（TanStack Start 集成）
 - telemetry（`@evlog/telemetry` 包）

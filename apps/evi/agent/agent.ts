@@ -1,7 +1,6 @@
 import { defineAgent, defineDynamic } from 'eve'
 import { gatewayRouting, sessionTags } from './lib/gateway'
-
-const MODEL = 'deepseek/deepseek-v4-flash'
+import { MODEL } from './lib/model'
 
 export default defineAgent({
   model: defineDynamic({

@@ -15,3 +15,34 @@ Before adding a capability (tool, connection, skill, schedule, subagent), read
 `docs/capability-placement.md`: it decides where the capability lives and holds
 the two-layer rule (files under `agent/` are wiring; logic goes in `agent/lib/`
 with a colocated test).
+
+## What reaches PostHog
+
+Metadata only — tokens, cost, latency, model, tool names. Prompts, responses,
+and tool payloads stay in the agent: turns carry third-party GitHub and Linear
+content. Turning that off rules out LLM-judge evaluations in PostHog, which is
+a deliberate trade.
+
+## Evals cost real money
+
+`pnpm eval` runs the agent against a live model. Twenty evals is a real bill, so
+the CI triggers are narrow — see `.github/workflows/evi-evals.yml` for the full
+list and the guards.
+
+Evals tagged `needs-connect` assert on GitHub calls that must *succeed*, and
+GitHub is reached through Vercel Connect, which authenticates with a Vercel
+OIDC token. CI pulls one with the Vercel CLI when `VERCEL_TOKEN`,
+`VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` are set, and skips those evals
+otherwise — an unauthenticated run reports a regression that is not one. They
+always run locally, where `vc link` supplies the token. Anything asserting
+`notCalledTool` on a GitHub tool needs no credentials and always runs.
+
+A PR touching `agent/` (excluding tests) or an `.eval.ts` file runs the `fast`
+subset automatically. That is deliberate: Evi opens PRs on her own behaviour,
+and an agent cannot be relied on to label its own regression risk. Keep the PR
+a draft while it is in flux — drafts never run — and add `skip-evals` when a
+watched path changed but the behaviour did not.
+
+Swapping the model goes through `EVI_MODEL`, not an edit to `agent.ts`: run the
+workflow manually against the candidate, compare cost, latency and pass rate in
+PostHog (`evi_eval_run`, broken down by `model`), then commit the swap.

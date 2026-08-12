@@ -1,20 +1,26 @@
-import type { DrainContext } from 'evlog'
 import { defineEvlogHook } from 'evlog/eve'
 import { createFsDrain } from 'evlog/fs'
-import { createDrainPipeline } from 'evlog/pipeline'
+import { createPostHogDrain } from 'evlog/posthog'
+import { createFanOutDrain } from '../lib/drains'
 import { environment } from '../lib/environment'
 
-/**
- * The fs drain only runs where the filesystem is writable. On Vercel
- * everything outside /tmp is read-only, so attaching it there errored on every
- * flush and persisted nothing; hosted environments run without a drain until a
- * hosted destination lands (EVL-256).
- */
-const drain = process.env.VERCEL
-  ? undefined
-  : createDrainPipeline<DrainContext>({
-      batch: { size: 5, intervalMs: 2000 },
-    })(createFsDrain())
+/** The fs drain needs a writable filesystem, which Vercel only offers under /tmp. */
+const drain = createFanOutDrain(
+  [
+    ...(process.env.VERCEL ? [] : [createFsDrain()]),
+    ...(process.env.POSTHOG_API_KEY
+      // Events, not Logs: at a few dozen turns a day the per-GB saving is
+      // irrelevant and only events can be charted and alerted on.
+      ? [createPostHogDrain({
+          mode: 'events',
+          eventName: 'evi_turn',
+          distinctIdField: 'eve.caller.principalId',
+          recordShape: 'compact',
+        })]
+      : []),
+  ],
+  { batch: { size: 5, intervalMs: 2000 } },
+)
 
 export default defineEvlogHook({
   init: { env: { service: 'evi', environment: environment() } },
