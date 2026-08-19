@@ -139,8 +139,8 @@ export async function sendBatchTo{Name}(events: WideEvent[], config: {Name}Confi
 
 ## 自定义说明
 
-- **认证方式**：某些服务使用 `Authorization: Bearer`，其他服务使用自定义请求头（`X-API-Key`、ClickHouse 的 `X-ClickHouse-User`/`X-ClickHouse-Key`）或 HTTP Basic（Loki + Grafana Cloud）。调整 `encode{Name}Request` —— 优先使用请求头而不是查询参数，以确保凭据不会出现在服务器端查询日志中。
-- **负载格式**：原始 JSON 数组（Axiom）、包装对象（PostHog `{ api_key, batch }`）、协议结构（OTLP）、NDJSON 风格的请求体（ClickHouse `JSONEachRow`）。调整编码器；当转换并非简单操作时，导出中间构建器（`build{Name}Payload`）。
-- **非 HTTP 传输**：如果服务无法适配 `defineHttpDrain`，请使用 `defineDrain<TConfig>({ name, resolve, send })` —— 参见 `fs.ts` 和 `memory.ts`。
-- **已弃用的别名**：重命名配置字段时（例如 `token` → `apiKey`），保留两个 `ConfigField` 条目，并通过 `../shared/config` 中的 `applyDeprecatedAlias(config, { adapter, from, to })` 进行映射。参见 `axiom.ts` 和 `better-stack.ts`。
-- **边缘环境安全性**：不要使用 `Buffer`（使用 `TextEncoder` + `btoa` 实现 Basic 认证 —— 参见 `loki.ts` 中的 `toBasicCredentials`），不要导入仅适用于 Node 的模块。如果某个运行时确实无法支持，请在 `resolve()` 中返回 `null`，并发出一次性警告（参见 `fs.ts` 中的 `isEdgeRuntime()`）。
+- **身份验证方式**：某些服务使用 `Authorization: Bearer`，其他服务使用自定义标头（`X-API-Key`、ClickHouse 的 `X-ClickHouse-User`/`X-ClickHouse-Key`）或 HTTP Basic（Loki + Grafana Cloud）。调整 `encode{Name}Request`，优先使用标头而不是查询参数，以确保凭据不会出现在服务器端查询日志中。
+- **负载格式**：原始 JSON 数组（Axiom）、包装对象（PostHog `{ api_key, batch }`）、协议结构（OTLP）、NDJSON 风格的请求体（ClickHouse `JSONEachRow`）。调整编码器；当转换并不简单时，导出中间构建器（`build{Name}Payload`）。
+- **非 HTTP 传输**：如果服务无法适配 `defineHttpDrain`，请使用 `defineDrain<TConfig>({ name, resolve, send })`，参见 `fs.ts` 和 `memory.ts`。
+- **已弃用的别名**：重命名配置字段（例如 `token` → `apiKey`）时，保留两个 `ConfigField` 条目，并通过 `../shared/config` 中的 `applyDeprecatedAlias(config, { adapter, from, to })` 进行映射。参见 `axiom.ts` 和 `better-stack.ts`。
+- **边缘环境安全性**：不要使用 `Buffer`（使用 `TextEncoder` + `btoa` 进行 Basic 身份验证，参见 `loki.ts` 中的 `toBasicCredentials`），不要导入仅限 Node 的模块。如果某个运行时确实无法支持，请在 `resolve()` 中返回 `null` 并发出一次性警告（参见 `fs.ts` 中的 `isEdgeRuntime()`）。

@@ -1,4 +1,7 @@
+import { readContentCommitDates } from './config/content-dates'
 import { rawRedirects, redirects } from './config/redirects'
+
+const contentCommitDates = readContentCommitDates(import.meta.dirname)
 
 export default defineNuxtConfig({
   extends: ['docus'],
@@ -30,9 +33,10 @@ export default defineNuxtConfig({
   // Docus defaults to allowing everything. Keep non-content routes (the MCP
   // JSON-RPC endpoint, the Studio CMS editor) out of the crawl — they 405/302
   // on a GET and only add noise to Search Console Coverage.
+  // Top-level `disallow` merges into Docus's `*` group; declaring our own group
+  // would append a second `User-agent: *` block instead of extending theirs.
   robots: {
-    groups: [{ userAgent: '*', allow: '/', disallow: ['/mcp', '/_studio'] }],
-    sitemap: '/sitemap.xml',
+    disallow: ['/mcp', '/_studio'],
   },
 
   modules: [
@@ -70,6 +74,62 @@ export default defineNuxtConfig({
     name: 'Evlog 中文文档',
     url: 'https://evlog.zhcndoc.com',
   },
+  // Curate /llms.txt (and /llms-full.txt) for answer engines. Docus registers
+  // `nuxt-llms` but with empty defaults, so without this block the footer's
+  // `/llms.txt` link is a 404 (the module skips the route when `domain` is unset).
+  llms: {
+    domain: 'https://www.evlog.dev',
+    title: 'evlog',
+    description:
+      'A modern TypeScript logger for everything you ship. Simple structured logs, wide events, and structured errors in one API - for scripts, libraries, jobs, edge, and requests.',
+    notes: [
+      'evlog is MIT-licensed and drop-in for console.log, pino, or consola.',
+      'Wide events replace log lines: log.set accumulates context, createError carries why and fix.',
+      'The CLI ships `evlog map`, a deterministic observability score that gates in CI.',
+    ],
+    sections: [
+      {
+        title: 'Get started',
+        contentCollection: 'docs',
+        contentFilters: [{ field: 'path', operator: 'LIKE', value: '/start/%' }],
+      },
+      {
+        title: 'Learn',
+        contentCollection: 'docs',
+        contentFilters: [{ field: 'path', operator: 'LIKE', value: '/learn/%' }],
+      },
+      {
+        title: 'CLI',
+        contentCollection: 'docs',
+        contentFilters: [{ field: 'path', operator: 'LIKE', value: '/cli/%' }],
+      },
+      {
+        title: 'Integrate',
+        contentCollection: 'docs',
+        contentFilters: [{ field: 'path', operator: 'LIKE', value: '/integrate/%' }],
+      },
+      {
+        title: 'Use cases',
+        contentCollection: 'docs',
+        contentFilters: [{ field: 'path', operator: 'LIKE', value: '/use-cases/%' }],
+      },
+      {
+        title: 'Extend',
+        contentCollection: 'docs',
+        contentFilters: [{ field: 'path', operator: 'LIKE', value: '/extend/%' }],
+      },
+      {
+        title: 'Reference',
+        contentCollection: 'docs',
+        contentFilters: [{ field: 'path', operator: 'LIKE', value: '/reference/%' }],
+      },
+    ],
+    full: {
+      title: 'evlog - full documentation',
+      description: 'Complete evlog documentation as structured markdown for deep retrieval.',
+    },
+  },
+
 
   ogImage: {
     // Cache prerendered OG image output between CI builds. Cache misses spend most of
@@ -143,6 +203,7 @@ export default defineNuxtConfig({
   },
 
   runtimeConfig: {
+    contentCommitDates,
     public: {
       justUseEvlogUrl: process.env.NUXT_PUBLIC_JUST_USE_EVLOG_URL || '',
       posthogKey: process.env.NUXT_PUBLIC_POSTHOG_KEY || '',

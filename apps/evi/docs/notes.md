@@ -21,9 +21,9 @@
 **`disableTool()` 是静态的。**没有按会话移除内置工具的方法，因此某个工具在某个通道上
 没有用处时，仍会占用该通道的上下文。
 
-**推理级别按模型区分。**`GET /v1/models` 会公开 `reasoning_options`；
-DeepSeek V4 Flash 只声明了 `high` 和 `xhigh`。设置为 `low` 或 `medium` 不会报错，
-而是产生异常且不单调的推理量。
+**iMessage 附件在 webhook 路径上需要第二次 spectrum 往返。**Photon 适配器的聊天映射会保留 name/mimeType/size，而 eve 的 `messageToUserContent` 只读取 `attachment.url`，但 Photon 从未提供该字段。在已连接的（pump）路径上，带有已认证 `read()` 的已解析内容节点会保留在 `message.raw.content` 中；在 webhook 路径上，`raw` 是传递 JSON，其中从未携带这些节点，因此 `patches/eve@0.34.0.patch` 会调用 `adapter.fetchMessage()`，通过 spectrum 客户端重新解析消息，并从已解析的节点中读取图像。升级 eve 时必须重新应用或弃用该补丁。
+
+**推理级别是按模型划分的。**`GET /v1/models` 会公开 `reasoning_options`；DeepSeek V4 Flash 只声明了 `high` 和 `xhigh`。设置 `low` 或 `medium` 不会报错，而是会产生异常且非单调的推理量。
 
 **会话限制默认为 4000 万个输入 token，且没有输出上限**，按当前价格计算，
 一次失控的会话费用可能接近 8 美元。
@@ -38,11 +38,7 @@ DeepSeek V4 Flash 只声明了 `high` 和 `xhigh`。设置为 `low` 或 `medium`
 
 ### 动态工具：执行保持内联
 
-eve 的打包器转换只有在动态工具的 `execute` 函数位于解析器主体内联位置时，
-才会将其注册为持久步骤函数。由工厂构建的工具映射（`return myTools()`）能够通过类型检查，
-并且在新会话中正常工作，但在任何恢复的会话中都会失败，并显示
-`references step function "..." which is not registered`。因此，每个
-`agent/tools/*.ts` 动态文件都会在单个 `turn.started` 解析器中以内联方式定义其工具。
+eve 的打包器转换只有在动态工具的 `execute` 函数以内联形式位于解析器主体中时，才会将其注册为持久步骤函数。由工厂构建的工具映射（`return myTools()`）可以通过类型检查，并能在新会话中工作，但在任何恢复的会话中都会失败，并显示 `references step function "..." which is not registered`。隐式箭头返回（`() => ({ ... })`）也会以相同方式使转换失效；解析器需要使用带代码块主体且包含显式 `return` 的形式。因此，每个 `agent/tools/*.ts` 动态文件都会在单个带代码块主体的 `turn.started` 解析器中以内联方式定义其工具。
 
 ## 计划
 
@@ -127,14 +123,7 @@ linear` 会分别配置一个 — 这是一个命令，而不是一个连接器�
 
 ## MCP 通道
 
-外部工具（Raycast AI、Claude Code、Cursor）通过带有
-`Authorization: Bearer $EVI_MCP_TOKEN` 的 `POST /eve/v1/mcp` 访问 Evi：这是一个在
-`mcp:hugo` 主体下运行真实会话的单一 `evi`
-工具，仅在设置了该令牌环境变量期间受信任为维护者。`initialize` 返回的
-`mcp-session-id` 用于标识会话，因此一次 Raycast 聊天对应一个 Evi 会话。
-设置方法：生成一个令牌（`openssl rand -hex 32`），在项目中设置
-`EVI_MCP_TOKEN`，然后在客户端中添加一个指向生产 URL 的 HTTP MCP 服务器，并配置
-Authorization 标头。更换环境变量即可轮换令牌。这里特意没有 OAuth AS：这是单用户界面，使用静态 bearer 是合适的方案。
+外部工具（Raycast AI、Claude Code、Cursor）通过 `/eve/v1/mcp` 访问 Evi，并使用 `Authorization: Bearer $EVI_MCP_TOKEN`，该端点由 eve 的原生 MCP 通道（`mcpChannel`）提供服务。客户端会获得持久调用工具——`agent_start`、`agent_get`、`agent_update`、`agent_cancel`：启动会立即返回调用 id，工具端通过轮询 `agent_get` 获取结果，而人工输入请求会以 `input_required` 的形式出现，不会让 HTTP 调用一直挂起。每个 `agent_start` 都是一个由 `mcp:hugo` 主体拥有的任务模式会话，只有在设置了 token 环境变量时才会被信任为维护者；调用之间不存在跨调用对话，因此请求必须携带自身的上下文。设置方法：生成 token（`openssl rand -hex 32`），在项目中设置 `EVI_MCP_TOKEN`，然后在客户端中添加一个 HTTP MCP 服务器，指向生产 URL，并设置 Authorization 标头。通过更改环境变量进行轮换。这里有意不使用 OAuth AS：这是单用户界面，静态 bearer 的规模正合适。
 
 ## 待处理
 

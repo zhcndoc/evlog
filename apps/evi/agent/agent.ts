@@ -1,18 +1,35 @@
+import type { ModelMessage } from 'ai'
 import { defineAgent, defineDynamic } from 'eve'
 import { gatewayRouting, sessionTags } from './lib/gateway'
-import { MODEL } from './lib/model'
+import { modelForMessages, modelForStep } from './lib/model'
+
+interface ModelContext { channel: { kind?: string }, messages: readonly ModelMessage[] }
+
+function modelOptions(kind?: string) {
+  return {
+    providerOptions: {
+      gateway: { ...gatewayRouting(kind), tags: sessionTags(kind) },
+    },
+  }
+}
+
+function selectModel(_event: unknown, ctx: ModelContext) {
+  return { model: modelForMessages(ctx.messages), modelOptions: modelOptions(ctx.channel.kind) }
+}
 
 export default defineAgent({
+  // Also on turn.started: a session whose process died before the selection
+  // committed resumes with none, and eve fails the turn rather than guess.
+  // `step.started` re-evaluates each model call: the vision model runs only
+  // while the current turn carries image parts; afterwards the base model
+  // returns with earlier turns' images stubbed out (it rejects them raw).
   model: defineDynamic({
-    fallback: MODEL,
     events: {
-      'session.started': (_event, ctx) => ({
-        model: MODEL,
-        modelOptions: {
-          providerOptions: {
-            gateway: { ...gatewayRouting, tags: sessionTags(ctx.channel.kind) },
-          },
-        },
+      'session.started': selectModel,
+      'turn.started': selectModel,
+      'step.started': (_event: unknown, ctx: ModelContext) => ({
+        model: modelForStep(ctx.messages),
+        modelOptions: modelOptions(ctx.channel.kind),
       }),
     },
   }),
@@ -22,8 +39,5 @@ export default defineAgent({
   limits: {
     maxInputTokensPerSession: 20_000_000,
     maxOutputTokensPerSession: 250_000,
-  },
-  modelOptions: {
-    providerOptions: { gateway: { ...gatewayRouting, tags: sessionTags() } },
   },
 })

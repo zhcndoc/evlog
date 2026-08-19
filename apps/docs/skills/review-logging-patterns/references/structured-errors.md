@@ -1,8 +1,8 @@
-# Structured Errors Guide
+# 结构化错误指南
 
-Structured errors provide context that helps developers understand **what** happened, **why** it happened, and **how to fix it**.
+结构化错误提供上下文，帮助开发者理解发生了**什么**、发生的**原因**以及**如何修复**。
 
-## The Problem with Generic Errors
+## 通用错误的问题
 
 ```typescript
 // ❌ Useless errors
@@ -14,14 +14,14 @@ throw new Error('Invalid input')
 throw new Error('Payment failed')  // Why? How do I fix it?
 ```
 
-When these errors reach your logs or monitoring, you have no idea:
+当这些错误出现在日志或监控中时，你完全不知道：
 
-- What actually failed
-- Why it failed
-- How to fix it
-- Where to find more information
+- 实际失败了什么
+- 为什么失败
+- 如何修复
+- 去哪里查找更多信息
 
-## Structured Error Anatomy
+## 结构化错误剖析
 
 ```typescript
 import { createError } from 'evlog'
@@ -40,13 +40,13 @@ throw createError({
 })
 ```
 
-### `internal` (backend-only)
+### `internal`（仅后端）
 
-- Use `internal` for IDs, gateway codes, or diagnostics that **must not** appear in HTTP error bodies or in client-side `parseError()` results.
-- Access in server code via **`error.internal`**. Values are omitted from **`toJSON()`** and from framework serializers; they are included on wide events under **`error.internal`** when the error is captured with **`log.error()`** (or equivalent automatic capture).
-- Stored with a non-enumerable symbol so `JSON.stringify(error)` does not leak `internal`; devtools may show it as `[Symbol(evlog.error.internal)]`.
+- 使用 `internal` 存放绝不能出现在 HTTP 错误正文或客户端 `parseError()` 结果中的 ID、网关代码或诊断信息
+- 在服务端代码中通过 **`error.internal`** 访问。值会从 **`toJSON()`** 和框架序列化器中省略；当使用 **`log.error()`**（或等效的自动捕获）捕获错误时，这些值会出现在宽事件的 **`error.internal`** 中
+- 值通过不可枚举的 symbol 存储，因此 `JSON.stringify(error)` 不会泄露 `internal`；开发者工具可能会将其显示为 `[Symbol(evlog.error.internal)]`
 
-### Console Output (Development)
+### 控制台输出（开发环境）
 
 ```
 Error: Payment failed
@@ -57,7 +57,7 @@ More info: https://docs.example.com/payments/declined
 Caused by: StripeCardError: card_declined
 ```
 
-### JSON Output (Production)
+### JSON 输出（生产环境）
 
 ```json
 {
@@ -74,11 +74,11 @@ Caused by: StripeCardError: card_declined
 }
 ```
 
-## Field Guidelines
+## 字段指南
 
-### `message` - What Happened
+### `message`——发生了什么
 
-User-facing description of what went wrong.
+面向用户的错误描述。
 
 ```typescript
 // ✅ Good - clear, actionable
@@ -92,9 +92,9 @@ message: 'Something went wrong'
 message: 'Failed'
 ```
 
-### `why` - Why It Happened
+### `why`——为什么发生
 
-Technical explanation for debugging.
+用于调试的技术说明。
 
 ```typescript
 // ✅ Good - specific, technical
@@ -107,9 +107,9 @@ why: 'It failed'
 why: 'Error occurred'
 ```
 
-### `fix` - How to Fix It
+### `fix`——如何修复
 
-Actionable steps to resolve the issue.
+解决问题的可执行步骤。
 
 ```typescript
 // ✅ Good - specific actions
@@ -122,9 +122,9 @@ fix: 'Fix the error'
 fix: 'Try again'
 ```
 
-### `link` - More Information
+### `link`——更多信息
 
-Documentation URL for detailed troubleshooting.
+用于详细故障排查的文档 URL。
 
 ```typescript
 // ✅ Good - specific documentation
@@ -133,9 +133,9 @@ link: 'https://docs.stripe.com/declines/codes'
 link: 'https://your-app.com/docs/errors/user-not-found'
 ```
 
-### `cause` - Original Error
+### `cause`——原始错误
 
-The underlying error that triggered this one.
+触发当前错误的底层错误。
 
 ```typescript
 try {
@@ -150,9 +150,9 @@ try {
 }
 ```
 
-## Common Error Patterns
+## 常见错误模式
 
-### API/External Service Errors
+### API／外部服务错误
 
 ```typescript
 // Rate limiting
@@ -185,7 +185,7 @@ throw createError({
 })
 ```
 
-### Validation Errors
+### 验证错误
 
 ```typescript
 // Missing required field
@@ -214,7 +214,7 @@ throw createError({
 })
 ```
 
-### Database Errors
+### 数据库错误
 
 ```typescript
 // Not found
@@ -244,7 +244,7 @@ throw createError({
 })
 ```
 
-### Permission Errors
+### 权限错误
 
 ```typescript
 throw createError({
@@ -256,9 +256,9 @@ throw createError({
 })
 ```
 
-## Transformation Examples
+## 转换示例
 
-### Before: Generic Error
+### 转换前：通用错误
 
 ```typescript
 async function processPayment(cart, user) {
@@ -274,7 +274,7 @@ async function processPayment(cart, user) {
 }
 ```
 
-### After: Structured Error
+### 转换后：结构化错误
 
 ```typescript
 async function processPayment(cart, user) {
@@ -316,9 +316,9 @@ function getStripeErrorFix(error) {
 }
 ```
 
-## Integration with Wide Events
+## 与宽事件集成
 
-Structured errors integrate seamlessly with wide events:
+结构化错误可以无缝集成到宽事件中：
 
 ```typescript
 // server/api/checkout.post.ts
@@ -345,7 +345,7 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
-The wide event will include:
+宽事件将包含：
 
 ```json
 {
@@ -363,31 +363,31 @@ The wide event will include:
 }
 ```
 
-If you use `createError({ ..., internal: { ... } })` without calling `log.error(error)` yourself, framework integrations that attach thrown errors to the wide event still merge **`internal`** into **`error.internal`** on emit.
+如果你使用 `createError({ ..., internal: { ... } })`，但没有自行调用 `log.error(error)`，那么将抛出错误附加到宽事件的框架集成仍会在触发时将 **`internal`** 合并到 **`error.internal`** 中。
 
-## Best Practices
+## 最佳实践
 
-### Do
+### 应该做
 
-- Always provide `message` and `why` at minimum
-- Include `fix` when there's an actionable solution
-- Add `link` to documentation for complex errors
-- Preserve `cause` when wrapping errors
-- Be specific about what failed and why
-- Put operator-only or sensitive diagnostics in `internal`, not in `why`/`fix`/`message`
+- 至少始终提供 `message` 和 `why`
+- 存在可执行的解决方案时，包含 `fix`
+- 对于复杂错误，添加指向文档的 `link`
+- 包装错误时保留 `cause`
+- 具体说明失败的内容及其原因
+- 将仅供操作人员使用或敏感的诊断信息放入 `internal`，而不是 `why`／`fix`／`message`
 
-### Don't
+### 不应该做
 
-- Use generic messages like "Error" or "Failed"
-- Leak sensitive data (passwords, tokens, PII)
-- Expect `internal` in HTTP JSON or in `parseError()` — it is for server logs and drains only
-- Make `why` and `message` identical
-- Suggest fixes that aren't actually possible
-- Create errors without any context
+- 使用诸如“Error”或“Failed”之类的通用消息
+- 泄露敏感数据（密码、令牌、PII）
+- 不要期待在 HTTP JSON 或 `parseError()` 中获取 `internal`。它仅用于服务端日志和数据接收端
+- 不要让 `why` 和 `message` 完全相同
+- 不要建议实际上无法执行的修复方案
+- 不要创建完全没有上下文的错误
 
-## Nitro Compatibility
+## Nitro 兼容性
 
-evlog errors work with any Nitro-powered framework. When thrown in an API route, the error is automatically converted to an HTTP response:
+evlog 错误适用于任何基于 Nitro 的框架。在 API 路由中抛出错误时，该错误会自动转换为 HTTP 响应：
 
 ```typescript
 // Backend - just throw
@@ -408,9 +408,9 @@ throw createError({
 // }
 ```
 
-### Frontend Integration
+### 前端集成
 
-Use `parseError()` to extract all fields at the top level:
+使用 `parseError()` 将所有字段提取到顶层：
 
 ```typescript
 import { parseError } from 'evlog'
@@ -434,15 +434,15 @@ try {
 }
 ```
 
-**The difference**: A generic error shows "An error occurred". A structured error shows the message, explains why, suggests a fix, and links to documentation.
+**区别**：通用错误只显示“发生错误”。结构化错误会显示消息、解释原因、提供修复建议，并链接到文档。
 
-## Error Message Templates
+## 错误消息模板
 
-Common patterns -- adapt fields to each specific case:
+常见模式，以及针对每种情况调整后的字段：
 
-| Pattern | Status | Fields |
+| 模式 | 状态 | 字段 |
 |---------|--------|--------|
-| Resource not found | 404 | `why`: what's missing, `fix`: verify identifier |
-| External service failure | 503 | `why`: service error, `fix`: actionable step, `link`: service docs, `cause`: original error |
-| Validation failure | 400 | `why`: what's invalid, `fix`: expected format |
-| Permission denied | 403 | `why`: what's required, `fix`: how to get access |
+| 找不到资源 | 404 | `why`：缺少什么，`fix`：验证标识符 |
+| 外部服务失败 | 503 | `why`：服务错误，`fix`：可执行步骤，`link`：服务文档，`cause`：原始错误 |
+| 验证失败 | 400 | `why`：什么无效，`fix`：预期格式 |
+| 权限被拒绝 | 403 | `why`：需要什么，`fix`：如何获得访问权限 |

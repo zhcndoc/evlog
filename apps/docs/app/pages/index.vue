@@ -4,6 +4,19 @@ definePageMeta({
   layout: false,
 })
 
+const softwareSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'evlog',
+  applicationCategory: 'DeveloperApplication',
+  operatingSystem: 'Node.js, Bun, Deno, Cloudflare Workers, all major browsers',
+  description: 'A modern TypeScript logger for everything you ship. Simple structured logs, wide events, and structured errors in one API across scripts, libraries, jobs, edge, and requests.',
+  url: 'https://www.evlog.dev/',
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  license: 'https://github.com/hugorcd/evlog/blob/main/LICENSE',
+  author: { '@type': 'Person', name: 'HugoRCD', url: 'https://hugorcd.com/' },
+}
+
 useHead({
   titleTemplate: '',
   link: [
@@ -24,6 +37,17 @@ const { data: page } = await useAsyncData('evlog-docs-home', () => {
   getCachedData(key, nuxtApp) {
     return nuxtApp.payload.data[key] ?? nuxtApp.static.data[key]
   },
+})
+
+// The FAQ is read back from the accordion the page renders, so an answer edited
+// in `0.landing.md` never disagrees with the one search engines are given. Both
+// shapes go in one call, after the page resolves: the landing's content does not
+// change at runtime, so there is nothing here for a getter to react to.
+const faq = faqSchema(page.value?.body)
+
+useHead({
+  script: [softwareSchema, ...(faq ? [faq] : [])]
+    .map(schema => ({ type: 'application/ld+json', innerHTML: JSON.stringify(schema) })),
 })
 
 useSeoMeta({

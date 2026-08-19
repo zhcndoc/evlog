@@ -6,11 +6,11 @@
 
 此处适用的测试 README 规则：
 
-- 使用 `mockFetch()` + `getFetchCall` / `getFetchJson` / `getFetchHeaders`，这些函数来自 `../helpers/fetch` —— 不要在适配器测试中手动实现 fetch spy（少数旧文件仍然这样做；请遵循这些辅助函数，而不是旧文件）。
-- 在 `afterEach` 中删除适配器读取的每一个环境变量 —— 泄漏的环境变量会导致后续测试依赖执行顺序。
-- 在各自的 `describe` 块中测试导出的纯函数辅助函数（`to{Name}Event`、`build{Name}Payload`、URL 解析器）——但只测试适配器实际导出的函数。如果适配器没有转换器（服务接受任意 JSON），则完全移除 `to{Name}Event` 的导入及其 `describe` 块。
-- 不要使用 `!` 非空断言 —— 如果需要进行类型收窄，请使用 `../helpers/defined` 中的 `defined()`。
-- 在 `encode-parity.test.ts` 中注册该适配器，以确保 drain 和 `sendBatchTo{Name}` 使用相同的编码器（目前还不是每个现有适配器都已注册；新适配器应当注册）。
+- 使用 `mockFetch()` + `getFetchCall` / `getFetchJson` / `getFetchHeaders`（来自 `../helpers/fetch`），不要在适配器测试中手动创建 fetch spy（少数较旧的文件仍然这样做；请遵循这些辅助函数，而不是参考旧文件）。
+- 在 `afterEach` 中删除适配器读取的每一个环境变量。泄漏的环境变量会导致后续测试依赖执行顺序。
+- 在独立的 `describe` 块中测试导出的纯辅助函数（`to{Name}Event`、`build{Name}Payload`、URL 解析器），但只测试适配器实际导出的函数。如果适配器没有转换器（服务接受任意 JSON），则完全删除 `to{Name}Event` 的导入及其 `describe` 块。
+- 不要使用 `!` 非空断言；如果需要缩小类型范围，请使用来自 `../helpers/defined` 的 `defined()`。
+- 在 `encode-parity.test.ts` 中注册适配器，以确保 drain 和 `sendBatchTo{Name}` 使用相同的编码器（目前并非每个已有适配器都已注册；新适配器应该注册）。
 
 ```typescript
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -160,10 +160,10 @@ describe('{name} adapter', () => {
 
 - **URL 断言**：将预期 URL 更新为实际的服务 API；如果编码器能够容忍路径已存在的情况，也要包含该情况（参见 `resolveLokiPushUrl`）。
 - **身份验证请求头**：与服务保持一致（`X-API-Key`、HTTP Basic、`X-ClickHouse-User` 等）。
-- **请求体格式**：包装对象（PostHog `{ api_key, batch }`）、原始数组（Axiom）、NDJSON（ClickHouse）——断言真实结构，而不只是“是一个数组”。
-- **已弃用的别名**：如果适配器支持某个别名（`token` → `apiKey`），添加测试以验证该别名仍能解析，并验证两者同时设置时规范名称优先。
-- **错误吞咽**：drain 本身永远不会抛出异常——该契约由 `defineHttpDrain` 提供，并已在 `test/toolkit/toolkit.test.ts` 中覆盖；不要在每个适配器中重复测试。只有直接调用的辅助函数会暴露错误。
-- **服务专用辅助函数**：每个导出的辅助函数（`buildLokiPayload`、`toClickHouseRow`、严重性映射函数等）都应有自己的 `describe`，并覆盖边界情况（空输入、格式错误的时间戳、基数限制）。
+- **请求体格式**：包装对象（PostHog 的 `{ api_key, batch }`）、原始数组（Axiom）、NDJSON（ClickHouse）。断言真实结构，而不只是断言“是一个数组”。
+- **已弃用的别名**：如果适配器支持别名（`token` → `apiKey`），添加测试以确保别名仍然能够解析，并且同时设置两者时规范名称优先。
+- **错误吞噬**：drain 本身永远不会抛出异常。该约定由 `defineHttpDrain` 实现，并在 `test/toolkit/toolkit.test.ts` 中覆盖；不要在每个适配器中重复测试。只有直接辅助函数会暴露错误。
+- **服务专用辅助函数**：每个导出的辅助函数（`buildLokiPayload`、`toClickHouseRow`、严重性映射器等）都应有自己的 `describe`，并覆盖边界情况（空输入、格式错误的时间戳、基数限制）。
 
 ## 超越单元测试
 

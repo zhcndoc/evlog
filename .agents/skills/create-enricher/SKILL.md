@@ -5,7 +5,7 @@ description: Create a new built-in evlog enricher to add derived context to wide
 
 # Create evlog Enricher
 
-Add a new built-in enricher to evlog. Every enricher is built on the public toolkit primitive `defineEnricher` from `evlog/toolkit` — so a community enricher has the same shape as a built-in one.
+Add a new built-in enricher to evlog. Every enricher is built on the public toolkit primitive `defineEnricher` from `evlog/toolkit`, so a community enricher has the same shape as a built-in one.
 
 ## PR Title
 
@@ -31,7 +31,7 @@ Enrichers live in the core package surface (`evlog/enrichers`), so use the `core
 
 ### Should it join `createDefaultEnrichers()`?
 
-`createDefaultEnrichers()` composes user agent, geo, request size, and trace context via `composeEnrichers` (from `../shared/compose`). Add the new enricher to the composition only if it is universally applicable and reads nothing but the request (headers/env) — anything requiring service-specific setup or extra cost stays opt-in. Changing the default composition is a behavior change for every existing `createDefaultEnrichers()` user: call it out explicitly in the changeset.
+`createDefaultEnrichers()` composes user agent, geo, request size, and trace context via `composeEnrichers` (from `../shared/compose`). Add the new enricher to the composition only if it is universally applicable and reads nothing but the request (headers/env). Anything requiring service-specific setup or extra cost stays opt-in. Changing the default composition is a behavior change for every existing `createDefaultEnrichers()` user: call it out explicitly in the changeset.
 
 ## Naming Conventions
 
@@ -41,13 +41,13 @@ Enrichers live in the core package surface (`evlog/enrichers`), so use the `core
 | `{Name}` | `UserAgent` | PascalCase in function/interface names |
 | `{DISPLAY}` | `User Agent` | Human-readable display name |
 
-## Step 1: Enricher Source — built on `defineEnricher`
+## Step 1: Enricher Source: built on `defineEnricher`
 
 Add the enricher to `packages/evlog/src/enrichers/index.ts`. Read [references/enricher-template.md](references/enricher-template.md) for the full annotated template.
 
 The contract is `defineEnricher<T>({ name, field, compute }, options?)`. You only ship one piece of logic:
 
-- **`compute(ctx)`** — return the computed value (typed as `T`) or `undefined` to skip.
+- **`compute(ctx)`**: return the computed value (typed as `T`) or `undefined` to skip.
 
 `defineEnricher` handles the rest:
 
@@ -57,11 +57,11 @@ The contract is `defineEnricher<T>({ name, field, compute }, options?)`. You onl
 
 Key rules:
 
-- **Use the toolkit helpers**: `getHeader()` for case-insensitive header lookup, `normalizeNumber()` for numeric strings — both from `../shared/headers` (re-exported by `evlog/toolkit`).
-- **Single event field** — each enricher writes one top-level field on `ctx.event`. If the enricher must additionally pin top-level fields (like `createTraceContextEnricher` does for `event.traceId` / `event.spanId`), wrap the `defineEnricher` result in a closure — see that enricher for the pattern.
-- **Factory pattern** — `create{Name}Enricher(options: EnricherOptions = {})` returns the result of `defineEnricher(...)` — directly in the normal case, or through the thin closure wrapper when the enricher also pins top-level fields (see the single-event-field rule above).
-- **No side effects** — never throw, never log; rely on `defineEnricher`'s built-in error handling if something goes wrong.
-- **Export the Info type** — `{Name}Info` describing the field shape, exported alongside the factory.
+- **Use the toolkit helpers**: `getHeader()` for case-insensitive header lookup, `normalizeNumber()` for numeric strings. Both from `../shared/headers` (re-exported by `evlog/toolkit`).
+- **Single event field**: each enricher writes one top-level field on `ctx.event`. If the enricher must additionally pin top-level fields (like `createTraceContextEnricher` does for `event.traceId` / `event.spanId`), wrap the `defineEnricher` result in a closure, see that enricher for the pattern.
+- **Factory pattern**: `create{Name}Enricher(options: EnricherOptions = {})` returns the result of `defineEnricher(...)`, directly in the normal case, or through the thin closure wrapper when the enricher also pins top-level fields (see the single-event-field rule above).
+- **No side effects**: never throw, never log; rely on `defineEnricher`'s built-in error handling if something goes wrong.
+- **Export the Info type**: `{Name}Info` describing the field shape, exported alongside the factory.
 
 ## Step 2: Tests
 
@@ -69,12 +69,12 @@ Add tests to `packages/evlog/test/toolkit/enrichers.test.ts`, following the exis
 
 Required test categories:
 
-1. **Sets field from headers** — verify the enricher populates the event field correctly
-2. **Skips when source data missing** — verify no field is set when the required header/input is absent
-3. **Preserves existing data** — verify `overwrite: false` (default) doesn't replace user-provided fields
-4. **Overwrites when requested** — verify `overwrite: true` replaces existing fields
-5. **Handles edge cases** — empty strings, malformed values, case-insensitive header names
-6. **Default composition** — if the enricher joined `createDefaultEnrichers()`, extend that composition's tests
+1. **Sets the field from its source**: verify the enricher populates the event field correctly, reading whatever it actually reads (`ctx.request`, `ctx.response`, `process.env`, `ctx.event`, or headers)
+2. **Skips when source data missing**: verify no field is set when the required input is absent
+3. **Preserves existing data**: verify `overwrite: false` (default) doesn't replace user-provided fields
+4. **Overwrites when requested**: verify `overwrite: true` replaces existing fields
+5. **Handles edge cases**: empty strings and malformed values, plus case-insensitive lookup for a header-based enricher
+6. **Default composition**: if the enricher joined `createDefaultEnrichers()`, extend that composition's tests
 
 ## Step 3: Update the Enrichers Docs Page
 
@@ -115,7 +115,7 @@ interface {Name}Info {
 
 3. If the enricher joined the default composition, update the "All built-in enrichers" section text listing what `createDefaultEnrichers()` composes.
 
-Custom-enricher authoring docs live separately at `apps/docs/content/6.extend/5.custom-enrichers.md` — no change needed there unless the toolkit contract itself changed.
+Custom-enricher authoring docs live separately at `apps/docs/content/6.extend/5.custom-enrichers.md`, with no change needed there unless the toolkit contract itself changed.
 
 ## Step 4: Update the Public Skill
 

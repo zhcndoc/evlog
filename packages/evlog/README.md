@@ -13,7 +13,7 @@
 
 **Digging through logs is not observability. It's hope.**
 
-A single request generates 10+ log lines. When production breaks at 3am, you're sifting scattered lines for a needle of signal. Your errors say "Something went wrong" — thanks, very helpful.
+A single request generates 10+ log lines. When production breaks at 3am, you're sifting scattered lines for a needle of signal. Your errors say "Something went wrong", which helps nobody.
 
 **evlog is different.** One wide event per operation. All the context. Errors that explain *why* and what to do next.
 
@@ -339,7 +339,7 @@ async function processSyncJob(job: Job) {
 
 ## Cloudflare Workers
 
-Use the Workers adapter for structured logs and correct platform severity. With `initWorkersLogger({ drain })`, use **`defineWorkerFetch`** so async drains are registered with `waitUntil` automatically (Cloudflare only passes `ExecutionContext` as the third `fetch` argument — there is no global).
+Use the Workers adapter for structured logs and correct platform severity. With `initWorkersLogger({ drain })`, use **`defineWorkerFetch`** so async drains are registered with `waitUntil` automatically (Cloudflare only passes `ExecutionContext` as the third `fetch` argument, and there is no global).
 
 ```typescript
 // src/index.ts
@@ -592,11 +592,11 @@ import { defineEvlogInstrumentation } from 'evlog/eve'
 export default defineEvlogInstrumentation()
 ```
 
-`defineEvlogHook()` maps eve turn lifecycle events to one wide event per turn. Call `useLogger()` in tools — the logger is bound via AsyncLocalStorage on `turn.started`. Pass `ctx` only when ALS is unavailable (`useLogger(ctx)`). Pretty-printing follows `isDev()` by default (tree locally, JSON in production); set `init.pretty: false` explicitly if you need to override.
+`defineEvlogHook()` maps eve turn lifecycle events to one wide event per turn. Call `useLogger()` in tools, where the logger is bound via AsyncLocalStorage on `turn.started`. Pass `ctx` only when ALS is unavailable (`useLogger(ctx)`). Pretty-printing follows `isDev()` by default (tree locally, JSON in production); set `init.pretty: false` explicitly if you need to override.
 
-`defineEvlogInstrumentation()` is optional: it stamps `evlog.request_id` onto eve's AI SDK spans so a trace joins back to its wide event, and back. It owns `agent/instrumentation.ts`, so when another observability backend needs that file, use eve's own `defineInstrumentation` and spread `evlogRuntimeContext(input)` into your runtime context instead. Requires eve 0.30 or later. Complements eve Agent Runs — see the [eve use case](https://evlog.dev/use-cases/eve).
+`defineEvlogInstrumentation()` is optional: it stamps `evlog.request_id` onto eve's AI SDK spans so a trace joins back to its wide event, and back. It owns `agent/instrumentation.ts`, so when another observability backend needs that file, use eve's own `defineInstrumentation` and spread `evlogRuntimeContext(input)` into your runtime context instead. Requires eve 0.30 or later. Complements eve Agent Runs. See the [eve use case](https://evlog.dev/use-cases/eve).
 
-Every turn event carries `eve.caller` — `principalId`, `principalType` and `authenticator` — so cost and volume group by who triggered the turn.
+Every turn event carries `eve.caller` (`principalId`, `principalType` and `authenticator`), so cost and volume group by who triggered the turn.
 
 See the full [eve example](https://github.com/HugoRCD/evlog/tree/main/examples/eve) for a complete agent layout.
 
@@ -611,7 +611,7 @@ log.info('checkout', 'User initiated checkout')
 log.error({ action: 'payment', error: 'validation_failed' })
 ```
 
-In Nuxt, `log` is auto-imported -- no import needed in Vue components:
+In Nuxt, `log` is auto-imported, so a Vue component needs no import:
 
 ```vue
 <script setup>
@@ -623,7 +623,7 @@ Client logs output to the browser console with colored tags in development.
 
 ### Client Transport
 
-To send client logs to the server for centralized logging, enable the transport:
+To send client logs to the server for centralized logging, enable the HTTP drain:
 
 ```typescript
 // nuxt.config.ts
@@ -735,7 +735,7 @@ Each enricher adds a specific field to the event:
 
 All enrichers accept an optional `{ overwrite?: boolean }` option. By default (`overwrite: false`), user-provided data on the event takes precedence over enricher-computed values. Set `overwrite: true` to always replace existing fields.
 
-> **Cloudflare geo note:** Only `cf-ipcountry` is a real Cloudflare HTTP header. The `cf-region`, `cf-city`, `cf-latitude`, `cf-longitude` headers are NOT standard -- they are properties of `request.cf`. For full geo data on Cloudflare, write a custom enricher that reads `request.cf`, or use a Workers middleware to forward `cf` properties as custom headers.
+> **Cloudflare geo note:** Only `cf-ipcountry` is a real Cloudflare HTTP header. The `cf-region`, `cf-city`, `cf-latitude`, `cf-longitude` headers are NOT standard: they are properties of `request.cf`. For full geo data on Cloudflare, write a custom enricher that reads `request.cf`, or use a Workers middleware to forward `cf` properties as custom headers.
 
 ### Custom Enrichers
 
@@ -828,7 +828,7 @@ export default defineEventHandler(async (event) => {
 | `signed(drain, { strategy: 'hmac' \| 'hash-chain', ... })` | wrapper | Tamper-evident integrity |
 | `auditRedactPreset` | preset | Strict PII for audit events |
 
-`AuditFields` is exported and merges with `BaseWideEvent` — augment it with `declare module` if you need extra typed fields. Audit events are always force-kept by tail sampling and get a deterministic `idempotencyKey` so retries are safe across drains.
+`AuditFields` is exported and merges with `BaseWideEvent`, so augment it with `declare module` if you need extra typed fields. Audit events are always force-kept by tail sampling and get a deterministic `idempotencyKey` so retries are safe across drains.
 
 See [the Audit Logs guide](https://evlog.dev/use-cases/audit/overview) for compliance, GDPR, and recipe details.
 
@@ -1031,7 +1031,7 @@ EVLOG_FS_DIR=.evlog/logs
 
 ### Memory
 
-In-memory ring buffer — works in any runtime, including Cloudflare Workers:
+In-memory ring buffer that works in any runtime, including Cloudflare Workers:
 
 ```typescript
 // server/plugins/evlog-drain.ts
@@ -1142,9 +1142,9 @@ export default defineNitroPlugin((nitroApp) => {
 
 The function returned by `pipeline(drain)` is hook-compatible and exposes:
 
-- **`drain(ctx)`** -- Push a single event into the buffer
-- **`drain.flush()`** -- Force-flush all buffered events (call on server shutdown)
-- **`drain.pending`** -- Number of events currently buffered
+- **`drain(ctx)`**: push a single event into the buffer
+- **`drain.flush()`**: force-flush all buffered events (call on server shutdown)
+- **`drain.pending`**: number of events currently buffered
 
 ## API Reference
 
@@ -1284,7 +1284,7 @@ log.getContext()                   // Get current context
 
 ### Wide event lifecycle and `log.fork()`
 
-The framework emits **one wide event per HTTP request** when the response finishes (or on error). After `emit()` runs — including when head sampling drops the event (`emit()` returns `null`) — that logger instance is **sealed**: further `set`, `error`, `info`, and `warn` calls are ignored and emit a **`[evlog]` console warning** listing dropped keys. A second `emit()` is ignored with a warning. This avoids silent data loss when async work (unawaited promises, `setTimeout`, etc.) still resolves `useLogger()` to the same logger via `AsyncLocalStorage` after the response has already been logged.
+The framework emits **one wide event per HTTP request** when the response finishes (or on error). After `emit()` runs, including when head sampling drops the event (`emit()` returns `null`), that logger instance is **sealed**: further `set`, `error`, `info`, and `warn` calls are ignored and emit a **`[evlog]` console warning** listing dropped keys. A second `emit()` is ignored with a warning. This avoids silent data loss when async work (unawaited promises, `setTimeout`, etc.) still resolves `useLogger()` to the same logger via `AsyncLocalStorage` after the response has already been logged.
 
 **`log.fork(label, fn)`** runs work under a **child** request logger: inside `fn`, `useLogger()` returns the child. When `fn` settles, the child emits its **own** wide event with `operation` set to `label` and `_parentRequestId` set to the parent’s `requestId` (query and dashboard correlation). The parent event may be emitted **before** the child event; they are two separate events ordered by time.
 
@@ -1330,7 +1330,7 @@ initWorkersLogger({
 
 ### `defineWorkerFetch(handler)`
 
-Recommended for Workers when using **`initWorkersLogger({ drain })`**. Wraps your handler so `createWorkersLogger` always receives `executionCtx` — you do not pass `ctx` into the factory yourself. Cloudflare does not expose `ExecutionContext` globally (only as `fetch`’s third argument), so this is the “automatic” option for plain Workers scripts.
+Recommended for Workers when using **`initWorkersLogger({ drain })`**. Wraps your handler so `createWorkersLogger` always receives `executionCtx`, so you do not pass `ctx` into the factory yourself. Cloudflare does not expose `ExecutionContext` globally (only as `fetch`’s third argument), so this is the “automatic” option for plain Workers scripts.
 
 ```typescript
 import { defineWorkerFetch, initWorkersLogger } from 'evlog/workers'
@@ -1383,7 +1383,7 @@ createError({
 })
 ```
 
-**`internal`** — Optional context for support, auditing, or debugging (IDs, gateway codes, raw diagnostics). It is stored on `EvlogError` and exposed as `error.internal` in server code. It is **not** included in JSON error responses, `toJSON()`, or `parseError()` results. When the error is passed to `log.error()` (or thrown in integrations that record errors on the wide event), `internal` is copied into the emitted event under `error.internal`.
+**`internal`.** Optional context for support, auditing, or debugging (IDs, gateway codes, raw diagnostics). It is stored on `EvlogError` and exposed as `error.internal` in server code. It is **not** included in JSON error responses, `toJSON()`, or `parseError()` results. When the error is passed to `log.error()` (or thrown in integrations that record errors on the wide event), `internal` is copied into the emitted event under `error.internal`.
 
 ### `parseError(error)`
 
@@ -1418,28 +1418,28 @@ try {
 | Framework | Integration |
 |-----------|-------------|
 | **Nuxt** | `modules: ['evlog/nuxt']` |
-| **Next.js** | `createEvlog()` factory with `import { createEvlog } from 'evlog/next'` ([example](./examples/nextjs)) |
-| **SvelteKit** | `export const { handle, handleError } = createEvlogHooks()` with `import { createEvlogHooks } from 'evlog/sveltekit'` ([example](./examples/sveltekit)) |
+| **Next.js** | `createEvlog()` factory with `import { createEvlog } from 'evlog/next'` ([docs](https://evlog.dev/integrate/frameworks/nextjs)) |
+| **SvelteKit** | `export const { handle, handleError } = createEvlogHooks()` with `import { createEvlogHooks } from 'evlog/sveltekit'` ([docs](https://evlog.dev/integrate/frameworks/sveltekit)) |
 | **Nitro v3** | `modules: [evlog()]` with `import evlog from 'evlog/nitro/v3'` |
 | **Nitro v2** | `modules: [evlog()]` with `import evlog from 'evlog/nitro'` |
-| **TanStack Start** | Nitro v3 module setup ([example](./examples/tanstack-start)) |
-| **React Router** | `evlog()` middleware with `import { evlog } from 'evlog/react-router'` ([example](./examples/react-router)) |
-| **NestJS** | `EvlogModule.forRoot()` with `import { EvlogModule } from 'evlog/nestjs'` ([example](./examples/nestjs)) |
-| **Express** | `app.use(evlog())` with `import { evlog } from 'evlog/express'` ([example](./examples/express)) |
-| **Hono** | `app.use(evlog())` with `import { evlog } from 'evlog/hono'` ([example](./examples/hono)) |
-| **Fastify** | `app.register(evlog)` with `import { evlog } from 'evlog/fastify'` ([example](./examples/fastify)) |
-| **Elysia** | `.use(evlog())` with `import { evlog } from 'evlog/elysia'` ([example](./examples/elysia)) |
-| **oRPC** | `withEvlog(handler)` + `os.use(evlog())` with `import { evlog, withEvlog } from 'evlog/orpc'` ([example](./examples/orpc)) |
-| **eve** | `defineEvlogHook()` in `agent/hooks/evlog.ts` with `import { defineEvlogHook, useLogger } from 'evlog/eve'` ([example](./examples/eve)) |
-| **Cloudflare Workers** | Manual setup with `import { initWorkersLogger, createWorkersLogger } from 'evlog/workers'` ([example](./examples/workers)) |
+| **TanStack Start** | Nitro v3 module setup ([docs](https://evlog.dev/integrate/frameworks/tanstack-start)) |
+| **React Router** | `evlog()` middleware with `import { evlog } from 'evlog/react-router'` ([docs](https://evlog.dev/integrate/frameworks/react-router)) |
+| **NestJS** | `EvlogModule.forRoot()` with `import { EvlogModule } from 'evlog/nestjs'` ([docs](https://evlog.dev/integrate/frameworks/nestjs)) |
+| **Express** | `app.use(evlog())` with `import { evlog } from 'evlog/express'` ([docs](https://evlog.dev/integrate/frameworks/express)) |
+| **Hono** | `app.use(evlog())` with `import { evlog } from 'evlog/hono'` ([docs](https://evlog.dev/integrate/frameworks/hono)) |
+| **Fastify** | `app.register(evlog)` with `import { evlog } from 'evlog/fastify'` ([docs](https://evlog.dev/integrate/frameworks/fastify)) |
+| **Elysia** | `.use(evlog())` with `import { evlog } from 'evlog/elysia'` ([docs](https://evlog.dev/integrate/frameworks/elysia)) |
+| **oRPC** | `withEvlog(handler)` + `os.use(evlog())` with `import { evlog, withEvlog } from 'evlog/orpc'` ([docs](https://evlog.dev/integrate/frameworks/orpc)) |
+| **eve** | `defineEvlogHook()` in `agent/hooks/evlog.ts` with `import { defineEvlogHook, useLogger } from 'evlog/eve'` ([docs](https://evlog.dev/use-cases/eve)) |
+| **Cloudflare Workers** | Manual setup with `import { initWorkersLogger, createWorkersLogger } from 'evlog/workers'` ([docs](https://evlog.dev/integrate/frameworks/cloudflare-workers)) |
 | **Custom** | Build your own with `import { createMiddlewareLogger } from 'evlog/toolkit'` ([guide](https://evlog.dev/extend/custom-framework)) |
 | **Analog** | Nitro v2 module setup |
 | **Vinxi** | Nitro v2 module setup |
-| **SolidStart** | Nitro v2 module setup ([example](./examples/solidstart)) |
+| **SolidStart** | Nitro v2 module setup ([example](https://github.com/HugoRCD/evlog/tree/main/examples/solidstart)) |
 
 ## CLI
 
-[`@evlog/cli`](https://npmjs.com/package/@evlog/cli) is a **separate package** — still early — that scores what your app can tell you when something goes wrong. It reads your project on disk — no traffic, no instrumentation — finds every entry point, and names the ones to fix first. Worth trying once you have anything wired; hand the report to an agent if you like.
+[`@evlog/cli`](https://npmjs.com/package/@evlog/cli) is a **separate package**, still early, that scores what your app can tell you when something goes wrong. It reads your project on disk, with no traffic and no instrumentation, and finds every entry point, and names the ones to fix first. Worth trying once you have anything wired; hand the report to an agent if you like.
 
 ```bash
 npx @evlog/cli map
@@ -1464,9 +1464,9 @@ FIX FIRST
 | `evlog map --min-score <n>` | Exit 1 below the threshold — a CI gate |
 | `evlog doctor` | Diagnose the install: Node, workspace, evlog version, local logs |
 
-Same code in, same verdict out, with the file and line for every finding — which also makes it something you can hand to an agent: run it, fix the list, run it again.
+Same code in, same verdict out, with the file and line for every finding, which also makes it something you can hand to an agent: run it, fix the list, run it again.
 
-> **Early days:** the CLI is tested and safe to run on any project, but it is young — four framework adapters today, rules still being refined. Expect verdicts and scores to move between releases; pin it as a dev dependency when you gate CI on the number.
+> **Early days:** the CLI is tested and safe to run on any project, but it is young: four framework adapters today, rules still being refined. Expect verdicts and scores to move between releases; pin it as a dev dependency when you gate CI on the number.
 
 Docs: [CLI](https://www.evlog.dev/cli/overview) · [`evlog map`](https://www.evlog.dev/cli/map) · [Rules](https://www.evlog.dev/cli/rules) · [Scoring](https://www.evlog.dev/cli/scoring) · [CI](https://www.evlog.dev/cli/ci)
 
@@ -1487,7 +1487,7 @@ Once installed, your AI assistant will:
 - Help refactor scattered `console.log` calls into structured events
 - Guide you to use `createError()` for self-documenting errors
 - Ensure proper use of `useLogger(event)` in Nuxt/Nitro routes
-- Optionally run [`evlog map`](https://www.evlog.dev/cli/map) (`npx @evlog/cli map`) to score dark entry points — separate early CLI package, worth trying
+- Optionally run [`evlog map`](https://www.evlog.dev/cli/map) (`npx @evlog/cli map`) to score dark entry points. It is a separate early CLI package, worth trying
 
 ### Examples
 
@@ -1509,6 +1509,6 @@ Inspired by [Logging Sucks](https://loggingsucks.com/) by [Boris Tane](https://x
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](https://github.com/HugoRCD/evlog/blob/main/LICENSE)
 
 Made by [@HugoRCD](https://github.com/HugoRCD)

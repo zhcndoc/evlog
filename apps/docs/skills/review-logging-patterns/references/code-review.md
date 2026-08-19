@@ -4,7 +4,7 @@
 
 ## 如果可以，请优先使用 `evlog map`
 
-在 **Nuxt、Nitro、Next.js App Router 和 TanStack Start** 中，如果用户愿意，先使用 `@evlog/cli` —— 一条命令就能找出薄弱入口点并命名需要修复的地方：
+在 **Nuxt、Nitro、Next.js App Router 和 TanStack Start** 上，如果用户愿意使用，请从 `@evlog/cli` 开始：一条命令即可找到隐蔽的入口点并指出修复方式：
 
 ```bash
 npx @evlog/cli map --no-write
@@ -22,7 +22,7 @@ npx @evlog/cli map <file> --no-write   # 单个入口点的建议形式
 | `context` | 15 | `log.set(...)` | 请求上下文扁平或缺失 |
 | `error-handling` | 15 | 在 `catch` 中记录日志或重新抛出 | `console.error(e); throw e` |
 
-**机会项**（绝不会扣分；仅在项目已经使用该功能时触发）——将其作为建议而不是缺陷展示：
+**机会**（永远不会扣分；仅当项目已经使用该功能时才触发）。将它们作为建议而不是缺陷展示：
 
 | Map 规则 ID | 触发条件 | 相关技能章节 |
 |-------------|-----------|-----------------------|
@@ -33,7 +33,7 @@ npx @evlog/cli map <file> --no-write   # 单个入口点的建议形式
 
 完整规则参考：https://www.evlog.dev/cli/rules
 
-Map 只能告诉你**形态**存在 —— 不能说明这些上下文在运行时是否有用。对于没有适配器的框架、上下文质量、drain、redaction 以及 AI SDK 的使用，请继续查看下面的扫描项。如果用户跳过 CLI，就只使用这份检查清单。
+Map 告诉你**结构**是否存在，但并不代表上下文在运行时有用。对于没有适配器的框架、上下文质量、drain、脱敏以及 AI SDK 使用情况，请保留下方的扫描。如果用户跳过 CLI，则仅使用此清单。
 
 ## 快速扫描
 

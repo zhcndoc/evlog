@@ -13,11 +13,11 @@
 
 **Digging through logs is not observability. It's hope.**
 
-The official command line for [evlog](https://evlog.dev) — a **separate package** from the logger itself.
+The official command line for [evlog](https://evlog.dev), a **separate package** from the logger itself.
 
 Score what your app can tell you when something goes wrong. Diagnose your install when nothing shows up.
 
-> **Early days.** Safe to run on any project — it reads your source and writes a single `evlog.map.json` at the root (`--no-write` to skip), and it is covered by tests — but young. `evlog map` has adapters for four frameworks today, its rules are still being refined, and both will grow. Expect verdicts and scores to move between releases: pin the CLI as a dev dependency when you gate CI on the number.
+> **Early days.** Safe to run on any project, since it reads your source and writes a single `evlog.map.json` at the root (`--no-write` to skip), and it is covered by tests, but young. `evlog map` has adapters for four frameworks today, its rules are still being refined, and both will grow. Expect verdicts and scores to move between releases: pin the CLI as a dev dependency when you gate CI on the number.
 
 ## Usage
 
@@ -44,7 +44,7 @@ pnpm evlog doctor
 | --- | --- |
 | `evlog init` | Interactive setup: install, register the framework integration, wire a drain |
 | `evlog init --yes` | Non-interactive — defaults for everything (also implied by `--json`, no TTY, or `CI`) |
-| `evlog init --drain <id>` | Development sink: `fs` (default) or `none` |
+| `evlog init --drain <id>` | Development drain: `fs` (default) or `none` |
 | `evlog init --prod-drain <a,b>` | `axiom`, `otlp`, `posthog`, `sentry`, `better-stack`, `datadog`, `hyperdx` — several fan out |
 | `evlog init --extras <a,b>` | `enrichers`, `pipeline`, `sampling`, `error-catalog`, `audit-catalog`, `ai`, `better-auth`, `vite` |
 | `evlog init --apps <a,b>` | Workspace packages to set up, from a monorepo root |
@@ -83,7 +83,7 @@ A verdict you disagree with costs one comment, not your CI gate:
 export default defineEventHandler(() => ({ ok: true }))
 ```
 
-Also `evlog-map-disable-line` for a trailing comment, and `evlog-map-disable` on its own for the whole file. Name no rule id and it covers all of them. The check becomes `n/a` with your reason attached, so it costs no score — and the report counts how many checks the project disabled, so a green score never hides an app that logs nothing. Full syntax: [Rules](https://evlog.dev/cli/rules#disabling-a-check).
+Also `evlog-map-disable-line` for a trailing comment, and `evlog-map-disable` on its own for the whole file. Name no rule id and it covers all of them. The check becomes `n/a` with your reason attached, so it costs no score, and the report counts how many checks the project disabled, so a green score never hides an app that logs nothing. Full syntax: [Rules](https://evlog.dev/cli/rules#disabling-a-check).
 
 ## Exit codes
 
@@ -95,7 +95,7 @@ Also `evlog-map-disable-line` for a trailing comment, and `evlog-map-disable` on
 
 ## `--json` output
 
-With `--json`, the payload is the **only** thing written to stdout — everything human goes to stderr. The shape is a contract:
+With `--json`, the payload is the **only** thing written to stdout, and everything human goes to stderr. The shape is a contract:
 
 ```jsonc
 // evlog doctor --json
@@ -118,19 +118,19 @@ With `--json`, the payload is the **only** thing written to stdout — everythin
 
 With `--baseline`, the payload gains a `baseline` key holding the comparison (`regressions`, `fixed`, `added`, `removed`, `delta`).
 
-Breaking either shape requires a `schemaVersion` bump. In `routes[]`, `checks` holds the requirements that move the score and `suggestions` holds the opportunities that never do — separate keys so a suggestion can't be mistaken for a failure.
+Breaking either shape requires a `schemaVersion` bump. In `routes[]`, `checks` holds the requirements that move the score and `suggestions` holds the opportunities that never do, in separate keys so a suggestion can't be mistaken for a failure.
 
 ## Telemetry
 
 The CLI records **one anonymous wide event per command** via [`@evlog/telemetry`](https://npmjs.com/package/@evlog/telemetry) (tool name `evlog-cli`): command name, duration, outcome, sanitized flags. No arguments, paths, or file contents.
 
-`evlog init` also records **which options you picked** — the framework, the destinations, the extras, the sampling preset, and counts (files written, manual steps left). Every value is an id from the CLI's own catalog, enforced by an allowlist, so a free-text answer can never be sent: your service name, your package name and anything read out of your source stay on your machine. Delivered to evlog's own dashboard (`apps/telemetry` in this repo); override with `EVLOG_TELEMETRY_ENDPOINT` to point at your own instance. Opt out anytime:
+`evlog init` also records **which options you picked**: the framework, the destinations, the extras, the sampling preset, and counts (files written, manual steps left). Every value is an id from the CLI's own catalog, enforced by an allowlist, so a free-text answer can never be sent: your service name, your package name and anything read out of your source stay on your machine. Delivered to evlog's own dashboard (`apps/telemetry` in this repo); override with `EVLOG_TELEMETRY_ENDPOINT` to point at your own instance. Opt out anytime:
 
 ```bash
 evlog telemetry disable   # or DO_NOT_TRACK=1 / EVLOG_TELEMETRY=0
 ```
 
-Full policy: [evlog.dev — telemetry](https://evlog.dev/use-cases/telemetry/overview)
+Full policy: [evlog.dev telemetry policy](https://evlog.dev/use-cases/telemetry/overview)
 
 ## Quieter output
 
@@ -149,7 +149,7 @@ Maintainer notes on frictions / wishlist: [`DEBUG-DX.md`](./DEBUG-DX.md).
 
 ## Adding a command
 
-1. Create `src/commands/<name>.ts` with `defineEvlogCommand('name', { run({ args, cli, log, ui }) { … } })` — header, `--json` / `--debug` / `--no-header`, and debug filet are automatic. Use `log.step` / `log.finding` for diagnostics; `ui.done` / `ui.human` / `ui.json` for output.
+1. Create `src/commands/<name>.ts` with `defineEvlogCommand('name', { run({ args, cli, log, ui }) { … } })`: the header, `--json` / `--debug` / `--no-header`, and the debug file is automatic. Use `log.step` / `log.finding` for diagnostics; `ui.done` / `ui.human` / `ui.json` for output.
 2. Register it with one import + one line in [`src/commands/index.ts`](src/commands/index.ts).
 
 `src/index.ts` stays a thin shell (meta + `withTelemetry`). Do not embed command bodies there.
@@ -165,8 +165,8 @@ src/
 
 ## Docs
 
-- [CLI overview](https://evlog.dev/cli/overview) — commands, global flags, exit codes
-- [`evlog map`](https://evlog.dev/cli/map) — what it scans and how to read the report
-- [Rules](https://evlog.dev/cli/rules) — every check, what satisfies it, how to fix it
-- [Scoring](https://evlog.dev/cli/scoring) — weights, grades, sensitivity
-- [CI](https://evlog.dev/cli/ci) — gate a pull request on the score
+- [CLI overview](https://evlog.dev/cli/overview): commands, global flags, exit codes
+- [`evlog map`](https://evlog.dev/cli/map): what it scans and how to read the report
+- [Rules](https://evlog.dev/cli/rules): every check, what satisfies it, how to fix it
+- [Scoring](https://evlog.dev/cli/scoring): weights, grades, sensitivity
+- [CI](https://evlog.dev/cli/ci): gate a pull request on the score
