@@ -134,8 +134,9 @@ export async function sendBatchTo{Name}(events: WideEvent[], config: {Name}Confi
 
 - 规范化 `DrainContext | DrainContext[]`，并在批次为空时提前返回
 - 当 `resolve()` 返回 `null` 时静默跳过
-- 通过 `httpPost`（`../shared/http`）传输：超时（默认 5000ms）、重试（默认 2 次）、evlog 身份标头（`User-Agent: evlog/x.y.z`、`X-Evlog-Source`）
-- 错误日志记录（`[evlog/{name}] Failed to send events:`），且不会将异常抛入请求处理流程中
+- 通过 `httpPost`（`../shared/http`）进行传输：超时时间（默认 5000ms）、重试次数（默认 2）、evlog 身份标头（`User-Agent: evlog/x.y.z`、`X-Evlog-Source`）
+- 错误日志（`[evlog/{name}] Failed to send events:`）不会向请求管道抛出异常
+- 返回的 drain 上提供一个 `raw` 变体，该变体在失败时拒绝，并只执行一次尝试（除非在配置中设置了 `retries`）。`createDrainPipeline` 使用它来处理自身的重试和 `onDropped` 失败；绝不要在 `encode` 或自定义 `send` 中吞掉错误
 
 ## 自定义说明
 

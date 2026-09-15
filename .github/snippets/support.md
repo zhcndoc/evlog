@@ -1,2 +1,2 @@
-- **Issues**: [Open an issue](https://github.com/hugorcd/evlog/issues) for bugs or feature requests
-- **Discussions**: [Join the discussion](https://github.com/hugorcd/evlog/discussions) for questions and ideas
+- **问题**：[提交问题](https://github.com/evloghq/evlog/issues)以反馈错误或功能请求
+- **讨论**：[加入讨论](https://github.com/evloghq/evlog/discussions)以提出问题和想法

@@ -1,6 +1,6 @@
 import githubExtension from '@github-tools/eve-extension'
-import type { ApprovalContext, ApprovalStatus } from 'eve/tools'
-import { GITHUB_CONNECTOR } from '../lib/github/credentials'
+import type { ApprovalContext, ApprovalStatus } from 'eve/tools/approval'
+import { GITHUB_CONNECTOR, GITHUB_INSTALLATION_ID } from '../lib/github/credentials'
 import { createLabelPolicy, writePolicy } from '../lib/github/label-approval'
 import { isAutonomous, isScheduleAppAuth, MAINTAINER_GITHUB_LOGIN } from '../lib/trust'
 
@@ -93,7 +93,8 @@ function assignPolicy(ctx: ApprovalContext): ApprovalStatus {
 
 export default githubExtension({
   connector: GITHUB_CONNECTOR,
-  context: { owner: 'HugoRCD', repo: 'evlog' },
+  connect: { installationId: GITHUB_INSTALLATION_ID },
+  context: { owner: 'evloghq', repo: 'evlog' },
   include: [...TOOLS],
   // Omitted write tools keep the default always(): closeIssue, createPullRequestReview.
   // Connect scopes are derived from `include` (createLabel → issues:write) in sdk ≥ 1.11.1.
@@ -121,7 +122,7 @@ export default githubExtension({
     removeAssignees: policy,
     addLabels: autonomousWrite,
     removeLabel: policy,
-    createLabel: (ctx) => createLabelPolicy(ctx.session.auth.current, ctx.toolInput),
+    createLabel: (ctx: ApprovalContext) => createLabelPolicy(ctx.session.auth.current, ctx.toolInput),
     updateLabel: policy,
   },
 })

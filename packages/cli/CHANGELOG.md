@@ -1,5 +1,49 @@
 # @evlog/cli
 
+## 0.6.3
+
+### Patch Changes
+
+- Updated dependencies [[`4debb2d`](https://github.com/evloghq/evlog/commit/4debb2d3301d104ba4196306b0227acc11ac6b8a), [`07db128`](https://github.com/evloghq/evlog/commit/07db12893f8c3dfa59ce4ca49c83f5c4c4600ae0), [`3a84ba9`](https://github.com/evloghq/evlog/commit/3a84ba9f5f181502dd331db57f7e471b0990ed36), [`7811f7d`](https://github.com/evloghq/evlog/commit/7811f7d51469245958a16f105289bc4b94293d12)]:
+  - evlog@2.29.0
+
+## 0.6.2
+
+### Patch Changes
+
+- [#649](https://github.com/evloghq/evlog/pull/649) [`0417784`](https://github.com/evloghq/evlog/commit/0417784dc9e6d3825c10b5d715ff2cb1e7e3acdd) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Point the package metadata (`repository`, `bugs`) and README links at the repository's new home, `evloghq/evlog`.
+
+- Updated dependencies [[`0417784`](https://github.com/evloghq/evlog/commit/0417784dc9e6d3825c10b5d715ff2cb1e7e3acdd)]:
+  - evlog@2.28.1
+  - @evlog/telemetry@0.3.1
+
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [[`ada6408`](https://github.com/HugoRCD/evlog/commit/ada6408caa7271f7f4a2595dc7f56dd934367052), [`c0a0385`](https://github.com/HugoRCD/evlog/commit/c0a03855d476224039154aee46064a38da008836), [`c2af424`](https://github.com/HugoRCD/evlog/commit/c2af424256789c0b957325455acbc3d14003cf06)]:
+  - evlog@2.28.0
+
+## 0.6.0
+
+### Minor Changes
+
+- [#630](https://github.com/HugoRCD/evlog/pull/630) [`f1c37d0`](https://github.com/HugoRCD/evlog/commit/f1c37d0765e5352e6c2ee4383698e7e4ad607a10) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog init` wires Hono projects. It creates `src/evlog.ts` with `initLogger` and a configured `evlog()` middleware export: drains and enrichers land in the middleware options, sampling in `initLogger`. Registering the middleware stays yours, so init prints the `app.use(evlogMiddleware)` line to paste. Hono joins the framework prompt, `--framework hono`, and init telemetry.
+
+- [#629](https://github.com/HugoRCD/evlog/pull/629) [`0a8793b`](https://github.com/HugoRCD/evlog/commit/0a8793b2ddc0cac0ed3ade95280c51974d781131) Thanks [@cavalluccijohann](https://github.com/cavalluccijohann)! - Add Hono support to `evlog map`. The scanner detects Hono projects and extracts routes from `app.get('/path', handler)` registrations, including `app.on()` with array methods or paths. The facts layer recognizes `c.get('log')` as a logger binding, so Hono handlers using the idiomatic accessor score correctly, and the report distinguishes an app that registered `app.use(evlog())` (thin ambient events) from one that never did (dark). `evlog map <file>` suggests the handler shape in Hono's own idiom, and `evlog agents` documents the accessor in its AGENTS.md block.
+
+### Patch Changes
+
+- Updated dependencies [[`f030d01`](https://github.com/HugoRCD/evlog/commit/f030d01a6423c3cb7843e33cb8b95d9bbc4b9c12)]:
+  - evlog@2.27.1
+
+## 0.5.3
+
+### Patch Changes
+
+- Updated dependencies [[`1704339`](https://github.com/HugoRCD/evlog/commit/17043394e7bcf8c1603ffb44f0f4952a5be77a31), [`72093df`](https://github.com/HugoRCD/evlog/commit/72093df2e658bf307312feaf57cecaf0c2cad19f), [`c40e0fd`](https://github.com/HugoRCD/evlog/commit/c40e0fd5a60ab094b28bd98aa8ff3b5120784d7f)]:
+  - evlog@2.27.0
+
 ## 0.5.2
 
 ### Patch Changes

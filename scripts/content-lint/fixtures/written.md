@@ -1,39 +1,52 @@
 ---
-title: 将事件发送到 Axiom
-description: 配置 Axiom drain，选择批处理内容，并了解相关成本
+title: 在测试中检查事件
+description: 在内存中捕获结构化事件，并断言其字段
 ---
 
-# 将事件发送到 Axiom
+# 在测试中检查事件
 
-你的处理器已经会为每个请求发出一个包含大量字段的事件。在接入 drain 之前，该事件会随着进程终止而消失，这在开发环境中没问题，但一旦部署就毫无用处。
+测试需要事件字段，但解析终端输出会使断言与格式耦合。内存 drain 会将事件保存在命名存储区中，测试可以直接读取这些事件。
 
-## 接入 drain
+## 捕获事件
 
-```ts [server/plugins/evlog.ts]
-import { createAxiomDrain } from 'evlog/axiom'
+这个 Node.js 示例通过 drain 写入一个事件，并检查其 action。它直接调用 drain，因此不会测试中间件或请求生命周期处理。
 
-export default createAxiomDrain({
-  token: process.env.AXIOM_TOKEN,
-  dataset: 'requests',
+```js
+import assert from 'node:assert/strict'
+import { clearMemoryLogs, createMemoryDrain, readMemoryLogs } from 'evlog/memory'
+
+const store = 'checkout-test'
+clearMemoryLogs(store)
+const drain = createMemoryDrain({ store, maxEvents: 100 })
+
+await drain({
+  event: {
+    timestamp: new Date().toISOString(),
+    level: 'info',
+    action: 'checkout.completed',
+  },
+  request: { method: 'POST', path: '/checkout', requestId: 'test-1' },
+  headers: {},
 })
+
+const events = readMemoryLogs({ store })
+assert.equal(events.length, 1)
+assert.equal(events[0].action, 'checkout.completed')
+clearMemoryLogs(store)
 ```
 
-drain 会将事件保存在内存中，并在 2 秒计时器到期或达到 100 个事件时刷新，以先达到者为准。刷新会在响应处理之外运行，因此 Axiom 响应缓慢不会影响你的 p99。
+使用 await 的 drain 调用会在断言读取存储区之前写入事件。此示例不需要网络凭据。
 
-## 成本
+## 限制缓冲区
 
-启用后有三件事会发生变化。
+共享进程的测试会受到三个细节的影响。
 
-刷新失败后会使用退避策略重试 3 次，然后丢弃该批次，并在本地记录一行日志。事件不会在重试期间持久化，因此进程如果在刷新过程中退出，会丢失当时暂存的内容。
+`maxEvents: 100` 的存储区最多保留 100 个事件。后续写入会丢弃最早的事件，因此应选择能够容纳断言所需记录的上限。
 
-令牌会在启动时读取一次。轮换令牌需要重启。
+存储区名称很重要。两个使用相同名称的 drain 会共享一个缓冲区，因此并发测试需要使用不同的名称，并且每个测试都应在断言后清理自己的存储区。
 
-你累积的每个字段都会成为 Axiom 的索引字段，而 Axiom 按摄取的字节数计费。转储 `request.headers` 通常会让账单翻三倍。
+缓冲区位于进程内存中。它适用于断言，但进程退出后不会保留事件。
 
-## 检查是否送达
+## 检查子集
 
-```bash
-pnpm evlog tail --drain axiom
-```
-
-CLI 会读取相同的配置，并打印 drain 将要发送的内容。如果数据集名称错误，你可以在这里看到，而不是一小时后才在空白的 Axiom 视图中发现问题。
+`readMemoryLogs({ store, level: 'error', limit: 10 })` 最多返回十个最近的匹配事件，并按从最早到最晚的顺序排列。当缺少事件时应使测试失败，请对完整事件数量进行断言。

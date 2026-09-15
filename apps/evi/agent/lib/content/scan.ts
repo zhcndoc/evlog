@@ -1,20 +1,13 @@
+import { randomUUID } from 'node:crypto'
+import { REPO_DIR } from '../workspace'
+
 /**
- * Building the content-lint invocation for a single ad-hoc scan.
- *
- * The scanner is the deterministic half of a review and it lives in the
- * repository, not here: one implementation, one set of thresholds, whether a
- * person runs it or the reviewer does. This only decides the command.
- *
- * Prose never reaches the shell. A passage is written to a file and redirected
- * in, so a draft containing quotes, backticks, or a heredoc delimiter is scanned
- * rather than executed.
+ * The content-lint invocation for a single ad-hoc scan. The scanner itself
+ * lives in the repository: one implementation, one set of thresholds, whether
+ * a person runs it or the reviewer does. Prose never reaches the shell: a
+ * passage is staged in a file and redirected in, so a draft containing quotes
+ * or a heredoc delimiter is scanned rather than executed.
  */
-
-/** The template clone; every session inherits it with dependencies installed. */
-const REPO_DIR = '/workspace/repo'
-
-/** Where a passage is staged before it is redirected into the scanner. */
-export const PASSAGE_FILE = '/tmp/content-scan.md'
 
 export type ScanSurface = 'docs' | 'reference' | 'landing' | 'blog' | 'readme' | 'skill' | 'agents'
 
@@ -50,7 +43,7 @@ export function repoPathError(path: string): string | null {
  * first. Exactly one of `path`, `text`, and `url` is expected; the caller
  * rejects anything else before reaching here.
  */
-export function scanCommand(input: ScanInput): { command: string, passage?: string } {
+export function scanCommand(input: ScanInput): { command: string, passage?: { path: string, content: string } } {
   const scanner = `cd ${REPO_DIR} && node scripts/content-lint/index.mjs`
   const as = `--as ${shellQuote(input.as ?? 'docs')}`
 
@@ -64,8 +57,19 @@ export function scanCommand(input: ScanInput): { command: string, passage?: stri
     return { command: `${scanner} --url ${shellQuote(input.url)} ${as} --json` }
   }
 
+  const path = `/tmp/content-scan-${randomUUID()}.md`
   return {
-    command: `${scanner} --stdin ${as} --json < ${PASSAGE_FILE}`,
-    passage: input.text,
+    command: `trap 'rm -f ${path}' EXIT; ${scanner} --stdin ${as} --json < ${path}`,
+    passage: input.text === undefined ? undefined : { path, content: input.text },
+  }
+}
+
+/** The scanner's `--json` report, or null when stdout is not its JSON. */
+export function parseLintReport(stdout: unknown): { baseline: unknown, pages: unknown[] } | null {
+  try {
+    const parsed = JSON.parse(String(stdout)) as { baseline?: unknown, pages?: unknown }
+    return Array.isArray(parsed.pages) ? { baseline: parsed.baseline, pages: parsed.pages } : null
+  } catch {
+    return null
   }
 }

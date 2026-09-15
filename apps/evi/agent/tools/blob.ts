@@ -1,7 +1,7 @@
-import { put } from '@vercel/blob'
+import { useLogger } from 'evlog/eve'
 import { defineDynamic, defineTool } from 'eve/tools'
 import { z } from 'zod'
-import { imageContentType, MAX_IMAGE_BYTES, screenshotKey, sniffImageContentType } from '../lib/blob'
+import { uploadSandboxImage } from '../lib/blob'
 import { canAccessAdminTools } from '../lib/trust'
 
 // Public URLs the instant they exist: autonomous turns never see this tool.
@@ -20,32 +20,14 @@ export default defineDynamic({
             if (!canAccessAdminTools(toolCtx.session.auth.current)) {
               return { success: false as const, error: 'Image upload is not available in this session.' }
             }
-            const contentType = imageContentType(input.path)
-            if (!contentType) {
-              return { success: false as const, error: `"${input.path}" is not a supported image (png/jpg/webp/gif).` }
+            const log = useLogger(toolCtx)
+            const uploaded = await uploadSandboxImage(await toolCtx.getSandbox(), input.path)
+            if ('error' in uploaded) {
+              log.set({ blob: { uploaded: false } })
+              return { success: false as const, error: uploaded.error }
             }
-            if (!process.env.BLOB_READ_WRITE_TOKEN) {
-              return { success: false as const, error: 'BLOB_READ_WRITE_TOKEN is not configured. Locally, run `vercel env pull` in apps/evi.' }
-            }
-            const sandbox = await toolCtx.getSandbox()
-            const bytes = await sandbox.readBinaryFile({ path: input.path })
-            if (bytes === null) {
-              return { success: false as const, error: `No file at "${input.path}".` }
-            }
-            if (bytes.byteLength > MAX_IMAGE_BYTES) {
-              return { success: false as const, error: `Image is ${bytes.byteLength} bytes; the limit is ${MAX_IMAGE_BYTES}.` }
-            }
-            // The upload is public: the bytes must actually be the image the
-            // extension claims, not arbitrary data renamed to .png.
-            if (sniffImageContentType(bytes) !== contentType) {
-              return { success: false as const, error: `The content of "${input.path}" does not match its extension; only real image files are uploaded.` }
-            }
-            const blob = await put(screenshotKey(input.path), Buffer.from(bytes), {
-              access: 'public',
-              addRandomSuffix: true,
-              contentType,
-            })
-            return { success: true as const, url: blob.url, bytes: bytes.byteLength }
+            log.set({ blob: { uploaded: true, bytes: uploaded.bytes } })
+            return { success: true as const, ...uploaded }
           },
         }),
       }

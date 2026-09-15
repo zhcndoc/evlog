@@ -1,4 +1,5 @@
 import { getToken } from '@vercel/connect'
+import { useLogger } from 'evlog/eve'
 import { defineDynamic, defineTool, toolOutput, toolOutputPart } from 'eve/tools'
 import { z } from 'zod'
 import { classifyImageUrl, fetchImage } from '../lib/images'
@@ -6,10 +7,8 @@ import { canAccessAdminTools } from '../lib/trust'
 
 // Available in every session: screenshots in community bug reports are the
 // main reason this tool exists. Only the Linear host needs a credential, and
-// only admin sessions get it. Keep executes inline in the resolver, in a
-// block-bodied handler: eve's bundler transform only registers step functions
-// it finds in a resolver body, and an implicit arrow return defeats it
-// (docs/notes.md).
+// only admin sessions get it. Keep executes inline in a block-bodied
+// resolver (docs/notes.md).
 export default defineDynamic({
   events: {
     'turn.started': () => {
@@ -29,8 +28,13 @@ export default defineDynamic({
               }
               authorization = `Bearer ${await getToken('linear/evi', { subject: { type: 'app' } })}`
             }
+            const log = useLogger(toolCtx)
             const fetched = await fetchImage(classified.url, { authorization })
-            if ('error' in fetched) return { success: false as const, error: fetched.error }
+            if ('error' in fetched) {
+              log.set({ image: { host: classified.host, fetched: false } })
+              return { success: false as const, error: fetched.error }
+            }
+            log.set({ image: { host: classified.host, fetched: true, bytes: fetched.bytes, mediaType: fetched.mediaType } })
             return { success: true as const, url: input.url, ...fetched }
           },
           toModelOutput(output) {

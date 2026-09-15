@@ -1,16 +1,16 @@
 {
   "name": "@evlog/telemetry",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Wide-event telemetry for CLIs and automation — evlog's one-event-per-run model for tools on user machines, with privacy-safe flags, consent, outbox, and auto disclosure",
-  "author": "HugoRCD <contact@hrcd.fr>",
+  "author": "HugoRCD <contact@evlog.dev>",
   "homepage": "https://evlog.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HugoRCD/evlog.git",
+    "url": "git+https://github.com/evloghq/evlog.git",
     "directory": "packages/telemetry"
   },
   "bugs": {
-    "url": "https://github.com/HugoRCD/evlog/issues"
+    "url": "https://github.com/evloghq/evlog/issues"
   },
   "license": "MIT",
   "type": "module",
@@ -63,11 +63,11 @@
     "std-env": "^4.2.0"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.10",
-    "tsdown": "^0.22.8",
-    "tsx": "^4.23.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "tsdown": "^0.23.0",
+    "tsx": "^4.23.13",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

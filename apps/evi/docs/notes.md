@@ -21,7 +21,7 @@
 **`disableTool()` 是静态的。**没有按会话移除内置工具的方法，因此某个工具在某个通道上
 没有用处时，仍会占用该通道的上下文。
 
-**iMessage 附件在 webhook 路径上需要第二次 spectrum 往返。**Photon 适配器的聊天映射会保留 name/mimeType/size，而 eve 的 `messageToUserContent` 只读取 `attachment.url`，但 Photon 从未提供该字段。在已连接的（pump）路径上，带有已认证 `read()` 的已解析内容节点会保留在 `message.raw.content` 中；在 webhook 路径上，`raw` 是传递 JSON，其中从未携带这些节点，因此 `patches/eve@0.34.0.patch` 会调用 `adapter.fetchMessage()`，通过 spectrum 客户端重新解析消息，并从已解析的节点中读取图像。升级 eve 时必须重新应用或弃用该补丁。
+**iMessage 附件永远不会到达模型。**Photon 适配器的聊天映射会保留 name/mimeType/size，而 eve 的 `messageToUserContent` 只读取 `attachment.url`，但 Photon 从未提供该属性。在已连接的（pump）路径中，带有经过身份验证的 `read()` 的已解析内容节点会保留在 `message.raw.content` 上；在 webhook 路径中，`raw` 是投递 JSON，其中从不包含这些节点。通过 `adapter.fetchMessage()` 重新解析可以恢复它们，但这是 eve 需要完成的工作：上游修复方案是使用 chat-sdk 的 `data`/`fetchData` 附件契约。在此之前，图片会通过 Slack 发送。
 
 **推理级别是按模型划分的。**`GET /v1/models` 会公开 `reasoning_options`；DeepSeek V4 Flash 只声明了 `high` 和 `xhigh`。设置 `low` 或 `medium` 不会报错，而是会产生异常且非单调的推理量。
 
@@ -42,12 +42,9 @@ eve 的打包器转换只有在动态工具的 `execute` 函数以内联形式�
 
 ## 计划
 
-**Chat-sdk 频道的目标是来自计划的 provider-native `threadId`。**
-`to(photon, target).send(...)` 接收 `{ adapterName: 'imessage', threadId }`，
-而不是会话句柄。对于直接聊天，该 id 可以推导出来，无需捕获：
-Spectrum 直接聊天的 guid 是 `any;-;<address>`，因此线程是
-`imessage:any;-;<phone>`。完整格式中可选的 `~<phone>` 后缀用于选择发送线路；
-由于 Photon 项目目前只有一个号码，因此无关紧要。
+**使用 `initialMessage` 发送到 Slack 的计划会拥有自己的线程和会话。**`to(slack, { channelId, initialMessage }).send(...)` 会先发布卡片，将会话锚定到该消息，并在其下创建该轮对话。如果没有 `initialMessage`（并且没有 `threadTs`），第一条代理消息会成为锚点，这会导致在任何上下文出现之前，频道中先出现一条孤立回复。`threadTs` 和 `initialMessage` 互斥。发送到现有的 `threadTs` 会恢复该线程的会话，这正是旧版 iMessage 投递对每次运行所做的事情：一个长期存在的会话，其中还包括过时的上下文和待处理请求，因此过去每个任务都带有结尾段落。
+
+**Slack 主体是 `slack:<team>:<member>`。**`defaultSlackAuth` 根据事件的 `team_id` 和执行者的用户 id 生成该主体，而 `trust.ts` 信任 `EVI_SLACK_TEAM_ID` 的每个真人主体，而不是某一个成员：该工作区是私有的，只有 Hugo 可以安装连接器或邀请成员加入，因此工作区本身就是允许列表。Evi 所有的线程中的回复需要连接器的触发器订阅带有 `channels:history` 的 `message.channels`（对于私有频道，还需要 `message.groups` 和 `groups:history`）；没有这些权限，只有提及和私信会到达代理。
 
 **Vercel 会以 UTC 评估计划 cron。** `0 5 * * *` 在夏季（BST）会于伦敦时间
 06:00 触发，在冬季（GMT）则变为 05:00。`eve dev` 永远不会触发 cron；
@@ -64,8 +61,9 @@ Spectrum 直接聊天的 guid 是 `any;-;<address>`，因此线程是
 **`sort: 'cost'` 优于硬编码的提供商顺序。** 路由请求落到了
 $0.20/$0.40 的部署上，而更便宜的 1M 上下文部署也能提供同一个模型。一轮基于事实的对话从 $0.084 降至 $0.006。排序会随着部署和促销活动的变化持续遵循价格。
 
-**`GET /v1/models` 返回真实的费率表**，包括 `input_cache_read`。
-根据它重建一次观测到的对话后，其结果与 eve 报告的 `costUsd` 精确到小数点后四位，这正是发现超支的方式。
+**`zeroDataRetention` 会裁剪池，而且裁剪的是便宜的一端。**在 GLM 5.3 Flash 上，两个价格为当前行情一半的部署会保留数据，因此 ZDR 会将它们移除，而 Evi 能达到的价格下限就会上升到下一档。设置 ZDR 的 `only: ['<provider>']` 会按提供商给出结果：不符合条件的提供商会返回 ZDR 错误，而不是转由其他地方路由。手写的 `order` 无法修复这一点——如果它指定的提供商已被 ZDR 移除，就会被静默跳过，看起来像经过审核，实际上却没有执行任何操作。
+
+**`GET /v1/models` 返回真实的费率表**，包括 `input_cache_read`。从中重建一次观测到的轮次后，结果与 eve 报告的 `costUsd` 精确到小数点后四位，这正是发现超支的方式。
 
 **报告中的 `group_by: tag` 会针对每个标签值返回一行。** 对于限定为
 `evi:env:*` 的结果，它会返回环境总计行，以及每个表面对应的一行
@@ -86,9 +84,7 @@ Gists API 会拒绝安装令牌——此外还包括仓库创建和合并功能�
 
 ## Vercel Connect
 
-**连接器类型不可互换。** Linear 通道的类型是 `Linear`
-（由代理应用加 Webhook 管理）；Linear MCP 的类型是 `OAuth`。`eve add
-linear` 会分别配置一个 — 这是一个命令，而不是一个连接器。
+**连接器类型不可互换。**Linear 通道的类型是 `Linear`（由代理应用管理并使用 webhooks）；Linear MCP 的类型是 `OAuth`。`eve add linear` 会分别配置这两者：这是一个命令，而不是一个连接器。
 
 **当连接器无法生成应用令牌时，应用范围的身份验证会静默失败。**
 由于应用范围的身份验证是非交互式的，eve 永远不会发出质询：
@@ -96,17 +92,9 @@ linear` 会分别配置一个 — 这是一个命令，而不是一个连接器�
 人可以批准，在每一轮中都是如此。用户范围的身份验证至少会通过
 `principal_required` 明确失败。
 
-**配置错误的 OAuth 连接不会降级，而是会破坏整个运行过程。**
-在 EVL-213 中，Linear MCP 连接连带导致所有 GitHub 工具都不可用：五次
-调用全部抛出 `Cannot read properties of undefined (reading 'toLowerCase')`，
-错误源自
-`@vercel/connect/dist/eve/provision-oauth-connector.js` 中的
-`isProvisionableConnectorUid`。本地评估从未发现这一问题，因为没有 OIDC 令牌时，
-`provisionEveOAuthConnector` 会提前返回；而在生产环境中它会运行。在 Connect
-能够生成令牌之前，该连接会被移除 — 假设代理在没有该连接的情况下直接作答是错误的。
+**由配置错误的 OAuth 连接导致的整个运行崩溃已在 `@vercel/connect` 2.0.0 中修复。**在 EVL-213 中，Linear MCP 连接连带关闭了所有 GitHub 工具：五次调用全部抛出 `Cannot read properties of undefined (reading 'toLowerCase')`，异常来自 `@vercel/connect/dist/eve/provision-oauth-connector.js` 中的 `isProvisionableConnectorUid`。这是主动配置路径：除非设置 `autoProvision: false`，否则 0.8.x 会在每次令牌调用之前运行 `provisionEveOAuthConnector`。2.0.0 将配置改为可选并由失败触发（`autoProvision: true`，且仅在连接器缺失或项目未链接错误之后触发），而 Evi 从不选择启用它，因此不会触发该崩溃。实际情况仍然成立：无法生成应用令牌的连接器对于需要它的工具仍然会失败，因此在 Connect 能够生成令牌之前应移除该连接；假定代理只是不使用该连接器也能回答是错误的。
 
-**CLI 中的 `vercel connect token` 无法证明应用范围的身份验证有效** — 它
-通过你自己的 Vercel 身份进行解析，也就是用户范围的路径。
+**CLI 中的 `vercel connect token` 无法证明应用范围身份验证有效**：它通过你自己的 Vercel 身份解析，使用的是用户范围路径。
 
 ## 遥测
 
@@ -127,7 +115,6 @@ linear` 会分别配置一个 — 这是一个命令，而不是一个连接器�
 
 ## 待处理
 
-- 每个工具的输入令牌归因。`ai.tools[]` 记录了名称、耗时和成功与否，但没有记录每个结果增加了多少上下文；`docs__list-pages` 约占一次基于依据的交互输入的 85%，而这是通过手动差异对比才确认的。
-- 事件中的 `ai.provider`。系统记录了网关标识，但没有记录实际提供服务的部署。
-- 工具结果中的 GitHub 速率限制标头。对于一个即将开始大量运行 Webhook 的代理来说，这通常是最先、也最悄无声息地出问题的部分。
-- 提供一个 `toTelemetry(output)`，作为 `toModelOutput` 的镜像，这样工具就可以携带诊断信息，而不会消耗上下文令牌。
+- `toTelemetry(output)` 是 `toModelOutput` 的镜像，因此工具可以携带不会消耗上下文 token 的诊断信息（跟踪编号为 EVL-366）。
+
+自撰写此列表以来已完成：`ai.tools[]` 中的每个工具输入 token（#622）、作为 `ai.provider` 的已解析提供商（#622），以及工具结果中的 GitHub 速率限制状态（EVL-343，位于 github-tools 扩展中）。

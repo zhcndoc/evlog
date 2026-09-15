@@ -445,6 +445,21 @@ function asToolCallArray(value: unknown): ToolCallEntry[] | undefined {
   return value.every(isToolCallEntry) ? value : undefined
 }
 
+const CAPTURED_LINE_MAX_LENGTH = 160
+const CAPTURED_MAX_LINES = 8
+
+function asCapturedLines(value: unknown): string[] | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  const lines = value.split('\n').map((line) => {
+    return line.length > CAPTURED_LINE_MAX_LENGTH ? `${line.slice(0, CAPTURED_LINE_MAX_LENGTH)}…` : line
+  })
+  if (lines.length > CAPTURED_MAX_LINES) {
+    lines.length = CAPTURED_MAX_LINES
+    lines.push(`+${value.split('\n').length - CAPTURED_MAX_LINES} more lines (full text in the event)`)
+  }
+  return lines
+}
+
 function buildAIEntries(ai: Record<string, unknown>): TreeEntry[] {
   const entries: TreeEntry[] = []
 
@@ -555,6 +570,13 @@ function buildAIEntries(ai: Record<string, unknown>): TreeEntry[] {
   } else if (steps !== undefined && steps > 1) {
     entries.push({ key: 'ai.steps', value: String(steps) })
   }
+
+  // Captured prompt and output — one console line per message block,
+  // truncated here. The full text stays in the wide event for drains.
+  const promptLines = asCapturedLines(ai.prompt)
+  if (promptLines) entries.push({ key: 'ai.prompt', value: '', children: promptLines })
+  const outputLines = asCapturedLines(ai.output)
+  if (outputLines) entries.push({ key: 'ai.output', value: '', children: outputLines })
 
   // Embedding
   const embedding = isPlainObject(ai.embedding) ? ai.embedding : undefined
@@ -720,10 +742,53 @@ function prettyPrintWideEvent(event: Record<string, unknown>): void {
   }
 }
 
+function removeErrorCycles(value: unknown, ancestors: WeakSet<object>): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (ancestors.has(value)) return '[Circular]'
+
+  ancestors.add(value)
+  let changed = false
+  const visit = (item: unknown): unknown => {
+    const result = removeErrorCycles(item, ancestors)
+    if (!Object.is(result, item)) changed = true
+    return result
+  }
+  const copy = Array.isArray(value)
+    ? value.map(visit)
+    : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, visit(item)]))
+  ancestors.delete(value)
+
+  return changed ? copy : value
+}
+
+function serializeError(err: Error): Record<string, unknown> {
+  const errorObj: Record<string, unknown> = {
+    name: err.name,
+    message: err.message,
+    stack: isDev() ? compactStackForStorage(err.stack) : err.stack,
+  }
+  const errRecord = err as unknown as Record<string, unknown>
+  const ancestors = new WeakSet<object>([err])
+  for (const k of ['code', 'status', 'statusText', 'statusCode', 'statusMessage', 'data', 'cause', 'internal'] as const) {
+    if (k in err) errorObj[k] = removeErrorCycles(errRecord[k], ancestors)
+  }
+
+  if (EvlogError.isEvlogError(err)) {
+    if (err.code) errorObj.code = err.code
+    if (err.why) errorObj.why = err.why
+    if (err.fix) errorObj.fix = err.fix
+    if (err.link) errorObj.link = err.link
+    if (err.status) errorObj.status = err.status
+  }
+  return errorObj
+}
+
 function createLogMethod(level: LogLevel) {
-  return function logMethod(tagOrEvent: string | Record<string, unknown>, message?: string): void {
+  return function logMethod(tagOrEvent: string | Error | Record<string, unknown>, message?: string): void {
     if (typeof tagOrEvent === 'string' && message !== undefined) {
       emitTaggedLog(level, tagOrEvent, message)
+    } else if (tagOrEvent instanceof Error) {
+      emitWideEvent(level, { error: serializeError(tagOrEvent) })
     } else if (typeof tagOrEvent === 'object') {
       emitWideEvent(level, tagOrEvent)
     } else {
@@ -751,7 +816,8 @@ const _log: Log = {
 export { _log as log }
 
 const noopAudit = Object.assign(() => {}, { deny: () => {} }) as AuditMethod
-const noopLogger: AuditableLogger = {
+/** @internal Accepts every call and emits nothing; reused wherever logging must not fail the caller. */
+export const noopLogger: AuditableLogger = {
   set() {},
   setLevel() {},
   error() {},
@@ -883,23 +949,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
         mergeInto(context, errorContext as Record<string, unknown>)
       }
 
-      const errorObj: Record<string, unknown> = {
-        name: err.name,
-        message: err.message,
-        stack: isDev() ? compactStackForStorage(err.stack) : err.stack,
-      }
-      const errRecord = err as unknown as Record<string, unknown>
-      for (const k of ['code', 'status', 'statusText', 'statusCode', 'statusMessage', 'data', 'cause', 'internal'] as const) {
-        if (k in err) errorObj[k] = errRecord[k]
-      }
-
-      if (EvlogError.isEvlogError(err)) {
-        if (err.code) errorObj.code = err.code
-        if (err.why) errorObj.why = err.why
-        if (err.fix) errorObj.fix = err.fix
-        if (err.link) errorObj.link = err.link
-        if (err.status) errorObj.status = err.status
-      }
+      const errorObj = serializeError(err)
 
       if (isPlainObject(context.error)) {
         mergeInto(context.error as Record<string, unknown>, errorObj)

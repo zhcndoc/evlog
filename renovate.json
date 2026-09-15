@@ -3,6 +3,7 @@
   "extends": [
     "github>nuxt/renovate-config-nuxt"
   ],
+  "minimumReleaseAge": "2 days",
   "schedule": ["before 3am on Monday"],
   "timezone": "UTC",
   "packageRules": [
@@ -14,6 +15,11 @@
       "description": "Same weekly window as the repo (nuxt preset uses a broader schedule for framework packages)",
       "matchPackagePatterns": ["^@nuxt/", "^nuxt"],
       "schedule": ["before 3am on Monday"]
+    },
+    {
+      "description": "eve and its extensions declare a shared capability contract, so they bump together",
+      "matchPackageNames": ["eve", "@agent-browser/eve", "@github-tools/eve-extension"],
+      "groupName": "eve"
     }
   ],
   "postUpdateOptions": ["pnpmDedupe"]

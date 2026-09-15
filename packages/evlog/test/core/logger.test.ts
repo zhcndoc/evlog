@@ -3,6 +3,7 @@ import { createError } from '../../src/error'
 import { createLogger, createRequestLogger, getEnvironment, initLogger, isEnabled, log } from '../../src/logger'
 import { withFakeTimers } from '../helpers/timers'
 import { defined } from '../helpers/defined'
+import { createPipelineSpies, findEventViaDrain } from '../helpers/framework'
 
 describe('initLogger', () => {
   beforeEach(() => {
@@ -91,6 +92,98 @@ describe('log', () => {
     const [[output]] = infoSpy.mock.calls
     expect(output).toContain('"action":"checkout"')
     expect(output).toContain('"items":3')
+  })
+
+  it('preserves standard Error fields in the global drain', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ silent: true, redact: false, drain })
+    const error = Object.assign(new Error('Database unavailable'), { code: 'DB_UNAVAILABLE', status: 503 })
+    log.error(error)
+
+    expect(drain).toHaveBeenCalledTimes(1)
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error).toMatchObject({
+      name: 'Error', message: 'Database unavailable', code: 'DB_UNAVAILABLE', status: 503,
+    })
+    expect(event.error?.stack).toContain('Database unavailable')
+  })
+
+  it('preserves EvlogError guidance and redacts internal fields in the global drain', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ silent: true, drain, redact: { paths: ['error.internal.token'] } })
+    const error = createError({
+      message: 'Payment failed', status: 402, code: 'PAYMENT_FAILED',
+      why: 'The card was declined', fix: 'Use another card', link: 'https://example.com/help',
+      internal: { token: 'secret', provider: 'test' },
+    })
+    log.error(error)
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error).toMatchObject({
+      message: error.message, status: 402, code: 'PAYMENT_FAILED',
+      why: error.why, fix: error.fix, link: error.link,
+      internal: { provider: 'test' },
+    })
+    expect(JSON.stringify(event)).not.toContain('secret')
+    expect(drain).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves non-cyclic metadata values and their serialization', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ pretty: false, redact: false, drain })
+    const data = {
+      timestamp: new Date('2026-01-01T00:00:00Z'),
+      url: new URL('https://example.com'),
+      duration: Number.NaN,
+    }
+    log.error(Object.assign(new Error('Request failed'), { data }))
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error?.data).toBe(data)
+    expect(JSON.stringify(event)).toContain('2026-01-01T00:00:00.000Z')
+    expect(JSON.stringify(event)).toContain('https://example.com/')
+  })
+
+  it.each([
+    { scoped: false, redact: false },
+    { scoped: true, redact: false },
+    { scoped: false, redact: true },
+    { scoped: true, redact: true },
+  ])('emits cyclic error metadata safely (scoped=$scoped, redact=$redact)', ({ scoped, redact }) => {
+    const { drain } = createPipelineSpies()
+    initLogger({ pretty: false, drain, redact: redact ? { paths: ['error.internal.token'] } : false })
+    const shared = { provider: 'test' }
+    const data: Record<string, unknown> = { first: shared, second: shared }
+    const internal: Record<string, unknown> = { token: 'secret', data }
+    const error = Object.assign(new Error('Payment failed'), { data, internal })
+    error.cause = error
+    data.self = data
+    data.items = [data]
+    internal.self = internal
+
+    expect(() => {
+      if (scoped) {
+        const logger = createLogger()
+        logger.error(error)
+        logger.emit()
+      } else {
+        log.error(error)
+      }
+    }).not.toThrow()
+
+    expect(drain).toHaveBeenCalledTimes(1)
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error).toMatchObject({
+      message: 'Payment failed',
+      cause: '[Circular]',
+      data: { first: shared, second: shared, self: '[Circular]', items: ['[Circular]'] },
+      internal: { self: '[Circular]' },
+    })
+    expect(JSON.stringify(event)).toContain(redact ? '[REDACTED]' : 'secret')
+    if (redact) expect(JSON.stringify(event)).not.toContain('secret')
+    expect(error.cause).toBe(error)
+    expect(data.self).toBe(data)
+    expect(internal.token).toBe('secret')
   })
 
   it('uses error console method for error level', () => {
@@ -1245,6 +1338,86 @@ describe('pretty-print tool input serialization', () => {
       },
     })
     expect(() => logger.emit()).not.toThrow()
+  })
+})
+
+describe('pretty-print captured prompt and output', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    initLogger({ pretty: true })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('renders captured prompt and output as tree lines', () => {
+    const logger = createRequestLogger({ method: 'POST', path: '/chat', requestId: 'r1' })
+    logger.set({
+      ai: {
+        calls: 1,
+        prompt: '[system] You are helpful\n\n[user] Hi there',
+        output: 'Hello! How can I help?',
+      },
+    })
+    logger.emit()
+
+    const logSpy = vi.mocked(console.log)
+    const output = logSpy.mock.calls.map(call => String(call[0])).join('\n')
+
+    expect(output).toContain('ai.prompt:')
+    expect(output).toContain('[system] You are helpful')
+    expect(output).toContain('[user] Hi there')
+    expect(output).toContain('ai.output:')
+    expect(output).toContain('Hello! How can I help?')
+  })
+
+  it('truncates long captured text in the console', () => {
+    const logger = createRequestLogger({ method: 'POST', path: '/chat', requestId: 'r2' })
+    const longLine = 'x'.repeat(300)
+    logger.set({
+      ai: {
+        output: longLine,
+      },
+    })
+    logger.emit()
+
+    const logSpy = vi.mocked(console.log)
+    const output = logSpy.mock.calls.map(call => String(call[0])).join('\n')
+
+    expect(output).toContain('ai.output:')
+    expect(output).toContain(`${'x'.repeat(160)}…`)
+    expect(output).not.toContain('x'.repeat(200))
+  })
+
+  it('marks additional lines beyond the console cap', () => {
+    const logger = createRequestLogger({ method: 'POST', path: '/chat', requestId: 'r3' })
+    const manyLines = Array.from({ length: 12 }, (_, i) => `line ${i}`)
+    logger.set({
+      ai: {
+        prompt: manyLines.join('\n'),
+      },
+    })
+    logger.emit()
+
+    const logSpy = vi.mocked(console.log)
+    const output = logSpy.mock.calls.map(call => String(call[0])).join('\n')
+
+    expect(output).toContain('+4 more lines (full text in the event)')
+  })
+
+  it('omits entries when nothing was captured', () => {
+    const logger = createRequestLogger({ method: 'POST', path: '/chat', requestId: 'r4' })
+    logger.set({
+      ai: { calls: 1 },
+    })
+    logger.emit()
+
+    const logSpy = vi.mocked(console.log)
+    const output = logSpy.mock.calls.map(call => String(call[0])).join('\n')
+
+    expect(output).not.toContain('ai.prompt:')
+    expect(output).not.toContain('ai.output:')
   })
 })
 

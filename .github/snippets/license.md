@@ -1,9 +1,9 @@
-Published under the [MIT](https://github.com/hugorcd/evlog/blob/main/LICENSE) license.
+基于 [MIT](https://github.com/evloghq/evlog/blob/main/LICENSE) 许可证发布。
 
-Made by [@HugoRCD](https://github.com/HugoRCD) and [community](https://github.com/hugorcd/evlog/graphs/contributors)
+由 [@HugoRCD](https://github.com/HugoRCD) 和[社区](https://github.com/evloghq/evlog/graphs/contributors)共同制作
 
-Inspired by [Logging Sucks](https://loggingsucks.com/) by [Boris Tane](https://x.com/boristane)
+受 [Boris Tane](https://x.com/boristane) 的 [Logging Sucks](https://loggingsucks.com/) 启发
 
-<a href="https://github.com/hugorcd/evlog/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=hugorcd/evlog" />
+<a href="https://github.com/evloghq/evlog/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=evloghq/evlog" />
 </a>

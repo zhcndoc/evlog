@@ -7,7 +7,7 @@ description: How to contribute to evlog, covering commit and PR conventions, cha
 
 The repository's own `AGENTS.md` is the source of truth for all of this. It changes; this skill does not restate it in full on purpose. **Read `AGENTS.md` from the repo before giving specifics.**
 
-Your system context has a **Workspace** section saying whether the repository is checked out on this turn. With a checkout, `read_file /workspace/AGENTS.md`: free, and at the ref you were summoned on. Without one, `github__getFileContent` on `AGENTS.md` at the root of `HugoRCD/evlog`.
+Your system context has a **Workspace** section saying whether the repository is checked out on this turn. With a checkout, `read_file /workspace/AGENTS.md`: free, and at the ref you were summoned on. Without one, `github__getFileContent` on `AGENTS.md` at the root of `evloghq/evlog`.
 
 What follows is the shape of the answer, so you know what to look for and what to warn about.
 
@@ -18,7 +18,7 @@ What follows is the shape of the answer, so you know what to look for and what t
 - **The scope list is a closed set, and you read it before you write the title.** `.github/workflows/semantic-pull-request.yml` holds the only scopes CI accepts. Anything else fails `Validate PR title`, and a scope that merely sounds plausible (`evlog`, the package name, the app directory) is the usual way that happens. A change confined to `apps/docs` is `docs:`, with no scope: `docs` is already the type.
 - **A bug fix needs a failing regression test first**, then the fix.
 - **New exports** go in `packages/evlog/package.json` (`exports` and `typesVersions`) *and* `tsdown.config.ts`.
-- **Skills must stay in sync.** If a change touches something a skill documents, the SKILL.md changes in the same PR, both the internal `.agents/skills/` and the published `apps/docs/skills/`.
+- **Skills must stay in sync.** If a change touches something a skill documents, the SKILL.md changes in the same PR, both the internal `.agents/skills/` and the published `skills/`.
 
 ## The Definition of Done
 
@@ -49,6 +49,10 @@ pnpm --filter evlog exec vitest run test/path/to/file
 ```
 
 If you could not run the checks, say so plainly in the pull request body instead of implying a green build.
+
+For authored or changed prose, run the content review even when the scanner scores 100. Capture each page with `content_snapshot` and send its identity to `content_review`, along with sources and executed-check results. Source edits must be committed before this handoff; page text can remain uncommitted. The reviewer shares the parent workspace and must use `content_load`. Do not edit files or change Git state while reviewers are reading. Wait for all readers to finish, recapture and compare the current identity with the rewrite input, then apply reviewed changes serially with the parent’s existing editing tools. A changed identity requires a fresh review first. Capture and review the saved file again after editing; a proposed rewrite is not verification of the saved result. A critical factual error or missing evidence blocks readiness. Follow `content-pass` for the verification procedure, while keeping the scope the maintainer requested.
+
+Read the changed pages together before shipping. Each should answer a distinct reader question, agree on behavior and link to shared explanations instead of repeating them. Record the revision, command and observed result for runtime claims. After changing relevant code or examples, rerun the affected checks.
 
 ## Shipping a change
 

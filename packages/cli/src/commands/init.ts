@@ -13,14 +13,13 @@ import {
 import { runInit } from '../lib/init/run'
 import type { InitOptions, InitResult } from '../lib/init/run'
 import { findWorkspaceApps, isWorkspaceRoot } from '../lib/init/workspace'
+import { INIT_FRAMEWORKS } from '../lib/init/frameworks'
 import { resolveProject } from '../lib/project'
 import type { Framework } from '../lib/map/types'
 
-const FRAMEWORKS: readonly Framework[] = ['nuxt', 'nitro', 'next', 'tanstack-start']
-
 function parseFrameworkArg(value: unknown): Framework | undefined {
   if (typeof value !== 'string' || value.length === 0) return undefined
-  if (!(FRAMEWORKS as readonly string[]).includes(value)) {
+  if (!(INIT_FRAMEWORKS as readonly string[]).includes(value)) {
     throw cliErrors.INIT_INVALID_FRAMEWORK({ value })
   }
   return value as Framework
@@ -49,7 +48,7 @@ export default defineEvlogCommand('init', {
   skipHeader: (ctx, args) => args.json !== true && args.yes !== true && canPrompt(ctx),
   args: {
     cwd: { type: 'string', description: 'Project directory (default: current)' },
-    framework: { type: 'string', description: 'Override framework detection (nuxt, nitro, next, tanstack-start)' },
+    framework: { type: 'string', description: 'Override framework detection (nuxt, nitro, next, tanstack-start, hono)' },
     service: { type: 'string', description: 'Service name on every wide event (default: package name)' },
     drain: { type: 'string', description: 'Development sink: fs (default) or none' },
     prodDrain: { type: 'string', description: 'Production destinations, comma-separated: axiom, otlp, posthog, sentry, better-stack, datadog, hyperdx' },

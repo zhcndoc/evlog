@@ -92,6 +92,50 @@ function loadLogger(): Promise<LoggerModule> {
   return loggerPromise
 }
 
+type AfterFn = (task: () => unknown) => void
+
+let cachedAfter: AfterFn | null | undefined
+
+async function resolveAfter(): Promise<AfterFn | null> {
+  if (cachedAfter !== undefined) return cachedAfter
+  try {
+    const mod = await import('next/server')
+    cachedAfter = typeof mod.after === 'function' ? mod.after : null
+  } catch {
+    cachedAfter = null
+  }
+  return cachedAfter
+}
+
+function createLifecycleSafeDrain(
+  drain: (ctx: DrainContext) => void | Promise<void>,
+  after: AfterFn | null,
+): (ctx: DrainContext) => void | Promise<void> {
+  if (!after) return drain
+  return (ctx: DrainContext): Promise<void> => {
+    return new Promise<void>((resolve, reject) => {
+      const run = async (): Promise<void> => {
+        try {
+          await drain(ctx)
+          // Buffered drains finish enqueueing before their batches are delivered.
+          const { settled } = drain as { settled?: () => Promise<void> }
+          if (typeof settled === 'function') await settled()
+          resolve()
+        } catch (error) {
+          reject(error)
+        }
+      }
+      try {
+        // Next must receive the delivery promise to keep the invocation alive.
+        after(run)
+      } catch {
+        // Startup and background logs may have no active Next request scope.
+        void run()
+      }
+    })
+  }
+}
+
 function resolveCaptureOutputOptions(
   captureOutput: InstrumentationOptions['captureOutput'],
 ): CaptureOutputOptions | undefined {
@@ -194,6 +238,7 @@ export function createInstrumentation(options: InstrumentationOptions = {}): Ins
     if (registerPromise) return registerPromise
 
     registerPromise = loadLogger().then(async ({ initLogger, lockLogger, log }) => {
+      const after = options.drain ? await resolveAfter() : null
       initLogger({
         enabled: options.enabled,
         env: {
@@ -205,7 +250,7 @@ export function createInstrumentation(options: InstrumentationOptions = {}): Ins
         sampling: options.sampling,
         minLevel: options.minLevel,
         stringify: options.stringify,
-        drain: options.drain,
+        drain: options.drain ? createLifecycleSafeDrain(options.drain, after) : undefined,
         redact: options.redact,
       })
       lockLogger()

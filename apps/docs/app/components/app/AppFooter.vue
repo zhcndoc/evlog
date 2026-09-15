@@ -28,7 +28,7 @@ const columns = computed<FooterColumn[]>(() => [
         : []),
       {
         label: '发布版本',
-        to: 'https://github.com/hugorcd/evlog/releases',
+        to: 'https://github.com/evloghq/evlog/releases',
         target: '_blank'
       },
       {
@@ -43,12 +43,12 @@ const columns = computed<FooterColumn[]>(() => [
     children: [
       {
         label: 'GitHub',
-        to: 'https://github.com/hugorcd/evlog',
+        to: 'https://github.com/evloghq/evlog',
         target: '_blank'
       },
       {
         label: '参与贡献',
-        to: 'https://github.com/hugorcd/evlog/blob/main/CONTRIBUTING.md',
+        to: 'https://github.com/evloghq/evlog/blob/main/CONTRIBUTING.md',
         target: '_blank'
       }
     ]
@@ -97,7 +97,7 @@ const columns = computed<FooterColumn[]>(() => [
       <UButton
         color="neutral"
         variant="ghost"
-        to="https://github.com/hugorcd/evlog"
+        to="https://github.com/evloghq/evlog"
         target="_blank"
         icon="i-simple-icons-github"
         size="sm"

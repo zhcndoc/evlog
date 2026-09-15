@@ -158,11 +158,11 @@ describe('{name} adapter', () => {
 
 ## 自定义说明
 
-- **URL 断言**：将预期 URL 更新为实际的服务 API；如果编码器能够容忍路径已存在的情况，也要包含该情况（参见 `resolveLokiPushUrl`）。
-- **身份验证请求头**：与服务保持一致（`X-API-Key`、HTTP Basic、`X-ClickHouse-User` 等）。
-- **请求体格式**：包装对象（PostHog 的 `{ api_key, batch }`）、原始数组（Axiom）、NDJSON（ClickHouse）。断言真实结构，而不只是断言“是一个数组”。
-- **已弃用的别名**：如果适配器支持别名（`token` → `apiKey`），添加测试以确保别名仍然能够解析，并且同时设置两者时规范名称优先。
-- **错误吞噬**：drain 本身永远不会抛出异常。该约定由 `defineHttpDrain` 实现，并在 `test/toolkit/toolkit.test.ts` 中覆盖；不要在每个适配器中重复测试。只有直接辅助函数会暴露错误。
+- **URL 断言**：将预期 URL 更新为实际的服务 API，包括编码器能够容忍路径已存在时的情况（参见 `resolveLokiPushUrl`）。
+- **认证请求头**：根据服务进行匹配（`X-API-Key`、HTTP Basic、`X-ClickHouse-User`……）。
+- **请求体格式**：包装对象（PostHog 的 `{ api_key, batch }`）、原始数组（Axiom）、NDJSON（ClickHouse）。断言真实结构，而不只是“是一个数组”。
+- **已弃用的别名**：如果适配器支持某个别名（`token` → `apiKey`），添加一个测试，验证该别名仍能解析，并且同时设置两者时规范名称优先。
+- **错误吞除**：drain 本身永不抛出异常；其 `raw` 变体会拒绝并仅尝试一次，以便由管道负责重试。这两个契约都定义在 `defineHttpDrain` 中，并已在 `test/toolkit/toolkit.test.ts` 中覆盖；不要在每个适配器中重复测试。只有直接辅助函数会暴露错误。
 - **服务专用辅助函数**：每个导出的辅助函数（`buildLokiPayload`、`toClickHouseRow`、严重性映射器等）都应有自己的 `describe`，并覆盖边界情况（空输入、格式错误的时间戳、基数限制）。
 
 ## 超越单元测试

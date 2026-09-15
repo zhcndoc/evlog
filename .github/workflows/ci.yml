@@ -41,7 +41,7 @@ jobs:
       - parallel:
           - name: Set up Turborepo remote cache
             if: env.IS_INTERNAL == 'true'
-            uses: vercel/setup-turborepo-remote-cache-action@135046f5efcadb17337d9b29b8d5b4035ae64b10 # v1.0.0
+            uses: vercel/setup-turborepo-remote-cache-action@49d7b1b46ba4c9251e1977986bfe18336feabc8f # v1.1.0
             with:
               team: ${{ vars.TURBO_TEAM }}
 
@@ -73,12 +73,17 @@ jobs:
       - parallel:
           - name: Set up Turborepo remote cache
             if: env.IS_INTERNAL == 'true'
-            uses: vercel/setup-turborepo-remote-cache-action@135046f5efcadb17337d9b29b8d5b4035ae64b10 # v1.0.0
+            uses: vercel/setup-turborepo-remote-cache-action@49d7b1b46ba4c9251e1977986bfe18336feabc8f # v1.1.0
             with:
               team: ${{ vars.TURBO_TEAM }}
 
           - name: Set up pnpm and Node
             uses: ./.github/actions/setup
+
+      - name: Set up Bun for import regressions
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
 
       # evlog runs once below, under coverage, which enforces its thresholds
       - name: Test workspace
@@ -108,6 +113,19 @@ jobs:
       - name: Test evlog with coverage
         run: pnpm --filter evlog run test:coverage
 
+      # The sandbox smoke runs every non-interactive CLI command against a real
+      # app per framework — the end-to-end seam (detect → init → doctor → map →
+      # baseline) that unit tests cover only piecewise. Gated to changes that
+      # can affect it, so a docs-only pull request skips the cost.
+      - name: CLI sandbox smoke
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}"...HEAD -- packages/cli scripts/cli-sandbox.mjs | grep -q .; then
+            node scripts/cli-sandbox.mjs --smoke
+          else
+            echo "CLI untouched — smoke skipped"
+          fi
+
   examples:
     name: Build examples
     runs-on: ubuntu-latest
@@ -124,7 +142,7 @@ jobs:
       - parallel:
           - name: Set up Turborepo remote cache
             if: env.IS_INTERNAL == 'true'
-            uses: vercel/setup-turborepo-remote-cache-action@135046f5efcadb17337d9b29b8d5b4035ae64b10 # v1.0.0
+            uses: vercel/setup-turborepo-remote-cache-action@49d7b1b46ba4c9251e1977986bfe18336feabc8f # v1.1.0
             with:
               team: ${{ vars.TURBO_TEAM }}
 
@@ -154,7 +172,7 @@ jobs:
       - parallel:
           - name: Set up Turborepo remote cache
             if: env.IS_INTERNAL == 'true'
-            uses: vercel/setup-turborepo-remote-cache-action@135046f5efcadb17337d9b29b8d5b4035ae64b10 # v1.0.0
+            uses: vercel/setup-turborepo-remote-cache-action@49d7b1b46ba4c9251e1977986bfe18336feabc8f # v1.1.0
             with:
               team: ${{ vars.TURBO_TEAM }}
 

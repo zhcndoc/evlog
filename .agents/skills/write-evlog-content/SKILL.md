@@ -1,6 +1,8 @@
 ---
 name: write-evlog-content
-description: Write, review, and rewrite any evlog content: a docs page, the landing, a blog post, a package README, a skill, an AGENTS.md, a changeset. Load before drafting or editing prose in apps/docs/content, before writing a blog post, before touching a SKILL.md or an AGENTS.md, and whenever content is reviewed for voice, accuracy, or AI-generated slop. Carries the evlog voice, the atomic rules, the terminology, the competitor dossiers, and the AI-tell corpus with the legitimate twin for each tell.
+description: "Write, review, and rewrite any evlog content: a docs page, the landing, a blog post, a package README, a skill, an AGENTS.md, a changeset. Load before drafting or editing prose in apps/docs/content, before writing a blog post, before touching a SKILL.md or an AGENTS.md, and whenever content is reviewed for voice, accuracy, or AI-generated slop. Carries the evlog voice, the atomic rules, the terminology, the competitor dossiers, and the AI-tell corpus with the legitimate twin for each tell."
+metadata:
+  internal: true
 ---
 
 # Writing evlog content
@@ -41,7 +43,7 @@ Everything evlog ships as prose, on both sides of the line:
 | Read by | Surfaces | What decides quality |
 | --- | --- | --- |
 | People | docs pages, the landing, blog posts, the package READMEs | Whether the reader can act, and whether they believe the page |
-| Agents | `.agents/skills/`, `apps/docs/skills/`, the `AGENTS.md` files | Whether an agent does the right thing having read only this |
+| Agents | `.agents/skills/`, `skills/`, the `AGENTS.md` files | Whether an agent does the right thing having read only this |
 
 The house rules cross the line: punctuation, terminology, accuracy, dead links. Rhythm does not. A skill whose four steps read as four parallel imperatives is a procedure, and the scanner leaves rhythm alone there. See `rules/machine.md`.
 
@@ -53,6 +55,8 @@ Two parts of that table are excluded from the scan. Evi's own operating skills u
 - `standard` is fixed when the page is touched: voice, rhythm, structure, punctuation.
 
 **A tell about rhythm is never critical on its own.** Epigram density, heading shape, bullet frames, and sentence uniformity describe how prose reads, and prose that reads a certain way has never broken anything.
+
+Correctness takes precedence over the scan score. Verify behavioral claims against the relevant source revision, run examples presented as executable, and check that comparison sources support the exact claim and configuration. Dossiers are research starting points and can be wrong even when recently checked. Search for exceptions to absolute guarantees and check equivalent workloads before drawing benchmark conclusions. A factual fix remains necessary if its style score falls; judge the new candidates before changing the prose again.
 
 Two entries in the tell corpus are not rhythm and do not follow that rule. `T-15` is drift: a symbol or entry point the package does not export, which is a fact the source settles and always critical. `T-13` is a house rule the maintainer decided, and one occurrence is a finding. They live in `ai-tells.md` because that is where the scanner's ids are documented, not because they are matters of taste.
 

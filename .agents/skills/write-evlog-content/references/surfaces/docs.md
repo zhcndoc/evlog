@@ -9,12 +9,12 @@
 ## 结构
 
 ```
-frontmatter        title, description, navigation.icon, links[]
-opening            2-4 sentences: the situation, then what this page gives them
-callout (optional) the exception a portion of readers hit immediately
-prompt (optional)  the agent-runnable version of this page's task
-sections           each one a heading that names what the reader achieves
-next               a link out, on the thing they will need after this
+frontmatter        标题、描述、navigation.icon、links[]
+opening            2-4 句话：先说明情境，然后说明本页面能提供什么
+callout (optional) 部分读者一开始就会遇到的例外情况
+prompt (optional)  本页面任务的可由 agent 运行的版本
+sections           每个 section 都是一个说明读者将实现什么的标题
+next               一个指向他们接下来需要内容的链接
 ```
 
 - `title` 是侧边栏中显示的内容。简短，不要使用营销话术
@@ -35,9 +35,15 @@ next               a link out, on the thing they will need after this
 
 页面位于错误的目录中属于结构性问题，而不是措辞问题。
 
-## 集成页面遵循相同的契约
+## 集成页面需遵循其层级的契约
 
-每个框架集成都必须提供 `evlog()`、`useLogger()`、`log.fork()` 和完整的 `BaseEvlogOptions` 接口，同时提供框架原生的访问器。只记录原生访问器的框架页面是不完整的，而只记录 `useLogger()` 则遗漏了符合惯例的路径。`evlog/workers` 是有文档记录的例外：它没有 `useLogger()`，logger 会作为 handler 的第四个参数传入。
+契约取决于集成的构建方式，因此在指出页面不完整之前，请先检查其层级：
+
+- 基于 `defineFrameworkIntegration` 构建的 first-class integrations（elysia、express、fastify、hono、next、nestjs、orpc、react-router、sveltekit、workers）采用完整的 `BaseEvlogOptions` 接口，并提供与请求绑定的 logger，但入口自身的访问器名称有所不同：orpc 使用 `evlog()` 和 `withEvlog()`，elysia、express、fastify、hono、react-router 和 sveltekit 使用 `evlog()`，next 使用 `createEvlog()` 和 `evlogMiddleware()`，nestjs 使用 `EvlogModule`，workers 使用 `withEvlog()` 和 `createWorkersLogger()`。只记录框架原生访问器的框架页面是不完整的，而只记录 `useLogger()` 则遗漏了惯用路径。
+- `log.fork()` 在请求作用域由 `AsyncLocalStorage` 支持的地方接入：除了 workers 之外的每个 first-class integration 都是如此；workers 必须避免使用 `node:async_hooks`。
+- Nuxt 和 Nitro 绑定于事件：使用 `useLogger(event)`，不使用 `log.fork()`。在那里记录 `log.fork()` 会声称存在一个实际不存在的 API。
+- Astro、AWS Lambda 和 standalone 基于核心 API（`initLogger`、`createLogger`、`createRequestLogger`）提供指南级支持：没有 `evlog()`，没有 `useLogger()`，也没有 `log.fork()`。不要将它们添加到这些页面中。
+- `evlog/workers` 将 logger 作为 handler 的第四个参数提供，而不是通过 `useLogger()` 提供。
 
 ## 代码块
 

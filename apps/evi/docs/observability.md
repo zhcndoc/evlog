@@ -13,9 +13,22 @@ Evi 目前记录的内容、无法记录的内容，以及值得在上游弥补�
 上下文中有多少由缓存提供，以及它来自哪个界面。本项目中的所有成本声明都来自这些事件的实际测量，
 而不是估算。
 
-`environment` 来自 `agent/lib/environment.ts`，也就是构建网关支出标签的同一个函数。这是有意为之：
-一次按 `eval` 计费的运行也会记录为 `eval`，这样两个视图就能保持一致。以前，宽事件会将 eval 和本地流量都报告为
-`development`，而支出报告却将它们分开——这种偏差正是会让仪表板悄悄产生错误的类型。
+工具执行会以如下模式使用其结果丰富同一事件：`tools/memory.ts` 集合：每个领域一个命名空间，
+其中包含计数、原因代码，以及由 Evi 编写的标识符。绝不包含原始错误字符串、工具负载或不受信任的 URL，
+因此符合仅元数据 PostHog 策略。这些命名空间包括：
+`git.{branch,pushed,sha,reason}`、
+`capture.{published,viewport,target,beforeHost,afterHost,reason}`、
+`blob.{uploaded,bytes}`、`turbo.{remoteCache,reason}`、
+`gateway.report.{mode,groupBy,matchedRows}`、
+`content.{scanned,candidates,eligible,targets,group,surface}`、
+`image.{host,fetched,bytes,mediaType}`，以及
+`memory.{saved,refused,searched,hits}`。一次保留了所有内容的内容处理，或一次被拒绝的推送，
+都可以仅凭轮次事件绘制出来。工具执行是 `useLogger()` 在契约上绑定的唯一位置（见下方的调用方差距），
+这也是 hooks、schedules 和 subagents 没有埋点的原因。
+
+`environment` 来自 `agent/lib/environment.ts`，也就是构建 gateway spend 标签的同一个函数。
+这是有意为之：一次按 `eval` 计费的运行也会记录为 `eval`，因此两个视图能够对应起来。此前，宽事件会将
+eval 和本地流量都报告为 `development`，而支出报告却将它们分开——这种偏差会让 dashboard 在不知不觉中说谎。
 
 fs drain 只会在存在持久磁盘的环境中挂载。在 Vercel 上，`/tmp` 之外的所有位置都是只读的，
 而 `createFsDrain` 对其 `mkdir` 和 `appendFile` 都没有防护，因此在那里发送它会导致每轮抛出一次异常，
@@ -60,36 +73,14 @@ AsyncLocalStorage 已绑定。Hook 位于其外部，而 evlog hook 会在 `turn
 
 ### evlog/eve — 让 `defineEvlogInstrumentation` 接受 `events`
 
-这是最直接的一项，也能部分解除调用方的限制。eve *确实*支持
-按模型调用进行归因：`instrumentation.ts` 中的
-`events["step.started"]` 会接收 `{ session, turn, step, channel, modelInput }` —
-其中包括
-`session.auth` — 并且它在 `runtimeContext` 下返回的内容会附加到 span 上。这正是上文那些 hook 尝试摸索的受支持路径。
-
-但 `defineEvlogInstrumentation` 将该位置硬编码为注入自身的关联 ID，并且没有提供透传能力：
-
-```ts
-// packages/evlog/src/eve/index.ts
-events: { 'step.started': buildInstrumentationContext },
-```
-
-因此，消费者必须在 evlog 关联信息和自己的运行时上下文之间二选一。将二者合并只需要几行代码：
-
-```ts
-'step.started': (input) => {
-  const base = buildInstrumentationContext(input)
-  const extra = options.events?.['step.started']?.(input)
-  if (!base && !extra) return undefined
-  return { runtimeContext: { ...base?.runtimeContext, ...extra?.runtimeContext } }
-},
-```
-
-这样一来，`caller.principal_id` 就会自动出现在每个 span 上。
+在任何人着手处理之前就已被取代：受支持的组合路径已经发布。`evlogRuntimeContext(input)` 从 `evlog/eve` 导出，
+而 instrumentation 不是单独使用 evlog 的调用方会丢弃该包装器，并将其展开到自己的 `defineInstrumentation` 中——
+也就是提案所希望的合并，由调用方完成（记录在
+`packages/evlog/src/eve/index.ts` 的 `defineEvlogInstrumentation` 上）。
 
 ### evlog/eve — 从 enrichment 中获取 eve session
 
-Span 并不是宽事件。按用户统计分组的成本仍然意味着调用方必须访问
-`enrich`，而它的上下文是 HTTP 形态的。要么扩展它，使 eve 集成能够携带 eve session；要么暴露一个按 turn 作用域的回调，在已知 logger 存在的位置运行：
+常见情况已基本解决：`evlog/eve` 会在事件本身记录 `eve.caller`（见上面的差距部分），因此按用户分组成本不再需要 hook。这里剩下的是面向希望获取 turn 上 principal 之外更多信息的消费者的一般需求。Spans 仍然不是宽事件，而 `enrich` 仍保持 HTTP 形态。可以为 eve 集成拓宽它以携带 eve session，或者公开一个 turn 作用域的回调，在已知 logger 存在的位置运行：
 
 ```ts
 defineEvlogHook({
@@ -101,34 +92,15 @@ defineEvlogHook({
 
 ### evlog/eve — 将输入 token 归因给导致它们产生的工具
 
-`ai.tools[]` 会记录 `name`、`durationMs`、`success`。但它不会记录每个结果增加了多少上下文。这里的一次有依据的 turn 消耗了约 7.4 万个输入 token，而要确认其中 `docs__list-pages` 占了约 85%，还需要手动进行前后对比。如果有每个工具结果的输入 token 增量，这会是任何人首先注意到的事情，而且它具有普遍性：agent 变得昂贵最常见的原因，就是某个工具在每个 turn 中返回了过多内容。
+已落地（#622，EVL-289）：`ai.tools[]` 条目现在携带 `inputTokens`，这是在提供模型输入的工具之间拆分的步骤增量。
 
 ### evlog/eve — 记录解析后的 provider
 
-`ai.model` 是网关 slug。它没有说明实际服务此次调用的是哪个部署。
-这里的路由最终落到了一个价格为 $0.20/$0.40 的 provider，而价格为 $0.09/$0.18 的 provider 也能提供同一个模型；要发现这一点，只能根据观测到的总额重建费率表，再与模型目录进行匹配。增加一个 `ai.provider` 字段，就能把 55% 的超支变成仪表板上一眼可见的信息。
+已落地（#622）：提供该调用的 deployment 会在事件中以 `ai.provider` 记录。
 
 ### github-tools — 在工具结果上展示 GitHub 速率限制状态
 
-每个 GitHub API 响应都携带 `x-ratelimit-remaining`、`x-ratelimit-limit`
-和 `x-ratelimit-reset`。但这些信息既不会传给 agent，也不会进入日志。对于一个即将根据 webhook 自主运行的 bot 来说，速率限制是最先、也最无声地导致故障的因素 — turn 会直接开始失败。
-
-消费这些信息的管线已经存在，并且不需要 eve 做任何改动。通过 hook，可以在完整类型支持下将工具结果收窄到特定的扩展工具，包括已挂载的扩展，因为 `toolResultFrom` 是根据工具定义而不是命名空间名称来确定 key 的：
-
-```ts
-import { searchCode } from '@github-tools/eve-extension/tools'
-
-'action.result'(event) {
-  const result = toolResultFrom(event.data.result, searchCode)
-  if (result) useLogger().set({ github: { remaining: result.output.rateLimit?.remaining } })
-}
-```
-
-因此，整个需求都在 github-tools 一侧：**将速率限制响应头放到工具输出中**。理想情况下应通过 flag 控制，或者放在模型永远看不到的旁路中 — 每个结果中的 `remaining` 计数都是模型不需要、却偶尔会拿来推理的上下文。
-
-最后一点可以推广为 eve 中一个更好的、值得考虑的基础原语：
-`toModelOutput` 已经用于塑造模型所看到的内容。它的镜像 — 类似
-`toTelemetry(output)` 的东西 — 可以用于塑造 hook 和 drain 所看到的内容，让工具携带丰富的诊断信息，同时不消耗上下文 token。如今这两个受众共享同一个 payload，因此每个字段都需要在可观测性和 prompt 大小之间做取舍。
+已在 github-tools extension 上游落地（EVL-343，2026-08-27）：工具的结果界面现在公开速率限制状态，eve extension 也会记录该状态。
 
 ### github-tools — 按 session 限定工具范围
 

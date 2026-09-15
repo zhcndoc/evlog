@@ -1,15 +1,15 @@
 import { defineAgent } from 'eve'
 import { gatewayRouting, sessionTags } from '../../lib/gateway'
+import { MODEL } from '../../lib/model'
 
 export default defineAgent({
-  model: 'deepseek/deepseek-v4-flash',
-  /** This model honors only `high` and `xhigh`. */
+  model: MODEL,
   reasoning: 'high',
   modelOptions: {
-    providerOptions: { gateway: { ...gatewayRouting, tags: sessionTags('content') } },
+    providerOptions: { gateway: { ...gatewayRouting(), tags: sessionTags('content') } },
   },
   description:
     'Apply a content review to one evlog page. Takes the review findings and edits only what they name, in the evlog voice, preserving MDC structure, frontmatter, and every link target. '
-    + 'Verifies any code or API change against the package source before writing it. Writes the page in place and returns what changed with the id that justified each edit. '
+    + 'Loads the caller snapshot with content_load and verifies factual changes against the shared source. Returns the complete replacement text and input digest for the parent to apply after checking for intervening edits. '
     + 'Never edits a page it was not given findings for, and never invents findings of its own.',
 })

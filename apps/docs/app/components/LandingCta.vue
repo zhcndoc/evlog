@@ -88,7 +88,7 @@ onBeforeUnmount(() => {
               别折腾，直接用 evlog
             </UButton>
             <UButton
-              to="https://github.com/hugorcd/evlog"
+              to="https://github.com/evloghq/evlog"
               target="_blank"
               size="lg"
               class="bg-white/10 border border-white/40 text-white hover:bg-white/20 backdrop-blur-sm"
@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
           <a href="https://x.com/hugorcd" target="_blank" rel="noopener noreferrer" aria-label="X" class="text-muted hover:text-dimmed transition-colors">
             <UIcon name="i-simple-icons-x" class="size-4" />
           </a>
-          <a href="https://github.com/hugorcd/evlog" target="_blank" rel="noopener noreferrer" aria-label="GitHub" class="text-muted hover:text-dimmed transition-colors">
+          <a href="https://github.com/evloghq/evlog" target="_blank" rel="noopener noreferrer" aria-label="GitHub" class="text-muted hover:text-dimmed transition-colors">
             <UIcon name="i-simple-icons-github" class="size-4" />
           </a>
         </div>

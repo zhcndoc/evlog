@@ -9,6 +9,21 @@ export default defineAppConfig({
     titleTemplate: '%s - Evlog 中文文档',
     title: 'Evlog 中文文档',
     description: '适用于 TypeScript 的结构化日志库。简单日志、广泛事件和结构化错误，从快速的一行代码到全面的请求级事件。',
+    // Answers "what is this site?" as a linked JSON-LD graph on the landing.
+    // `sameAs` is the part that matters: it reconciles the site, the repository
+    // and the package as one entity rather than three unrelated sources.
+    schema: {
+      type: 'SoftwareApplication',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Node.js, Bun, Deno, Cloudflare Workers, all major browsers',
+      price: 0,
+      priceCurrency: 'USD',
+      sameAs: [
+        'https://github.com/evloghq/evlog',
+        'https://www.npmjs.com/package/evlog',
+        'https://x.com/hugorcd',
+      ],
+    },
   },
   assistant: {
     icons: {

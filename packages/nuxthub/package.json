@@ -1,16 +1,16 @@
 {
   "name": "@evlog/nuxthub",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Self-hosted log retention for evlog using NuxtHub database storage",
-  "author": "HugoRCD <contact@hrcd.fr>",
+  "author": "HugoRCD <contact@evlog.dev>",
   "homepage": "https://evlog.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HugoRCD/evlog.git",
+    "url": "git+https://github.com/evloghq/evlog.git",
     "directory": "packages/nuxthub"
   },
   "bugs": {
-    "url": "https://github.com/HugoRCD/evlog/issues"
+    "url": "https://github.com/evloghq/evlog/issues"
   },
   "license": "MIT",
   "type": "module",
@@ -43,12 +43,12 @@
     "dev:prepare": "nuxt-module-build build --stub && nuxt-module-build prepare"
   },
   "devDependencies": {
-    "@nuxt/module-builder": "^1.0.2",
+    "@nuxt/module-builder": "^1.0.3",
     "evlog": "workspace:*",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
-    "evlog": "^2.14.0",
+    "evlog": "^2.28.1",
     "@nuxthub/core": "^0.10.8",
     "drizzle-orm": ">=0.45.2"
   },

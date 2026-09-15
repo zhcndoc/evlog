@@ -9,7 +9,7 @@ import {
 } from 'eve/instrumentation'
 import type { AuditableLogger } from '../audit'
 import type { AIToolExecution, AIEventData, ModelCost } from '../ai/index'
-import { initLogger, isLoggerInitialized, isLoggerLocked } from '../logger'
+import { initLogger, isLoggerInitialized, isLoggerLocked, noopLogger } from '../logger'
 import type { LoggerConfig } from '../types'
 import type { BaseEvlogOptions, MiddlewareLoggerOptions } from '../shared/middleware'
 import { createMiddlewareLogger, pickBaseEvlogOptions } from '../shared/middleware'
@@ -175,6 +175,12 @@ interface TurnAccumulator {
   pausedForInput: boolean
   stepStartedAt?: number
   costMap?: Record<string, ModelCost>
+  /**
+   * The resolved provider (deployment) that served the model call.
+   * Populated at turn end from the session model slug, or set directly
+   * when eve reports the provider per-step.
+   */
+  lastProvider?: string
   costModel?: string
   /** Cumulative input tokens of the most recent completed model step, the baseline for per-tool attribution. */
   lastStepInputTokens?: number
@@ -303,6 +309,7 @@ function buildAiField(state: TurnAccumulator): AIEventData {
     steps: state.steps,
   }
   if (state.costModel) data.model = state.costModel
+  if (state.lastProvider) data.provider = state.lastProvider
   if (state.cacheReadTokens > 0) data.cacheReadTokens = state.cacheReadTokens
   if (state.cacheWriteTokens > 0) data.cacheWriteTokens = state.cacheWriteTokens
   if (state.finishReason) data.finishReason = state.finishReason
@@ -389,22 +396,38 @@ function unbindTurnLogger(logger: AuditableLogger): void {
   }
 }
 
+/**
+ * Turn state is process-local, an eve turn is durable: one resumed in another
+ * process after a step boundary can no longer reach the logger it opened with.
+ * Instrumentation must never fail the work it instruments, so every miss
+ * degrades to a logger that accepts each call and emits nothing. Warned once
+ * per scope, because a resumed turn calls this on every tool it runs.
+ */
+function detachedTurnLogger(scope: string, hint: string): AuditableLogger {
+  const warned = detachedWarned()
+  if (!warned.has(scope)) {
+    warned.add(scope)
+    console.warn(`[evlog] useLogger() found no logger for ${scope}; its enrichment is dropped. ${hint}`)
+  }
+  return noopLogger
+}
+
 function resolveTurnLogger(ctx: EveTurnSessionContext): AuditableLogger {
   const sessionId = ctx.session.id
   const turnId = ctx.session.turn?.id ?? activeTurnBySession().get(sessionId)
 
   if (!turnId) {
-    throw new Error(
-      '[evlog] useLogger() could not resolve the active turn. '
-      + 'Ensure defineEvlogHook() is registered and the turn has started.',
+    return detachedTurnLogger(
+      `session ${sessionId}`,
+      'Ensure defineEvlogHook() is registered and the turn has started.',
     )
   }
 
   const state = turnStates().get(turnKey(sessionId, turnId))
   if (!state) {
-    throw new Error(
-      '[evlog] useLogger() could not find a logger for the current turn. '
-      + 'Ensure defineEvlogHook() is registered and the turn has started.',
+    return detachedTurnLogger(
+      turnKey(sessionId, turnId),
+      'The turn already ended, or it resumed in another process and cannot carry its logger.',
     )
   }
 
@@ -453,9 +476,9 @@ export function useLogger(ctx?: EveTurnSessionContext): AuditableLogger {
   const active = resolveActiveTurnLogger()
   if (active) return active
 
-  throw new Error(
-    '[evlog] useLogger() was called outside an evlog eve turn. '
-    + 'Add agent/hooks/evlog.ts with defineEvlogHook() or pass ctx from the tool handler.',
+  return detachedTurnLogger(
+    'the current turn',
+    'Add agent/hooks/evlog.ts with defineEvlogHook(), or pass ctx from the tool handler.',
   )
 }
 
@@ -469,6 +492,7 @@ interface EveGlobalState {
   sessionRollups: Map<string, SessionRollup>
   sessionRuntimes: Map<string, EveRuntimeInfo>
   sessionAuthorizationStarts: Map<string, Map<string, number>>
+  detachedWarned: Set<string>
   maxSessions: number
   initialized: boolean
 }
@@ -490,6 +514,7 @@ function getEveGlobalState(): EveGlobalState {
       sessionRollups: new Map(),
       sessionRuntimes: new Map(),
       sessionAuthorizationStarts: new Map(),
+      detachedWarned: new Set(),
       maxSessions: DEFAULT_MAX_SESSIONS,
       initialized: false,
     }
@@ -499,6 +524,10 @@ function getEveGlobalState(): EveGlobalState {
 
 function turnStates(): Map<string, TurnState> {
   return getEveGlobalState().turnStates
+}
+
+function detachedWarned(): Set<string> {
+  return getEveGlobalState().detachedWarned
 }
 
 function activeTurnBySession(): Map<string, string> {
@@ -862,6 +891,15 @@ function flushAi(state: TurnState): void {
   if (!ai.model) {
     const model = sessionRuntimes().get(state.sessionId)?.model
     if (model) ai.model = model
+  }
+  if (!ai.provider) {
+    const modelId = sessionRuntimes().get(state.sessionId)?.model
+    if (modelId) {
+      const slashIndex = modelId.indexOf('/')
+      if (slashIndex !== -1) {
+        ai.provider = modelId.slice(0, slashIndex)
+      }
+    }
   }
   state.logger.set({ ai })
 }
