@@ -1,6 +1,4 @@
-import { defineSandbox } from 'eve/sandbox'
+import { defineParentSandbox } from 'eve/sandbox'
 
-export default defineSandbox(({ parent }) => {
-  if (parent === null) throw new Error('Content agents require a parent workspace.')
-  return parent.sandbox
-})
+/** Both content agents read the parent's branch and uncommitted pages; a clone of main would miss them. */
+export default defineParentSandbox()

@@ -1,9 +1,11 @@
 import { runAgentBrowser, type EveToolContext } from '@agent-browser/eve/sandbox'
+import type { EvlogError } from 'evlog'
 import { useLogger } from 'evlog/eve'
 import { defineDynamic, defineTool } from 'eve/tools'
 import { z } from 'zod'
 import { missingBlobTokenError, uploadSandboxImage } from '../lib/blob'
-import { CAPTURE_MARK, CAPTURE_SETTLE_MS, CAPTURE_VIEWPORTS, captureMarkdown, describeTarget, readTargetProbe, resolveTargetExpression, sensitiveCaptureReason, unresolvedTargetMessage, validateCaptureUrl, type CaptureTarget, type CaptureViewport } from '../lib/capture'
+import { browserContext, CAPTURE_MARK, CAPTURE_SETTLE_MS, CAPTURE_VIEWPORTS, captureMarkdown, describeTarget, readTargetProbe, resolveTargetExpression, sensitiveCaptureReason, unresolvedTargetMessage, validateCaptureUrl, type CaptureTarget, type CaptureViewport } from '../lib/capture'
+import { eviErrors, refusal } from '../lib/errors'
 import { canAccessAdminTools } from '../lib/trust'
 
 const SCREENSHOT_DIR = '/workspace/screenshots'
@@ -29,7 +31,7 @@ async function captureFrame(
     return { path, how: null }
   }
   const probe = readTargetProbe((await runAgentBrowser(ctx, ['eval', resolveTargetExpression(target)])).json)
-  if (!probe.found) throw new Error(unresolvedTargetMessage(target, probe))
+  if (!probe.found) throw eviErrors.CAPTURE_TARGET_UNRESOLVED({ message: unresolvedTargetMessage(target, probe) })
   await runAgentBrowser(ctx, ['scrollintoview', `[${CAPTURE_MARK}]`])
   await runAgentBrowser(ctx, ['wait', '500'])
   await runAgentBrowser(ctx, ['screenshot', path])
@@ -71,39 +73,33 @@ export default defineDynamic({
           },
           async execute(input, toolCtx) {
             if (!canAccessAdminTools(toolCtx.session.auth.current)) {
-              return { success: false as const, error: 'Captures are not available in this session.' }
+              return refusal(eviErrors.TOOL_NOT_AVAILABLE({ tool: 'capture__before_after' }))
             }
             const log = useLogger(toolCtx)
+            const refuse = (error: EvlogError) => {
+              const refused = refusal(error)
+              log.set({ capture: { published: false, reason: refused.code } })
+              return refused
+            }
             for (const url of [input.beforeUrl, input.afterUrl]) {
-              const refusal = validateCaptureUrl(url)
-              if (refusal) {
-                log.set({ capture: { published: false, reason: 'origin_refused' } })
-                return { success: false as const, error: refusal }
-              }
+              const reason = validateCaptureUrl(url)
+              if (reason) return refuse(eviErrors.CAPTURE_ORIGIN_REFUSED({ message: reason }))
             }
             const missingToken = missingBlobTokenError()
-            if (missingToken) {
-              log.set({ capture: { published: false, reason: 'missing_token' } })
-              return { success: false as const, error: missingToken }
-            }
+            if (missingToken) return refuse(eviErrors.BLOB_TOKEN_MISSING({ message: missingToken }))
             const viewport = input.viewport ?? 'desktop'
             const target: CaptureTarget | null = input.selector || input.text
               ? { selector: input.selector, text: input.text }
               : null
             const sandbox = await toolCtx.getSandbox()
             await sandbox.run({ command: `mkdir -p ${SCREENSHOT_DIR}` })
-            const before = await captureFrame(toolCtx, { side: 'before', url: input.beforeUrl, target, viewport })
-            const after = await captureFrame(toolCtx, { side: 'after', url: input.afterUrl, target, viewport })
+            const browser = browserContext(sandbox, toolCtx.session.id)
+            const before = await captureFrame(browser, { side: 'before', url: input.beforeUrl, target, viewport })
+            const after = await captureFrame(browser, { side: 'after', url: input.afterUrl, target, viewport })
             const beforeUpload = await uploadSandboxImage(sandbox, before.path)
-            if ('error' in beforeUpload) {
-              log.set({ capture: { published: false, reason: 'upload_failed' } })
-              return { success: false as const, error: beforeUpload.error }
-            }
+            if ('error' in beforeUpload) return refuse(eviErrors.BLOB_UPLOAD_FAILED({ message: beforeUpload.error }))
             const afterUpload = await uploadSandboxImage(sandbox, after.path)
-            if ('error' in afterUpload) {
-              log.set({ capture: { published: false, reason: 'upload_failed' } })
-              return { success: false as const, error: afterUpload.error }
-            }
+            if ('error' in afterUpload) return refuse(eviErrors.BLOB_UPLOAD_FAILED({ message: afterUpload.error }))
             log.set({
               capture: {
                 published: true,

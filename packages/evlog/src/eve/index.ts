@@ -78,6 +78,30 @@ export interface EvlogEveOptions extends BaseEvlogOptions {
    * `session.failed`, rolling up every turn of that session. Default `false`.
    */
   sessionEvent?: boolean
+  /**
+   * Turn-scoped enrichment, run once when the turn logger is created, with
+   * the eve session in scope. Unlike the HTTP-shaped {@link BaseEvlogOptions.enrich}
+   * `enrich` (which never sees the eve session), it can read
+   * `ctx.session.auth` and the session lineage. Return the fields to merge
+   * onto the turn event; they merge over the built-in `eve`, `agent`, and
+   * `channel` fields and stay turn-scoped: they are not carried across turns
+   * of the same session.
+   *
+   * @example
+   * ```ts
+   * export default defineEvlogHook({
+   *   enrichTurn: (ctx) => ({
+   *     caller: ctx.session.auth.current?.principalId,
+   *   }),
+   * })
+   * ```
+   */
+  enrichTurn?: (ctx: EveEnrichTurnContext) => Record<string, unknown> | void
+  /**
+   * Subscribe to subagent lifecycle events and add them to the parent turn.
+   * Default `true`. Disable this when the event source has no hook session context.
+   */
+  subagentEvents?: boolean
 }
 
 /** Minimal session shape accepted by {@link useLogger} as a fallback lookup key. */
@@ -86,6 +110,13 @@ export interface EveTurnSessionContext {
     readonly id: string
     readonly turn?: { readonly id?: string }
   }
+}
+
+/** Context handed to {@link EvlogEveOptions.enrichTurn} for one turn. */
+export interface EveEnrichTurnContext {
+  readonly session: HookContext['session']
+  readonly agent: HookContext['agent']
+  readonly channel: HookContext['channel']
 }
 
 interface PendingAction {
@@ -195,6 +226,8 @@ interface TurnState {
   accumulator: TurnAccumulator
   sessionId: string
   turnId: string
+  /** Top-level keys enrichTurn wrote, kept out of the session snapshot. */
+  enrichTurnKeys: Set<string>
 }
 
 /** Top-level wide-event keys that stay turn-scoped and are not carried across turns. */
@@ -725,11 +758,11 @@ function applySessionContext(sessionId: string, logger: AuditableLogger): void {
   }
 }
 
-function persistSessionContext(sessionId: string, logger: AuditableLogger): void {
-  const ctx = logger.getContext() as Record<string, unknown>
+function persistSessionContext(sessionId: string, state: TurnState): void {
+  const ctx = state.logger.getContext() as Record<string, unknown>
   const snapshot = { ...(sessionSnapshots().get(sessionId) ?? {}) }
   for (const [key, value] of Object.entries(ctx)) {
-    if (!TURN_ONLY_KEYS.has(key) && value !== undefined) {
+    if (!TURN_ONLY_KEYS.has(key) && !state.enrichTurnKeys.has(key) && value !== undefined) {
       snapshot[key] = value
     }
   }
@@ -858,6 +891,7 @@ function getOrCreateTurnState(
     accumulator: freshAccumulator(options),
     sessionId,
     turnId,
+    enrichTurnKeys: new Set(),
   }
 
   applySessionContext(sessionId, logger)
@@ -877,6 +911,24 @@ function getOrCreateTurnState(
       ...(ctx.channel.continuationToken ? { continuing: true } : {}),
     },
   })
+
+  // Isolated from the turn.started handler: a throwing enrichTurn must not
+  // skip the logger binding that happens after getOrCreateTurnState returns.
+  if (options.enrichTurn) {
+    try {
+      const fields = options.enrichTurn({
+        session: ctx.session,
+        agent: ctx.agent,
+        channel: ctx.channel,
+      })
+      if (fields) {
+        for (const k of Object.keys(fields)) state.enrichTurnKeys.add(k)
+        logger.set(fields)
+      }
+    } catch (err) {
+      console.error('[evlog] enrichTurn failed:', err)
+    }
+  }
 
   turnStates().set(key, state)
   activeTurnBySession().set(sessionId, turnId)
@@ -927,7 +979,7 @@ async function finishTurn(
         sessionTurns,
       },
     })
-    persistSessionContext(sessionId, state.logger)
+    persistSessionContext(sessionId, state)
     await state.finish(opts)
   } finally {
     unbindTurnLogger(state.logger)
@@ -1088,7 +1140,7 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
   const messageMode = resolveMessageMode(options)
   const previewLength = options.messagePreviewLength ?? DEFAULT_MESSAGE_PREVIEW_LENGTH
 
-  return defineHook({
+  const hook = defineHook({
     events: {
       'session.started'(event, ctx) {
         runSafe(() => {
@@ -1492,6 +1544,16 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
       },
     },
   })
+
+  if (options.subagentEvents === false) {
+    const events = { ...hook.events }
+    delete events['subagent.called']
+    delete events['subagent.started']
+    delete events['subagent.completed']
+    return { ...hook, events }
+  }
+
+  return hook
 }
 
 /** Options for {@link defineEvlogInstrumentation}. */

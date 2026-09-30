@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { CAPTURE_MARK, captureAttestation, captureMarkdown, describeTarget, escapeInline, markdownUrl, readTargetProbe, resolveTargetExpression, sensitiveCaptureReason, unresolvedTargetMessage, validateCaptureUrl } from './capture'
+import { describe, expect, it, vi } from 'vitest'
+import { browserContext, browserSandbox, CAPTURE_MARK, captureAttestation, captureMarkdown, describeTarget, escapeInline, markdownUrl, readTargetProbe, resolveTargetExpression, sensitiveCaptureReason, unresolvedTargetMessage, validateCaptureUrl } from './capture'
 
 describe('validateCaptureUrl', () => {
   it('accepts evlog surfaces, previews, and local dev servers', () => {
@@ -215,5 +215,23 @@ describe('unresolvedTargetMessage', () => {
     expect(
       unresolvedTargetMessage({ selector: '.py-24' }, { found: false, how: null, hooks: [], headings: [] }),
     ).toMatch(/no hooks and no headings/)
+  })
+})
+
+describe('browserSandbox', () => {
+  it('names the session and forwards commands to the eve sandbox', async () => {
+    const run = vi.fn(() => Promise.resolve({ exitCode: 0, stdout: 'ok', stderr: '' }))
+    const session = browserSandbox({ run }, 'sess_1')
+    expect(session.id).toBe('sess_1')
+    await expect(session.run({ command: 'true' })).resolves.toMatchObject({ exitCode: 0 })
+    expect(run).toHaveBeenCalledWith({ command: 'true' })
+  })
+
+  it('hands agent-browser the same session on every lookup', async () => {
+    const run = vi.fn(() => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }))
+    const ctx = browserContext({ run }, 'sess_1')
+    const first = await ctx.getSandbox()
+    expect(await ctx.getSandbox()).toBe(first)
+    expect(first).toMatchObject({ id: 'sess_1' })
   })
 })

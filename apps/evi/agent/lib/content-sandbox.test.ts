@@ -1,4 +1,4 @@
-import type { SandboxParentValue } from 'eve/sandbox'
+import { defineParentSandbox } from 'eve/sandbox'
 import { isDisabledToolSentinel } from 'eve/tools'
 import { describe, expect, it } from 'vitest'
 import reviewerSandbox from '../subagents/content_review/sandbox/sandbox'
@@ -12,14 +12,11 @@ describe.each([
   ['reviewer', reviewerSandbox],
   ['rewriter', rewriterSandbox],
 ] as const)('%s sandbox', (_name, definition) => {
-  it('selects the parent workspace instead of cloning main', async () => {
-    expect(typeof definition).toBe('function')
-    const sandbox = {} as SandboxParentValue
-    expect(await definition({ parent: { sandbox } })).toBe(sandbox)
-  })
-
-  it('refuses to start without a parent workspace', () => {
-    expect(() => definition({ parent: null })).toThrow('parent')
+  it('inherits the parent workspace instead of cloning main', () => {
+    const markers = Object.getOwnPropertySymbols(definition)
+    for (const marker of Object.getOwnPropertySymbols(defineParentSandbox())) {
+      expect(markers).toContain(marker)
+    }
   })
 })
 

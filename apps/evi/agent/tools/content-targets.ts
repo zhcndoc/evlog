@@ -1,6 +1,8 @@
+import type { EvlogError } from 'evlog'
 import { useLogger } from 'evlog/eve'
 import { defineTool } from 'eve/tools'
 import { z } from 'zod'
+import { eviErrors, refusal } from '../lib/errors'
 import { parseLintReport } from '../lib/content/scan'
 import type { LintPage } from '../lib/content/selection'
 import { cooldownCommand, selectTargets, touchedPaths } from '../lib/content/selection'
@@ -21,6 +23,12 @@ export default defineTool({
   }),
   async execute(input, toolCtx) {
     const sandbox = await toolCtx.getSandbox()
+    const log = useLogger(toolCtx)
+    const refuse = (error: EvlogError) => {
+      const refused = refusal(error)
+      log.set({ content: { scanned: false, reason: refused.code } })
+      return refused
+    }
     const cooldownDays = input.cooldownDays ?? DEFAULT_COOLDOWN_DAYS
     const surface = input.surface ? ` --surface ${input.surface}` : ''
 
@@ -28,25 +36,25 @@ export default defineTool({
       command: `cd ${REPO_DIR} && node scripts/content-lint/index.mjs --json${surface}`,
     })
     if (scan.exitCode !== 0) {
-      return { success: false as const, error: `content-lint exited ${scan.exitCode}: ${runOutput(scan)}` }
+      return refuse(eviErrors.CONTENT_SCAN_FAILED({ message: `content-lint exited ${scan.exitCode}: ${runOutput(scan)}` }))
     }
     const report = parseLintReport(scan.stdout)
     if (report === null) {
-      return { success: false as const, error: 'content-lint returned no JSON pages array.' }
+      return refuse(eviErrors.CONTENT_SCAN_FAILED({ message: 'content-lint returned no JSON pages array.' }))
     }
 
-    const log = await sandbox.run({ command: cooldownCommand(REPO_DIR, cooldownDays) })
-    if (log.exitCode !== 0) {
-      return { success: false as const, error: `git log exited ${log.exitCode}: ${runOutput(log)}` }
+    const history = await sandbox.run({ command: cooldownCommand(REPO_DIR, cooldownDays) })
+    if (history.exitCode !== 0) {
+      return refuse(eviErrors.GIT_COMMAND_FAILED({ command: 'log', exitCode: history.exitCode, message: `git log exited ${history.exitCode}: ${runOutput(history)}` }))
     }
 
     const selection = selectTargets({
       pages: report.pages as LintPage[],
-      recentlyTouched: touchedPaths(String(log.stdout)),
+      recentlyTouched: touchedPaths(String(history.stdout)),
       limit: input.limit,
     })
 
-    useLogger(toolCtx).set({
+    log.set({
       content: {
         scanned: report.pages.length,
         candidates: selection.candidates,

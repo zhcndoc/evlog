@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { eviErrors } from '../errors'
 import { REPO_DIR, runOutput } from '../workspace'
 import { repoPathError, shellQuote } from './scan'
 
@@ -24,7 +25,8 @@ function digest(text: string): string {
 
 async function run(sandbox: ContentSandbox, command: string, failure: string): Promise<string> {
   const result = await sandbox.run({ command: `cd ${REPO_DIR} && ${command}` })
-  if (result.exitCode !== 0) throw new Error(`${failure}: ${runOutput(result)}`)
+  // The output stays in the message: it is what the model reads to correct the next attempt.
+  if (result.exitCode !== 0) throw eviErrors.CONTENT_COMMAND_FAILED({ message: `${failure}: ${runOutput(result)}` })
   return String(result.stdout ?? '').trim()
 }
 
@@ -36,7 +38,7 @@ function checkedPath(sandbox: ContentSandbox, path: string): Promise<string> {
 
 async function checkUntrackedSource(sandbox: ContentSandbox): Promise<void> {
   const files = await run(sandbox, 'git ls-files --others --exclude-standard -- . \':(exclude,glob)**/*.md\'', 'Cannot inspect untracked source')
-  if (files) throw new Error('Commit source changes before capturing or loading a page.')
+  if (files) throw eviErrors.CONTENT_SOURCE_DIRTY()
 }
 
 async function readPage(sandbox: ContentSandbox, path: string): Promise<PageSnapshot & { text: string }> {
@@ -45,7 +47,7 @@ async function readPage(sandbox: ContentSandbox, path: string): Promise<PageSnap
   await checkUntrackedSource(sandbox)
   const revision = await run(sandbox, 'git rev-parse HEAD', 'Cannot identify source revision')
   const text = await sandbox.readTextFile({ path: file })
-  if (text === null) throw new Error('Page could not be read.')
+  if (text === null) throw eviErrors.CONTENT_PAGE_UNREADABLE()
   return { ...pageSnapshotSchema.parse({ path, revision, sha256: digest(text) }), text }
 }
 
@@ -57,7 +59,7 @@ export async function loadPage(sandbox: ContentSandbox, snapshot: PageSnapshot):
   pageSnapshotSchema.parse(snapshot)
   const current = await readPage(sandbox, snapshot.path)
   if (current.revision !== snapshot.revision || current.sha256 !== snapshot.sha256) {
-    throw new Error('Page or source revision changed since review. Capture and review it again.')
+    throw eviErrors.CONTENT_SNAPSHOT_STALE()
   }
   return current
 }

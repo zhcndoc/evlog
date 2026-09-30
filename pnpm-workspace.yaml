@@ -32,13 +32,13 @@ overrides:
   '@types/react': 19.3.0
   tsdown@0.22.8>rolldown: 1.2.8
   minimark: 0.2.0
-  '@nuxtjs/mcp-toolkit': ^0.19.0
+  '@nuxtjs/mcp-toolkit': ^0.21.0
   # One `ai` copy for the whole tree. eve 0.12 needs 7 from the example
   # package, and docus 5.13 compiles against `isStepCount` which 6 does not
   # export. nuxt-studio still declares `ai@^6`; a second copy on Vercel
   # leaves the docs function with v6, so POST /__docus__/assistant crashes
   # at import (FUNCTION_INVOCATION_FAILED).
-  ai: ^7.0.97
+  ai: ^7.0.105
   # Nuxt 4.x requires @unhead/vue ^3.1.8 internally; some deps (e.g. @nuxt/ui)
   # declare a permissive `^2.0.5 || ^3.0.0` peer range that lets pnpm resolve
   # a stale v2, breaking Nuxt's `legacyPlugins` import at build time.
@@ -56,6 +56,7 @@ minimumReleaseAgeExclude:
   - '@vercel/*'
   - '@ai-sdk/*'
   - 'ai'
+  - '@agent-browser/*'
   - '@github-tools/*'
   - 'eve'
   # Other

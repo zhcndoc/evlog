@@ -1,5 +1,22 @@
+import { getVercelOidcToken } from '@vercel/oidc'
 import { channelName } from './channel'
 import { environment } from './environment'
+import { eviErrors } from './errors'
+
+/**
+ * Bearer for the gateway's reporting endpoints, which accept the deployment's
+ * OIDC token like inference does. Fetched per call: the env token is minted at
+ * boot and expires on a warm instance.
+ */
+export async function gatewayToken(): Promise<string> {
+  const key = process.env.AI_GATEWAY_API_KEY?.trim()
+  if (key) return key
+  try {
+    return await getVercelOidcToken()
+  } catch (error) {
+    throw eviErrors.AI_GATEWAY_NOT_CONFIGURED({ cause: error as Error })
+  }
+}
 
 /**
  * Routing shared by every gateway call. Schedule turns answer to nobody in

@@ -1,6 +1,6 @@
 ---
 name: content-pass
-description: The daily pass over evlog's written surfaces. Picks the files the scanner ranks worst across the docs, the landing, the package READMEs, the skills, and the AGENTS.md files, reviews them against the content doctrine, applies what holds, and opens one draft PR whose body is the report. Also covers the enrichment half, run when nothing scores badly enough to rewrite, such as the page an index promises and nobody wrote, the integration documented at half its contract, the correction that should have become a rule. Load this when the content-pass schedule fires, or when Hugo asks for a content pass, a docs review, a rewrite of a page, a README, a skill or an AGENTS.md, or what is worth writing next.
+description: The daily pass over evlog's written surfaces. Picks the files the scanner ranks worst across the docs, the landing, the package READMEs, the skills, and the AGENTS.md files, reviews them against the content doctrine, applies what holds, and opens one ready PR whose body is the report. Also covers the enrichment half, run when nothing scores badly enough to rewrite, such as the page an index promises and nobody wrote, the integration documented at half its contract, the correction that should have become a rule. Load this when the content-pass schedule fires, or when Hugo asks for a content pass, a docs review, a rewrite of a page, a README, a skill or an AGENTS.md, or what is worth writing next.
 ---
 
 # Content pass
@@ -91,13 +91,13 @@ What you are checking:
 - The diff touches only the target files. A stray change to a component, a config, or a package is a bug in the pass, not a bonus.
 - Frontmatter and MDC structure survived. Read the diff, not just the score.
 
-If verification finds a concrete new defect, send that finding back for a targeted correction and rerun affected checks. Do not retry for style variation alone. If the defect cannot be resolved, keep the PR draft and report the blocker.
+If verification finds a concrete new defect, send that finding back for a targeted correction and rerun affected checks. Do not retry for style variation alone. If the defect cannot be resolved, do not open the PR; report the blocker.
 
 Before opening the PR, read the changed pages together: state the reader question each answers, remove duplicated explanations where a link suffices, and resolve contradictory promises. Record which checks ran on which revision. After further edits, rerun affected checks rather than carrying a stale pass forward.
 
 ### 7. Open the pull request
 
-Commit with a conventional subject naming the group, push with `git__push`, and open a **draft** PR with `github__createPullRequest`.
+Commit with a conventional subject naming the group, push with `git__push`, and open a normal, ready PR with `github__createPullRequest`. Read CI, fix required failures, then request `hugorcd` as reviewer. If the readiness gate cannot be completed, report the blocker instead of opening a draft.
 
 **The title is validated by CI and a wrong scope means the PR cannot merge.** The accepted list is `scopes:` in `.github/workflows/semantic-pull-request.yml`. Read it rather than guessing, and note what is not in it:
 
@@ -169,7 +169,7 @@ Two more, now that the corpus spans both audiences:
 - Touch a file inside its cooldown, whoever changed it.
 - Edit the landing page for voice or rhythm.
 - Change a skill's procedure, bounds, or `description`. Those are proposals, in the PR body.
-- Touch `apps/evi/agent/skills/`. Those are this pass's own instructions and they are outside the corpus for that reason.
-- Open more than one PR, or a PR that is not a draft.
+- Rewrite `apps/evi/agent/skills/`. The scanner reads those now, but they are this pass's own instructions: findings on them are reported for a person to judge, never applied.
+- Open more than one PR, or open one before the readiness gate is complete.
 - Add a changeset for a change confined to `apps/*`.
 - Widen its own scope because the group looked bad. The group will still be there tomorrow.

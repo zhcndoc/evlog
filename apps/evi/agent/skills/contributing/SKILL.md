@@ -7,7 +7,7 @@ description: How to contribute to evlog, covering commit and PR conventions, cha
 
 The repository's own `AGENTS.md` is the source of truth for all of this. It changes; this skill does not restate it in full on purpose. **Read `AGENTS.md` from the repo before giving specifics.**
 
-Your system context has a **Workspace** section saying whether the repository is checked out on this turn. With a checkout, `read_file /workspace/AGENTS.md`: free, and at the ref you were summoned on. Without one, `github__getFileContent` on `AGENTS.md` at the root of `evloghq/evlog`.
+Your system context has a **Workspace** section saying whether the repository is checked out on this turn. With a checkout, `read_file /workspace/AGENTS.md`: free, and at the ref you were summoned on. Without one, `github__getFileContent` on `AGENTS.md` at the root of the repository that section names.
 
 What follows is the shape of the answer, so you know what to look for and what to warn about.
 
@@ -62,11 +62,11 @@ The whole flow runs in `/workspace/repo`; nothing ships through the GitHub file 
 2. Edit, then run the checks above. A bug fix commits its failing regression test first, then the fix. For a visual change, start the dev server in the background before the checks (see `before-after`, step 0) so it warms while they run. Before the first check of the session, call `turbo__enable_remote_cache` once, then prefix each check with `TURBO_REMOTE_CACHE_READ_ONLY=true`: turbo reuses the artifacts CI already built, and the template cache covers the rest, so only what the diff affects actually runs.
 3. When a consumer of evlog would notice the change, add a changeset: write `.changeset/<some-name>.md` by hand with the `---` frontmatter naming the package and bump plus a consumer-facing description (`pnpm changeset` is interactive and cannot run here). Look at an existing file in `.changeset/` for the exact shape.
 4. Commit with a Conventional Commits subject: lowercase, a registered scope or none.
-5. **Push the branch with `git__push`.** That tool is the only way code reaches the remote: never the GitHub file API. It refuses `main` and `master`, and only maintainer sessions have it.
-6. Open the pull request with `github__createPullRequest`, report each check result in the body, and request `hugorcd` via `github__requestReviewers` unless it is a draft.
-7. **Read CI back once it has run.** `Validate PR title` settles in seconds and is the check your own title most often breaks. A pull request announced as ready while a required check is red costs the maintainer the review; fix the title or the code and say so, rather than leaving it for them to find.
+5. **Push the branch with `git__push`.** That tool is the only way code reaches the remote: never the GitHub file API. It refuses `main` and `master`, and only maintainer sessions have it. For a repository other than the home one, `git__checkout` it, `git__install` its dependencies, and pass the same `repository` to `git__push`; the whole flow then runs in that checkout instead of `/workspace/repo`, with no cache, so its checks run cold.
+6. Open a normal, ready pull request with `github__createPullRequest` only after the local readiness gate is complete: the diff is coherent, required tests and changesets are present, and every applicable local check is green. A draft is not a holding area for unfinished autonomous work; if the gate is incomplete, keep the result local and report the blocker instead.
+7. **Read CI back once it has run.** `Validate PR title` settles in seconds and is the check your own title most often breaks. Fix any required failure before requesting `hugorcd` via `github__requestReviewers`. A reviewer request means Evi considers the pull request mergeable.
 
-A pull request is not finished when it is open. Before you report it, the local checks are green, CI is green, and you have looked at the rendered result of anything visual. "Lint and typecheck pass" is a claim about the build, not about whether the thing you wrote is correct or reads well.
+A pull request is not finished when it is open. Before you report it and request review, the local checks are green, CI is green, and you have looked at the rendered result of anything visual. "Lint and typecheck pass" is a claim about the build, not about whether the thing you wrote is correct or reads well.
 
 `pnpm --filter @evlog/cli exec evlog map --json --no-write` scores an entry point's observability and is built for exactly this: it is the fastest way to ground a "should this be logged" answer in the tree you are working in. Run the workspace copy rather than `npx @evlog/cli`, which would fetch and execute whatever version the registry currently serves.
 

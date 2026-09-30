@@ -18,10 +18,20 @@
 并在多轮对话中增量进行，而且仅限于支持防火墙的后端。在本地以及其他所有通道中，
 `/workspace` 都是空的。沙箱文件工具会拒绝相对于仓库的路径。
 
+**技能发现会跳过符号链接。**`discover/project-source` 会把符号链接归类为 `other` 并视为缺失，因此链接到 `skills/<x>` 的 `agent/skills/<x>` 不会被公布。静态 `defineSkill` 模块会在编译时求值，因此 `agent/skills/<x>.ts` 通过 `agent/lib/published-skill.ts` 读取已发布包；eve 从 `apps/evi` 运行，该目录用于确定读取路径。
+
+**GitHub 频道不会投影元数据。**`githubChannel()` 调用 `defineChannel` 时没有提供 `metadata` 投影，也没有提供设置投影的选项；continuation token 只携带 `repositoryId`。因此，GitHub 回合中的动态工具和指令片段读到的 `ctx.channel.metadata` 为空，讨论串的 `owner` / `repo` 只会通过 `channel.state` 传给频道自己的事件处理器。这也是升级流程会跟随讨论串仓库（`repositoryOf(state)`），而 `git__checkout`、`git__push` 和 `github__*` 默认值使用 `EVI_REPOSITORY` 并要求显式指定其他仓库的原因。上游需要为 GitHub 频道添加 `{ owner, repo, installationId }` 元数据投影；完成后，`repositoryOf` 可通过 `isChannel` 从 `ctx.channel` 取值，无需这些显式输入。
+
+**GitHub App 令牌按安装实例签发，每次只访问一个账号。**Connect 根据 `github_app_installation` 授权详情选择安装实例：优先使用显式的 `installationId`，然后使用 `org`（或限定仓库的 owner），最后才使用连接器默认值。`lib/github/credentials.ts` 中的 `installationParams` 会指定仓库 owner，因此安装该 App 的账号无需额外登记；`repositories` 会将 git 工具令牌限制到一个仓库。找不到安装实例时会抛出 `ConnectorInstallationRequiredError`，不会回退到其他账号。此选择顺序已在 Connect API 的 vercel/api#93139 中实现；此前会忽略 `org`，并对所有账号使用默认安装实例。`github__*` 扩展和频道只使用主账号的凭据；操作其他账号仓库时，扩展的写入工具（首先是 `createPullRequest`）会返回 403。上游还需要为 `@github-tools/eve-extension` 添加按调用解析 `installationId` 的能力。
+
 **`disableTool()` 是静态的。**没有按会话移除内置工具的方法，因此某个工具在某个通道上
 没有用处时，仍会占用该通道的上下文。
 
 **iMessage 附件永远不会到达模型。**Photon 适配器的聊天映射会保留 name/mimeType/size，而 eve 的 `messageToUserContent` 只读取 `attachment.url`，但 Photon 从未提供该属性。在已连接的（pump）路径中，带有经过身份验证的 `read()` 的已解析内容节点会保留在 `message.raw.content` 上；在 webhook 路径中，`raw` 是投递 JSON，其中从不包含这些节点。通过 `adapter.fetchMessage()` 重新解析可以恢复它们，但这是 eve 需要完成的工作：上游修复方案是使用 chat-sdk 的 `data`/`fetchData` 附件契约。在此之前，图片会通过 Slack 发送。
+
+
+
+
 
 **推理级别是按模型划分的。**`GET /v1/models` 会公开 `reasoning_options`；DeepSeek V4 Flash 只声明了 `high` 和 `xhigh`。设置 `low` 或 `medium` 不会报错，而是会产生异常且非单调的推理量。
 
@@ -115,6 +125,6 @@ Gists API 会拒绝安装令牌——此外还包括仓库创建和合并功能�
 
 ## 待处理
 
-- `toTelemetry(output)` 是 `toModelOutput` 的镜像，因此工具可以携带不会消耗上下文 token 的诊断信息（跟踪编号为 EVL-366）。
+- `toTelemetry(output)` 作为 `toModelOutput` 的镜像，可让工具携带不消耗上下文 token 的诊断信息。EVL-366 已关闭，但该能力尚未实现，是否继续处理仍待决定，因此保留此项。
 
 自撰写此列表以来已完成：`ai.tools[]` 中的每个工具输入 token（#622）、作为 `ai.provider` 的已解析提供商（#622），以及工具结果中的 GitHub 速率限制状态（EVL-343，位于 github-tools 扩展中）。

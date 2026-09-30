@@ -1,5 +1,6 @@
 import type { SlackInitialMessage, SlackReceiveTarget } from 'eve/channels/slack'
 import { Card, CardText } from 'eve/channels/slack'
+import { eviErrors } from './errors'
 import { EVI_SLACK_TEAM_ID } from './trust'
 
 /** The Slack channel every scheduled run posts into. */
@@ -24,9 +25,7 @@ export function scheduleAnchor(label: string, now = new Date()): SlackInitialMes
 
 /** Where a scheduled run lands. Throws when the channel is not configured, so a misconfigured deploy fails at cron time rather than posting nowhere. */
 export function scheduleTarget(label: string): SlackReceiveTarget {
-  if (!EVI_SLACK_CHANNEL_ID) {
-    throw new Error('EVI_SLACK_CHANNEL_ID is required for scheduled runs.')
-  }
+  if (!EVI_SLACK_CHANNEL_ID) throw eviErrors.SLACK_CHANNEL_NOT_CONFIGURED()
   return {
     channelId: EVI_SLACK_CHANNEL_ID,
     ...(EVI_SLACK_TEAM_ID ? { installationTeamId: EVI_SLACK_TEAM_ID } : {}),

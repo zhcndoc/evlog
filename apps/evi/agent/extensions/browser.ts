@@ -16,4 +16,7 @@ export default browser({
   contentBoundaries: true,
   maxOutputChars: 50_000,
   inlineScreenshots: true,
+  // Fixed name: the extension otherwise derives one from a sandbox `id` that
+  // eve 0.64 sessions no longer carry. One browser per sandbox, so it is unique.
+  session: 'evi',
 })

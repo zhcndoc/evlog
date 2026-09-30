@@ -1,3 +1,7 @@
+import type { EveSandboxSession, EveToolContext } from '@agent-browser/eve/sandbox'
+import type { SandboxSession } from 'eve/sandbox'
+import { eviErrors } from './errors'
+
 /**
  * Single source of truth for where the browser — and any capture — may go:
  * evlog's own surfaces, Vercel previews, and sandbox-local dev servers. The
@@ -88,7 +92,7 @@ export function resolveTargetExpression(target: CaptureTarget): string {
 export function readTargetProbe(envelope: unknown): TargetProbe {
   const data = (envelope as { data?: unknown } | null | undefined)?.data
   if (data === null || typeof data !== 'object') {
-    throw new Error('The browser returned no target probe. The page did not load, or the expression failed.')
+    throw eviErrors.CAPTURE_PROBE_MISSING()
   }
   const probe = data as Record<string, unknown>
   const strings = (value: unknown): string[] =>
@@ -193,6 +197,20 @@ interface AttestationInput {
 /** Human-readable receipt embedded under the comparison table. */
 export function captureAttestation(input: AttestationInput): string {
   return `captured by agent-browser · ${markdownUrl(input.beforeUrl)} → ${markdownUrl(input.afterUrl)} · ${input.viewport} · ${escapeInline(input.frame)} · ${input.capturedAt}`
+}
+
+/**
+ * agent-browser still expects the pre-0.64 eve session shape, an `id` beside
+ * `run`; it only uses the id to name the browser session, so any stable
+ * string stands in.
+ */
+export function browserSandbox(sandbox: Pick<SandboxSession, 'run'>, id: string): EveSandboxSession {
+  return { id, run: options => sandbox.run(options) }
+}
+
+export function browserContext(sandbox: Pick<SandboxSession, 'run'>, id: string): EveToolContext {
+  const session = browserSandbox(sandbox, id)
+  return { getSandbox: () => Promise.resolve(session) }
 }
 
 /** The finished markdown block: table, caption, attestation receipt. */

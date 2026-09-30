@@ -2,6 +2,7 @@ import { useLogger } from 'evlog/eve'
 import { defineDynamic, defineTool } from 'eve/tools'
 import { z } from 'zod'
 import { uploadSandboxImage } from '../lib/blob'
+import { eviErrors, refusal } from '../lib/errors'
 import { canAccessAdminTools } from '../lib/trust'
 
 // Public URLs the instant they exist: autonomous turns never see this tool.
@@ -18,13 +19,14 @@ export default defineDynamic({
           }),
           async execute(input, toolCtx) {
             if (!canAccessAdminTools(toolCtx.session.auth.current)) {
-              return { success: false as const, error: 'Image upload is not available in this session.' }
+              return refusal(eviErrors.TOOL_NOT_AVAILABLE({ tool: 'blob__upload_image' }))
             }
             const log = useLogger(toolCtx)
             const uploaded = await uploadSandboxImage(await toolCtx.getSandbox(), input.path)
             if ('error' in uploaded) {
-              log.set({ blob: { uploaded: false } })
-              return { success: false as const, error: uploaded.error }
+              const refused = refusal(eviErrors.BLOB_UPLOAD_FAILED({ message: uploaded.error }))
+              log.set({ blob: { uploaded: false, reason: refused.code } })
+              return refused
             }
             log.set({ blob: { uploaded: true, bytes: uploaded.bytes } })
             return { success: true as const, ...uploaded }

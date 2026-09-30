@@ -6,7 +6,7 @@
 
 ## 此处的批准并不是授权控制
 
-Evi 现在具备完整的维护者工具权限面，并且每个写入工具都通过 SDK 的 `always()` 批准机制运行。在 Slack 或 Web 上，这是真正的控制措施。  
+Evi 目前具备完整的维护者工具权限面，并且每个写入工具都通过 SDK 的 `always()` 批准机制运行。在 Slack 或 Web 上，这是真正的控制措施。
 但在 GitHub 上并非如此，原因有三，而且会相互叠加：
 
 1. **不存在批准卡片。** 根据 eve 的 GitHub channel 文档，`input.requested` 事件“会以评论提示的形式发布，而用户的回复评论会映射回待处理的输入请求。”它就是一条评论。
@@ -17,11 +17,7 @@ Evi 现在具备完整的维护者工具权限面，并且每个写入工具都�
 
 ## 在调度时决定，而不是在工具中决定
 
-`onComment` 运行在 GitHub 已签名的 webhook 上，此时任何模型都尚未创建，
-并且它可能是异步的。`defaultGitHubAuth(ctx)` 已经将执行者映射为
-`principalId: "github:<sender.id>"` —— 使用数字 id，因此登录名重命名或
-重新注册不会改变该身份 —— 同时设置 `principalType: "user"`（机器人则为
-`"service"`），并将仓库元数据放入 `attributes`。
+`onComment` 运行在 GitHub 已签名的 webhook 上，此时任何模型都尚未创建，并且它可能是异步的。`defaultGitHubAuth(ctx)` 已将执行者映射为 `principalId: "github:<sender.id>"`（使用数字 id，因此登录名重命名或重新注册不会改变该身份），同时设置 `principalType: "user"`（机器人则为 `"service"`），并将仓库元数据放入 `attributes`。
 
 因此：在那里解析层级，将其写入 `auth.attributes`，让下游所有逻辑读取它。
 
@@ -145,6 +141,7 @@ updateIssue: ({ session, toolInput }) => {
 上面的所有机制都在审批层执行，这意味着每个工具仍然存在于每个调用者的上下文中——仅维护者界面的 schema 每轮就大约要消耗 7k 个 token——而一次被拒绝的调用还会浪费模型的一步，让它得知该调用被拒绝。
 
 真正干净的解决方案是让工具界面因调用者而异。该扩展已经在 `step.started` 上的动态解析器中解析工具，只是忽略了 eve 传递给它的上下文。如果 `include` / `exclude` / `preset` 能够接受一个基于该上下文的解析器以及静态值，那么代理就可以向管理员提供完整的工具界面，而向其他人提供只读界面，并匹配相应的 schema。值得向上游提议——这对任何公共仓库中的代理都有用，而不仅仅是这个代理。
+
 
 ## 仍待解决
 

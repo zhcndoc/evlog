@@ -1,7 +1,9 @@
 import { getVercelOidcToken } from '@vercel/oidc'
+import { EvlogError } from 'evlog'
 import { useLogger } from 'evlog/eve'
 import { defineDynamic, defineTool } from 'eve/tools'
 import { z } from 'zod'
+import { eviErrors, refusal } from '../lib/errors'
 import { canAccessAdminTools } from '../lib/trust'
 import { exchangeTurboToken, turboConfigCommand } from '../lib/turbo'
 import { runOutput } from '../lib/workspace'
@@ -18,35 +20,36 @@ export default defineDynamic({
           inputSchema: z.object({}),
           async execute(_input, toolCtx) {
             if (!canAccessAdminTools(toolCtx.session.auth.current)) {
-              return { success: false as const, error: 'Remote cache access is not available in this session.' }
+              return refusal(eviErrors.TOOL_NOT_AVAILABLE({ tool: 'turbo__enable_remote_cache' }))
             }
             const log = useLogger(toolCtx)
+            const refuse = (error: EvlogError) => {
+              const refused = refusal(error)
+              log.set({ turbo: { remoteCache: false, reason: refused.code } })
+              return refused
+            }
             const teamSlug = process.env.TURBO_TEAM
             const teamId = process.env.VERCEL_TEAM_ID
-            if (!teamSlug || !teamId) {
-              log.set({ turbo: { remoteCache: false, reason: 'not_configured' } })
-              return { success: false as const, error: 'TURBO_TEAM and VERCEL_TEAM_ID must be configured for remote caching.' }
-            }
+            if (!teamSlug || !teamId) return refuse(eviErrors.TURBO_NOT_CONFIGURED())
             // Fetched per call: the env token is minted at boot and expires on a warm instance.
             let oidc: string
             try {
               oidc = await getVercelOidcToken()
             } catch (error) {
-              log.set({ turbo: { remoteCache: false, reason: 'no_oidc_token' } })
-              return { success: false as const, error: `No Vercel OIDC token available: ${error instanceof Error ? error.message : String(error)}` }
+              return refuse(eviErrors.TURBO_NO_OIDC_TOKEN({
+                message: `No Vercel OIDC token available: ${error instanceof Error ? error.message : String(error)}`,
+              }))
             }
             let token: string
             try {
               token = await exchangeTurboToken(oidc, teamSlug)
-            } catch {
-              log.set({ turbo: { remoteCache: false, reason: 'exchange_failed' } })
-              return { success: false as const, error: 'Turborepo token exchange failed; remote caching is unavailable for this run.' }
+            } catch (error) {
+              return refuse(EvlogError.isEvlogError(error) ? error : eviErrors.TURBO_TOKEN_EXCHANGE_FAILED({ cause: error as Error }))
             }
             const sandbox = await toolCtx.getSandbox()
             const write = await sandbox.run({ command: turboConfigCommand(token, teamId, teamSlug) })
             if (write.exitCode !== 0) {
-              log.set({ turbo: { remoteCache: false, reason: 'config_write_failed' } })
-              return { success: false as const, error: `Writing the turbo config failed: ${runOutput(write)}` }
+              return refuse(eviErrors.TURBO_CONFIG_WRITE_FAILED({ message: `Writing the turbo config failed: ${runOutput(write)}` }))
             }
             log.set({ turbo: { remoteCache: true } })
             return {

@@ -1,0 +1,44 @@
+import { createError, EvlogError } from 'evlog'
+import { describe, expect, it } from 'vitest'
+import { eviErrors, refusal } from './errors'
+
+describe('eviErrors', () => {
+  it('prefixes every code with the catalog name', () => {
+    expect(eviErrors._prefix).toBe('evi')
+    expect(eviErrors._codes.every(code => code.startsWith('evi.'))).toBe(true)
+    expect(eviErrors.GITHUB_REQUEST_FAILED.code).toBe('evi.GITHUB_REQUEST_FAILED')
+  })
+
+  it('keeps third-party bodies out of the serialized error', () => {
+    const error = eviErrors.GITHUB_REQUEST_FAILED({ request: 'label lookup', responseStatus: 403, internal: { body: 'secret body' } })
+    expect(error.message).toBe('GitHub label lookup failed (403)')
+    expect(error.status).toBe(502)
+    expect(error.internal).toEqual({ body: 'secret body' })
+    expect(JSON.stringify(error)).not.toContain('secret body')
+  })
+
+  it('templates typed params and accepts a message override', () => {
+    expect(eviErrors.GIT_COMMAND_FAILED({ command: 'push', exitCode: 128 }).message).toBe('git push exited 128')
+    expect(eviErrors.CAPTURE_ORIGIN_REFUSED({ message: 'nope' }).message).toBe('nope')
+  })
+})
+
+describe('refusal', () => {
+  it('returns the code and the message the model reads, with the fix appended', () => {
+    expect(refusal(eviErrors.GITHUB_NOT_INSTALLED({ owner: 'acme', repository: 'acme/widgets' }))).toEqual({
+      success: false,
+      code: 'evi.GITHUB_NOT_INSTALLED',
+      error: 'evlogai is not installed on acme, so acme/widgets is out of reach. Install the App on that account first.',
+    })
+    expect(refusal(eviErrors.INPUT_REFUSED({ message: 'bad ref' }))).toEqual({
+      success: false,
+      code: 'evi.INPUT_REFUSED',
+      error: 'bad ref',
+    })
+  })
+
+  it('refuses an error without a code', () => {
+    const error: EvlogError = createError('bare')
+    expect(() => refusal(error)).toThrow(TypeError)
+  })
+})

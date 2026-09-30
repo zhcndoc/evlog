@@ -1,18 +1,28 @@
 import type { GitHubChannelCredentials } from 'eve/channels/github'
-import type { SandboxNetworkPolicy } from 'eve/sandbox'
+import type { SandboxNetworkPolicy, SandboxSession } from 'eve/sandbox'
+import { eviErrors } from '../errors'
 
 const PROTECTED_BRANCHES = new Set(['main', 'master'])
 
 /**
- * Conservative subset of valid git branch names: alphanumeric segments
- * separated by `.`, `_`, `-` or `/`. Everything the push command interpolates
- * has to match this, so shell metacharacters can never reach the command line.
+ * Conservative subset of valid git ref names: alphanumeric segments separated
+ * by `.`, `_`, `-` or `/`. Everything a git command interpolates has to match
+ * this, so shell metacharacters can never reach the command line.
  */
-const BRANCH_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$/
+const REF_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$/
+
+/** git-check-ref-format, per slash component: no leading dot, no trailing dot or `.lock`. */
+function isValidRefComponent(component: string): boolean {
+  return component.length > 0 && !component.startsWith('.') && !component.endsWith('.') && !component.endsWith('.lock')
+}
+
+export function isValidRefName(ref: string): boolean {
+  return REF_PATTERN.test(ref) && !ref.includes('..') && ref.split('/').every(isValidRefComponent)
+}
 
 /** Returns the refusal reason, or null when the branch may be pushed. */
 export function validatePushBranch(branch: string): string | null {
-  if (!BRANCH_PATTERN.test(branch) || branch.includes('..') || branch.includes('//')) {
+  if (!isValidRefName(branch)) {
     return `"${branch}" is not a valid branch name.`
   }
   // `refs/heads/main` and `HEAD` would reach the protected branch under
@@ -41,9 +51,23 @@ export function pushBrokerPolicy(installationToken: string): SandboxNetworkPolic
   }
 }
 
+type NetworkPolicyCapable = Required<Pick<SandboxSession, 'setNetworkPolicy'>>
+
+function hasNetworkPolicy<TSandbox extends Pick<SandboxSession, 'setNetworkPolicy'>>(sandbox: TSandbox): sandbox is TSandbox & NetworkPolicyCapable {
+  return sandbox.setNetworkPolicy !== undefined
+}
+
+/** The broker injects the credential at the firewall; eve only promises one on providers with mutable networking. */
+export function brokeredSandbox<TSandbox extends Pick<SandboxSession, 'setNetworkPolicy'>>(sandbox: TSandbox): TSandbox & NetworkPolicyCapable {
+  if (!hasNetworkPolicy(sandbox)) {
+    throw eviErrors.GIT_BROKER_UNAVAILABLE()
+  }
+  return sandbox
+}
+
 /** Resolves the Connect-managed installation token, minting when it is lazy. */
 export async function mintInstallationToken(credentials: GitHubChannelCredentials): Promise<string> {
   const token = credentials.installationToken
-  if (token === undefined) throw new Error('The GitHub connector exposes no installation token.')
+  if (token === undefined) throw eviErrors.GITHUB_NO_INSTALLATION_TOKEN()
   return typeof token === 'function' ? await token() : token
 }

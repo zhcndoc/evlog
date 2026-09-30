@@ -5,7 +5,7 @@ description: Check the eve and Vercel Connect ecosystem for updates and new feat
 
 # Upstream sync
 
-The frameworks this app runs on move independently: eve and its satellites (@agent-browser/eve, @github-tools/eve-extension) from vercel/eve, and @vercel/connect from vercel/vercel. The twice-weekly run checks them, updates the app where warranted, and opens draft PRs. The PRs are the deliverable; nothing merges without a human.
+The frameworks this app runs on move independently: eve and its satellites (@agent-browser/eve, @github-tools/eve-extension) from vercel/eve, and @vercel/connect from vercel/vercel. The twice-weekly run checks them, updates the app where warranted, and opens ready PRs only after verification. The PRs are the deliverable; nothing merges without a human.
 
 ## 1. What changed upstream
 
@@ -23,15 +23,15 @@ The frameworks this app runs on move independently: eve and its satellites (@age
 
 ## 3. Deliver the PRs
 
-- One draft PR per coherent change: a dependency bump with its adaptation, or a workaround replacement. Never bundle unrelated updates.
+- One ready PR per coherent change: a dependency bump with its adaptation, or a workaround replacement. Never bundle unrelated updates.
 - Branch off `main` in `/workspace/repo`, apply the change, run `pnpm run lint`, `pnpm run typecheck` and `pnpm run test`. Add a changeset when a consumer of evlog would notice the change.
-- Push the branch, open a draft PR per branch. Drafts cannot merge; marking one ready is Hugo's call.
+- Push the branch and open a normal PR only when the local readiness gate in `contributing` is complete. Read CI, fix required failures, then request `hugorcd` as reviewer. If the change cannot clear the gate, report the blocker instead of opening a draft.
 
 ## 4. Track what needs a human in Linear
 
-A draft PR is its own artifact and needs nothing else. But an upstream finding that could **not** become a safe PR — a deprecation to plan around, a breaking change to schedule, a new capability worth adopting deliberately — becomes a **Linear issue** via `linear__save_issue` on the evlog team: a title stating the situation, the upstream link, what it affects in this repo, and the decision Hugo has to make. One issue per finding; search `linear__list_issues` first so a recurring finding updates the existing issue instead of duplicating it.
+A ready PR is its own artifact and needs nothing else. But an upstream finding that could **not** become a safe PR (a deprecation to plan around, a breaking change to schedule, a new capability worth adopting deliberately) becomes a **Linear issue** via `linear__save_issue` on the evlog team: a title stating the situation, the upstream link, what it affects in this repo, and the decision Hugo has to make. One issue per finding; search `linear__list_issues` first so a recurring finding updates the existing issue instead of duplicating it.
 
-Then post one summary to the thread: one line per draft PR and per Linear issue, links inline.
+Then post one summary to the thread: one line per ready PR and per Linear issue, links inline.
 
 ## When nothing is warranted
 

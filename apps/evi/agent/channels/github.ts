@@ -1,8 +1,9 @@
 import { defaultGitHubAuth, githubChannel } from 'eve/channels/github'
 import type { GitHubChannelState } from 'eve/channels/github'
 import { githubCredentials } from '../lib/github/credentials'
-import { escalateFailedTriage, isAutonomousTriageState } from '../lib/github/escalate'
+import { escalateFailedTriageQuietly, isAutonomousTriageState } from '../lib/github/escalate'
 import { failureComment } from '../lib/failure'
+import { isHomeRepository, repositoryOf } from '../lib/repo'
 import { AUTONOMOUS_GITHUB_PRINCIPAL, isAutonomous, MAINTAINER_GITHUB_ID, MAINTAINER_GITHUB_LOGIN } from '../lib/trust'
 
 const botName = 'evlogai'
@@ -20,6 +21,8 @@ export default githubChannel({
     return { auth: defaultGitHubAuth(ctx) }
   },
   onIssue: (ctx) => {
+    // Unattended triage is a service to one community; an App installation elsewhere grants nothing by itself.
+    if (!isHomeRepository(ctx.repository)) return null
     const login = ctx.sender.login.toLowerCase()
     // Community only: never the maintainer, never a bot (including our own loop).
     if (login === botName || login.endsWith('[bot]')) return null
@@ -60,10 +63,5 @@ export default githubChannel({
 
 async function escalate(state: GitHubChannelState): Promise<void> {
   if (state.issueNumber === null) return
-  try {
-    await escalateFailedTriage(state.issueNumber)
-  } catch (error) {
-    // Never let the escalation turn a triage failure into a failure loop.
-    console.error('[evi:github] failed to escalate a failed triage', error)
-  }
+  await escalateFailedTriageQuietly(repositoryOf(state), state.issueNumber)
 }

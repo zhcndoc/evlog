@@ -1,6 +1,7 @@
 import type { SlackChannel } from 'eve/channels/slack'
 import type { ScheduleHandlerArgs } from 'eve/schedules'
 import type { SessionAuthContext } from 'eve/context'
+import { initLogger, type WideEvent } from 'evlog'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const channel = { __kind: 'eve:channel' } as unknown as SlackChannel
@@ -25,8 +26,12 @@ async function loadSchedule(env: Record<string, string | undefined>) {
   return await import('./schedule')
 }
 
+const drain = vi.fn<(ctx: { event: WideEvent }) => void>()
+
 beforeEach(() => {
   vi.unstubAllEnvs()
+  drain.mockClear()
+  initLogger({ silent: true, drain })
 })
 
 describe('maintainerRun', () => {
@@ -46,37 +51,43 @@ describe('maintainerRun', () => {
     expect(waitUntil).toHaveBeenCalledTimes(1)
   })
 
-  it('logs the accepted send with its session id', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  it('records the accepted send as a job event with its session id', async () => {
     const { maintainerRun } = await loadSchedule({ EVI_SLACK_CHANNEL_ID: 'C0123' })
     const { args, waitUntil } = scheduleArgs()
 
     maintainerRun(channel, 'Daily digest', 'anything')(args)
     await waitUntil.mock.calls[0]![0]
 
-    expect(log).toHaveBeenCalledWith('[schedule] send accepted, session sess_123')
-    log.mockRestore()
+    expect(drain).toHaveBeenCalledTimes(1)
+    expect(drain.mock.calls[0]![0].event).toMatchObject({
+      job: 'schedule.send',
+      schedule: 'Daily digest',
+      accepted: true,
+      session: 'sess_123',
+    })
   })
 
-  it('logs and rethrows when the send fails, so the task still settles as failed', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('records and rethrows when the send fails, so the task still settles as failed', async () => {
     const { maintainerRun } = await loadSchedule({ EVI_SLACK_CHANNEL_ID: 'C0123' })
     const { args, send, waitUntil } = scheduleArgs()
-    const failure = new Error('handoff refused')
-    send.mockRejectedValue(failure)
+    send.mockRejectedValue(new Error('handoff refused'))
 
     maintainerRun(channel, 'Daily digest', 'anything')(args)
 
     await expect(waitUntil.mock.calls[0]![0]).rejects.toThrow('handoff refused')
-    expect(error).toHaveBeenCalledWith('[schedule] send failed', failure)
-    error.mockRestore()
+    expect(drain).toHaveBeenCalledTimes(1)
+    expect(drain.mock.calls[0]![0].event).toMatchObject({
+      job: 'schedule.send',
+      accepted: false,
+      error: { message: 'handoff refused' },
+    })
   })
 
   it('throws when the Slack channel is missing or empty', async () => {
     for (const channelId of [undefined, '']) {
       const { maintainerRun } = await loadSchedule({ EVI_SLACK_CHANNEL_ID: channelId })
       const { args } = scheduleArgs()
-      expect(() => maintainerRun(channel, 'Daily digest', 'anything')(args)).toThrow('EVI_SLACK_CHANNEL_ID')
+      expect(() => maintainerRun(channel, 'Daily digest', 'anything')(args)).toThrow(expect.objectContaining({ code: 'evi.SLACK_CHANNEL_NOT_CONFIGURED' }))
     }
   })
 })

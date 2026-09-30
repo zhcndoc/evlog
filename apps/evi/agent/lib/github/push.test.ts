@@ -1,5 +1,30 @@
-import { describe, expect, it } from 'vitest'
-import { mintInstallationToken, pushBrokerPolicy, validatePushBranch } from './push'
+import { describe, expect, it, vi } from 'vitest'
+import { brokeredSandbox, isValidRefName, mintInstallationToken, pushBrokerPolicy, validatePushBranch } from './push'
+
+describe('isValidRefName', () => {
+  it('accepts branch names and commit shas', () => {
+    expect(isValidRefName('main')).toBe(true)
+    expect(isValidRefName('release/2.1')).toBe(true)
+    expect(isValidRefName('9c1a3515f0e2b7c4d8a6e1f3b5c7d9e0a2b4c6d8')).toBe(true)
+  })
+
+  it('refuses anything that could escape the command line or the ref namespace', () => {
+    expect(isValidRefName('main; rm -rf /')).toBe(false)
+    expect(isValidRefName('v1`x')).toBe(false)
+    expect(isValidRefName('-flag')).toBe(false)
+    expect(isValidRefName('a..b')).toBe(false)
+    expect(isValidRefName('a//b')).toBe(false)
+    expect(isValidRefName('')).toBe(false)
+  })
+
+  it('refuses components git itself rejects', () => {
+    expect(isValidRefName('release/.draft')).toBe(false)
+    expect(isValidRefName('release./x')).toBe(false)
+    expect(isValidRefName('release.lock')).toBe(false)
+    expect(isValidRefName('release.lock/x')).toBe(false)
+    expect(isValidRefName('release/v2.lock.1')).toBe(true)
+  })
+})
 
 describe('validatePushBranch', () => {
   it('accepts ordinary feature branch names', () => {
@@ -62,5 +87,16 @@ describe('mintInstallationToken', () => {
 
   it('throws when the connector exposes no token', async () => {
     await expect(mintInstallationToken({})).rejects.toThrow('no installation token')
+  })
+})
+
+describe('brokeredSandbox', () => {
+  it('returns the session once it can take a network policy', () => {
+    const sandbox = { setNetworkPolicy: vi.fn(async () => {}) }
+    expect(brokeredSandbox(sandbox)).toBe(sandbox)
+  })
+
+  it('refuses a provider without a firewall to broker through', () => {
+    expect(() => brokeredSandbox({})).toThrow(expect.objectContaining({ code: 'evi.GIT_BROKER_UNAVAILABLE' }))
   })
 })

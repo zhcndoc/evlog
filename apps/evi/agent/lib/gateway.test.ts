@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const getVercelOidcToken = vi.hoisted(() => vi.fn<() => Promise<string>>())
+vi.mock('@vercel/oidc', () => ({ getVercelOidcToken }))
+
 async function loadGateway(env: Record<string, string>) {
   vi.resetModules()
   for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value)
@@ -8,6 +11,28 @@ async function loadGateway(env: Record<string, string>) {
 
 beforeEach(() => {
   vi.unstubAllEnvs()
+  getVercelOidcToken.mockReset()
+})
+
+describe('gatewayToken', () => {
+  it('authenticates with the deployment OIDC token when no API key is set', async () => {
+    getVercelOidcToken.mockResolvedValue('oidc-token')
+    const { gatewayToken } = await loadGateway({ AI_GATEWAY_API_KEY: '' })
+    await expect(gatewayToken()).resolves.toBe('oidc-token')
+  })
+
+  it('prefers AI_GATEWAY_API_KEY when it is set', async () => {
+    getVercelOidcToken.mockResolvedValue('oidc-token')
+    const { gatewayToken } = await loadGateway({ AI_GATEWAY_API_KEY: ' vck_key ' })
+    await expect(gatewayToken()).resolves.toBe('vck_key')
+    expect(getVercelOidcToken).not.toHaveBeenCalled()
+  })
+
+  it('fails with AI_GATEWAY_NOT_CONFIGURED when neither credential is available', async () => {
+    getVercelOidcToken.mockRejectedValue(new Error('no token'))
+    const { gatewayToken } = await loadGateway({ AI_GATEWAY_API_KEY: '' })
+    await expect(gatewayToken()).rejects.toMatchObject({ code: 'evi.AI_GATEWAY_NOT_CONFIGURED' })
+  })
 })
 
 describe('gatewayRouting', () => {

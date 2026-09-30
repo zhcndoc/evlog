@@ -1,5 +1,6 @@
 import type { SlackChannel } from 'eve/channels/slack'
 import type { ScheduleRunHandler } from 'eve/schedules'
+import { jobLogger } from './job'
 import { scheduleTarget } from './slack'
 
 /**
@@ -10,15 +11,20 @@ import { scheduleTarget } from './slack'
 export function maintainerRun(channel: SlackChannel, label: string, task: string): ScheduleRunHandler {
   return ({ to, waitUntil, appAuth }) => {
     const target = scheduleTarget(label)
+    const log = jobLogger('schedule.send', { schedule: label })
     waitUntil(
       to(channel, target)
         .send(task, { auth: appAuth })
         .then(
           // A send resolves once the session accepts it, not once the turn
           // runs, so the cron invocation records the handoff either way.
-          (session) => console.log(`[schedule] send accepted, session ${session.id}`),
+          (session) => {
+            log.set({ accepted: true, session: session.id })
+            log.emit()
+          },
           (error) => {
-            console.error('[schedule] send failed', error)
+            log.error(error as Error, { accepted: false })
+            log.emit()
             throw error
           },
         ),

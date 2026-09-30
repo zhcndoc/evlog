@@ -2,6 +2,7 @@ import { getToken } from '@vercel/connect'
 import { useLogger } from 'evlog/eve'
 import { defineDynamic, defineTool, toolOutput, toolOutputPart } from 'eve/tools'
 import { z } from 'zod'
+import { eviErrors, refusal } from '../lib/errors'
 import { classifyImageUrl, fetchImage } from '../lib/images'
 import { canAccessAdminTools } from '../lib/trust'
 
@@ -20,19 +21,20 @@ export default defineDynamic({
           }),
           async execute(input, toolCtx) {
             const classified = classifyImageUrl(input.url)
-            if ('error' in classified) return { success: false as const, error: classified.error }
+            if ('error' in classified) return refusal(eviErrors.IMAGE_URL_REFUSED({ message: classified.error }))
             let authorization: string | undefined
             if (classified.host === 'linear') {
               if (!canAccessAdminTools(toolCtx.session.auth.current)) {
-                return { success: false as const, error: 'Linear-hosted images are not available in this session.' }
+                return refusal(eviErrors.TOOL_NOT_AVAILABLE({ tool: 'images__view', message: 'Linear-hosted images are not available in this session.' }))
               }
               authorization = `Bearer ${await getToken('linear/evi', { subject: { type: 'app' } })}`
             }
             const log = useLogger(toolCtx)
             const fetched = await fetchImage(classified.url, { authorization })
             if ('error' in fetched) {
-              log.set({ image: { host: classified.host, fetched: false } })
-              return { success: false as const, error: fetched.error }
+              const refused = refusal(eviErrors.IMAGE_FETCH_FAILED({ message: fetched.error }))
+              log.set({ image: { host: classified.host, fetched: false, reason: refused.code } })
+              return refused
             }
             log.set({ image: { host: classified.host, fetched: true, bytes: fetched.bytes, mediaType: fetched.mediaType } })
             return { success: true as const, url: input.url, ...fetched }

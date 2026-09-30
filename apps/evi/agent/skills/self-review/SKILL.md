@@ -1,6 +1,6 @@
 ---
 name: self-review
-description: Weekly pass over the evlog repository and Evi's own surface, in two halves — what has drifted out of coherence (a capability wired but never consumed, code contradicting a written guide, a description promising a tool the allowlist lacks), and what is missing (a capability worth having, a manual step worth automating, a gap in evlog users keep hitting). Load this when the self-review schedule fires, or when Hugo asks for a self-review, an audit, ideas for what Evi should do next, or what is inconsistent in the repo.
+description: "Weekly pass over the evlog repository and Evi's own surface, in two halves: what has drifted out of coherence (a capability wired but never consumed, code contradicting a written guide, a description promising a tool the allowlist lacks), and what is missing (a capability worth having, a manual step worth automating, a gap in evlog users keep hitting). Load this when the self-review schedule fires, or when Hugo asks for a self-review, an audit, ideas for what Evi should do next, or what is inconsistent in the repo."
 ---
 
 # Self review
@@ -38,7 +38,7 @@ Something is produced and nothing consumes it. For each connection, extension an
 | Guide | Check |
 | --- | --- |
 | Root `AGENTS.md` | A new entrypoint registered in all three of `package.json#exports`, `package.json#typesVersions`, `tsdown.config.ts`. No `evlog/shared` import (`evlog/toolkit` is the public name). No HTML comment in a Vue `<template>`. |
-| Root `AGENTS.md` | Every framework integration exposes the same contract: `evlog()`, `useLogger()`, `log.fork()`. `evlog/workers` is the documented exception. |
+| Root `AGENTS.md` | Every first-class framework integration exposes the same contract: `evlog()`, `useLogger()`, `log.fork()`. Guide-level integrations (Astro, AWS Lambda) document the generic API instead, and `evlog/workers` is the documented exception. |
 | `apps/evi/docs/capability-placement.md` | The two-layer rule: a file under `agent/` outside `agent/lib/` holding logic instead of wiring, an `agent/lib/` module with no colocated `*.test.ts`, or a caller check written inline instead of going through `agent/lib/trust.ts`. |
 | `packages/evlog/test/README.md` | A framework test driving the app by hand instead of through its real request driver. |
 | Root `AGENTS.md` | A behavior change whose matching `.agents/skills/` or `skills/` SKILL.md still describes the old shape. |
@@ -119,17 +119,17 @@ The failure mode of this run is a confident output that is wrong, and the expens
 
 ## Dedupe
 
-Before filing anything: `linear__list_issues` on the evlog team, and `github__searchIssues` for an open issue or PR on the same ground, including your own drafts from earlier runs. A stale draft that still applies gets a rebase and a comment, not a replacement. A finding or proposal Hugo closed once does not come back: the decision was made.
+Before filing anything: `linear__list_issues` on the evlog team, and `github__searchIssues` for an open issue or PR on the same ground, including your own pull requests from earlier runs. An existing pull request that still applies gets an update, not a replacement. A finding or proposal Hugo closed once does not come back: the decision was made.
 
 ## Deliver
 
-**Mechanical fix, checks green, no judgement needed → draft PR.** One per finding, never bundled. Follow `contributing`: branch off `main` in `/workspace/repo`, run `pnpm run lint`, `pnpm run typecheck` and `pnpm run test`, add a changeset when the change touches a published package (an `apps/evi` change never needs one). The PR body names the guide or the declared capability the code contradicted.
+**Mechanical fix, readiness gate complete, no judgement needed → ready PR.** One per finding, never bundled. Follow `contributing`: branch off `main` in `/workspace/repo`, run `pnpm run lint`, `pnpm run typecheck` and `pnpm run test`, add a changeset when the change touches a published package (an `apps/evi` change never needs one), read CI, then request `hugorcd` as reviewer. If the gate cannot be completed, report the blocker instead of opening a draft. The PR body names the guide or declared capability the code contradicted.
 
 **Everything else → Linear issue** via `linear__save_issue` on the evlog team. A finding states the problem, what it contradicts, where it is, and the decision to make. A proposal states the observation that triggered it, what the capability would do, the rung of `capability-placement.md` it lands on, and what it costs. Label the two apart so the backlog stays readable.
 
 **A proposal never ships as code on your own initiative.** The repo forbids speculative code, and an unrequested capability is exactly that. The issue is the deliverable; building it is Hugo's call.
 
-Cap a run at three draft PRs and two proposals: the two you would defend, not everything that came to mind. Anything past the cap is named in the summary with a count, so a heavy week is visible rather than silently trimmed.
+Cap a run at three ready PRs and two proposals: the two you would defend, not everything that came to mind. Anything past the cap is named in the summary with a count, so a heavy week is visible rather than silently trimmed.
 
 Then post one line per artifact to the thread, links inline.
 
