@@ -606,4 +606,66 @@ describe('createMiddlewareLogger', () => {
       expect(drain.mock.calls[0]![0].event.contact).toBe('a***@***.com')
     })
   })
+
+  describe('tail sampling hooks', () => {
+    it('measures durationMs before keep hooks run', async () => {
+      await withFakeTimers(async () => {
+        const { logger, finish } = createMiddlewareLogger({
+          method: 'GET',
+          path: '/api/users',
+          plugins: [
+            {
+              name: 'slow-keep',
+              async keep(ctx) {
+                await new Promise(resolve => setTimeout(resolve, 250))
+                ctx.shouldKeep = true
+              },
+            }
+          ],
+        })
+        logger.set({ user: { id: 'u1' } })
+        vi.advanceTimersByTime(40)
+
+        const pending = finish({ status: 200 })
+        await vi.advanceTimersByTimeAsync(250)
+        const event = defined(await pending, 'emitted event')
+
+        expect(event.durationMs).toBe(40)
+      })
+    })
+  })
+
+  describe('console output', () => {
+    it('writes the event to stdout after enrichers ran', async () => {
+      const { logger, finish } = createMiddlewareLogger({
+        method: 'GET',
+        path: '/api/users',
+        plugins: [
+          {
+            name: 'geo',
+            enrich({ event }) {
+              event.geo = { country: 'FR' }
+            },
+          },
+        ],
+      })
+      logger.set({ user: { id: 'u1' } })
+
+      await finish({ status: 200 })
+
+      const printed = vi.mocked(console.info).mock.calls.map(call => String(call[0]))
+      const line = printed.find(text => text.includes('"path":"/api/users"'))
+      expect(line).toBeDefined()
+      expect(JSON.parse(defined(line, 'stdout line'))).toMatchObject({ geo: { country: 'FR' } })
+    })
+
+    it('still writes the event when nothing enriches or drains it', async () => {
+      const { finish } = createMiddlewareLogger({ method: 'GET', path: '/api/plain' })
+
+      await finish({ status: 200 })
+
+      const printed = vi.mocked(console.info).mock.calls.map(call => String(call[0]))
+      expect(printed.some(text => text.includes('"path":"/api/plain"'))).toBe(true)
+    })
+  })
 })

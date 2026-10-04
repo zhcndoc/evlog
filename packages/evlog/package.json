@@ -1,6 +1,6 @@
 {
   "name": "evlog",
-  "version": "2.29.0",
+  "version": "2.30.0",
   "description": "Modern TypeScript logger — simple logs, wide events, structured errors. Built for scripts, libraries, jobs, edge, and HTTP. One drain pipeline everywhere.",
   "author": "HugoRCD <contact@evlog.dev>",
   "homepage": "https://evlog.dev",
@@ -39,6 +39,9 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "bin": {
+    "evlog": "./bin/evlog.mjs"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.mts",
@@ -75,6 +78,11 @@
       "types": "./dist/adapters/otlp.d.mts",
       "import": "./dist/adapters/otlp.mjs",
       "default": "./dist/adapters/otlp.mjs"
+    },
+    "./otlp/protobuf": {
+      "types": "./dist/adapters/otlp-protobuf.d.mts",
+      "import": "./dist/adapters/otlp-protobuf.mjs",
+      "default": "./dist/adapters/otlp-protobuf.mjs"
     },
     "./posthog": {
       "types": "./dist/adapters/posthog.d.mts",
@@ -282,6 +290,9 @@
       "otlp": [
         "./dist/adapters/otlp.d.mts"
       ],
+      "otlp/protobuf": [
+        "./dist/adapters/otlp-protobuf.d.mts"
+      ],
       "posthog": [
         "./dist/adapters/posthog.d.mts"
       ],
@@ -393,6 +404,7 @@
     }
   },
   "files": [
+    "bin",
     "dist",
     "README.md"
   ],
@@ -407,6 +419,7 @@
     "bench:report": "tsx bench/scripts/report.ts",
     "size": "tsx bench/scripts/size.ts",
     "size:json": "tsx bench/scripts/size.ts --json",
+    "size:alternatives": "tsx bench/scripts/bundled-size.ts --write && tsx bench/scripts/report.ts",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:coverage": "vitest run --coverage",
@@ -416,6 +429,7 @@
   },
   "devDependencies": {
     "@codspeed/vitest-plugin": "^5.7.1",
+    "esbuild": "^0.25.12",
     "@nestjs/common": "^11.2.3",
     "@nestjs/core": "^11.2.3",
     "@nestjs/platform-express": "^11.2.3",

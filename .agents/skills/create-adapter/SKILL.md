@@ -34,8 +34,9 @@ Recent examples: `feat(loki): add the Grafana Loki drain adapter`, `feat(clickho
 | 9 | `skills/review-logging-patterns/SKILL.md` | Add adapter row in the Drain Adapters table + frontmatter description |
 | 10 | `.changeset/{name}-adapter.md` | Create changeset (`minor`) describing the adapter |
 | 11 | `.github/workflows/semantic-pull-request.yml` + `.github/pull_request_template.md` | Register `{name}` as a PR scope in both files |
+| 12 | `.agents/skills/create-adapter/references/upstream-alignment.md` | Add the adapter's row: ingest docs URL, official client repo and package, the file that builds the request, `Aligned to` set to the client version you read while writing the adapter |
 
-**Important**: Do NOT consider the task complete until all 11 touchpoints have been addressed.
+**Important**: Do NOT consider the task complete until all 12 touchpoints have been addressed.
 
 ## Naming Conventions
 
@@ -157,7 +158,7 @@ Adapter docs live in three categories under `apps/docs/content/4.integrate/adapt
 
 Create `{NN}.{name}.md` in the right category with the next available number. Use the Loki page (`hybrid/01.loki.md`) as a reference for frontmatter, tone, and sections. Key sections: intro, quick setup, configuration (env vars table + priority), advanced usage, querying in the target service, troubleshooting, direct API usage, next steps.
 
-**Important: multi-framework examples.** The Quick Start section must include a `::code-group` with tabs for the supported frameworks (Nuxt/Nitro, Hono, Express, Fastify, Elysia, NestJS, Standalone). Do not only show Nitro examples.
+**Important: multi-framework examples.** The Quick Start section must include a `::framework-tabs` group with one fence per supported framework (Nuxt, Nitro, Next.js, SvelteKit, TanStack Start, React Router, Hono, Express, Fastify, Elysia, NestJS, oRPC, Cloudflare Workers, Standalone), the framework in the bracket label. Copy the Axiom page's group and swap the drain factory. Do not only show Nitro examples, and put nothing but fences inside the group.
 
 ## Step 7: Update Adapters Overview Page
 

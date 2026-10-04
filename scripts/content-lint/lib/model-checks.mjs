@@ -23,6 +23,9 @@ const ALWAYS = [
 const BY_SURFACE = {
   docs: [
     { id: 'U-05', ask: 'Does the opening state the reader\'s situation, or define the topic?' },
+    { id: 'D-13', ask: 'Where on the page is the first thing the reader gets: an output, a query result, a number from a run? If it is below the install or the options, the page explains before it shows.' },
+    { id: 'D-14', ask: 'Does the quick start follow one path, with every supported framework as an equal tab in the stable order (Nuxt / Nitro, Next.js, Hono, Express, Standalone), none leading and none collapsed? Do the option tables live on one page, or is the same default documented twice?' },
+    { id: 'D-15', ask: 'Does any command on the page only work inside a checkout of evlog (pnpm --filter, scripts/, a demo runner)? A reader with their own app open cannot paste it.' },
     { id: 'U-11', ask: 'Do the headings name what the section does for the reader, or are they noun labels?' },
     { id: 'U-13', ask: 'Where the page describes a feature with a price (a flag, a dependency, a runtime constraint, a field to maintain), is the price next to it?' },
     { id: 'D-01', ask: 'Are the sections ordered by what the reader does, or by how evlog is built? A page whose outline mirrors the module graph was written from the inside.' },

@@ -8,7 +8,7 @@ Reject a candidate when:
 
 - the code or prose encodes a real constraint the reviewer missed;
 - removing it changes behavior, compatibility, public API, security, or observability;
-- it is taste rather than a demonstrated maintenance or reader cost;
+- it is taste rather than a demonstrated maintenance or reader cost; a `clarify` candidate escapes this only when it quotes current and proposed text, the proposed text keeps the meaning, and the ambiguity it names is real;
 - the proposed simplification only moves complexity;
 - another open issue or prior decision already settled it;
 - its source location, evidence, or claimed caller set is wrong.

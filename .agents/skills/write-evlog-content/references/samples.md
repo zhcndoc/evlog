@@ -1,59 +1,69 @@
 # Samples
 
-evlog 自有页面中读起来正确的段落，以及其正确的原因。在候选发现处于边界情况时使用它们：这些内容正是 tell list 不应标记的内容。
+Passages from evlog's own pages that read right, with the reason. Use them when a candidate finding is borderline: these are what the tell list must not flag.
 
-引文在写作时是逐字引用的，其中一些仍然带有 `U-14` 现已禁止的 em dash。这就是语料库早于规则的样子。这里保留样例，是为了说明句子所起的作用，而不是为了说明其标点；任何修改这些页面的提交都应修复破折号，并更新这里的引文。
+Quotes are verbatim at the time of writing, and some of them still carry the em dashes that `U-14` now bans. That is what a corpus older than its rule looks like. The sample is here for what its sentence does, not for its punctuation, and a pass that touches one of these pages fixes the dash and updates the quote here.
 
 ---
 
-## 从成本而非定义开始
+## Opening on a cost, not a definition
 
 `1.start/2.why-evlog.md`
 
-> 添加结构化日志最便宜的时机是**第一次请求之前**。等到你有了 200 个路由、40 个后台任务，并且每个文件里都有一个 `console.log` 时，你已经在为一个从未做出的决定支付利息了。
+> The cheapest moment to add structured logging is **before the first request**. By the time you have 200 routes, 40 background jobs, and a `console.log` per file, you're paying interest on a decision you never made.
 
-形式上足够概括，内容上又足够具体：三个数量和一个明确命名的成本。这是 T-09 的对应样例，即抽象陈词滥调式的冷开场。区别在于，这个开场无法直接粘贴到其他产品的页面上。
+General in shape and specific in content: three quantities and a named cost. This is the twin for T-09, the abstract truism cold open. The difference is that this opener could not be pasted onto another product's page.
 
 ---
 
-## 一个让后文更可信的承认
+## An admission that makes the rest believable
 
 `1.start/2.why-evlog.md`
 
-> 这些基础能力只是入场券，每个现代日志记录器都有某种形式的它们。evlog 在第 1 天就能体现价值的地方，是围绕这些能力构建的一切，用来解决那些你还没遇到过的问题。
+> The primitives are table stakes, every modern logger has some flavour of them. Where evlog earns its place on day 1 is everything wired around them, for problems you haven't had yet.
 
-页面在提出主张之前，先承认了产品中通用的部分。实际上的 `U-13`。引文已移除破折号，这正是修复后的样子。
-
----
-
-## 经得起替换的主张
-
-`0.landing.md`，`evlog map` 卡片
-
-> 大多数团队第一次发现某个处理程序什么都没记录，是在事故处理中。想想 Lighthouse，不过针对的是可观测性：为应用在崩溃时能够提供的上下文打分，并列出提升分数所需的确切修复项。
-
-将 `evlog` 替换成任何竞品后，这句话就不再成立，因为它描述的是某个特定命令的输出。上面的标题 `One command. :br Every blind spot` 是 L-05 有意采用的片段节奏，并且传达了一项独特能力，这正是它区别于 T-03 的地方。
+The page concedes the commodity part of the product before making its claim. `U-13` in practice. Quoted with the dash removed, which is what the fix looks like.
 
 ---
 
-## 先展示错误的形态
+## A claim that survives substitution
+
+`0.landing.md`, the `evlog map` card
+
+> The first time most teams learn a handler logs nothing is mid-incident. Think Lighthouse, but for observability: a score for the context your app will give you when it breaks, and the exact list of fixes to raise it.
+
+Replace `evlog` with any competitor and this stops being true, because it describes a specific command's output. The title above it, `One command. :br Every blind spot`, is the deliberate fragment rhythm of `L-05`, and it lands a distinct capability, which is what separates it from T-03.
+
+---
+
+## Showing the wrong shape first
 
 `2.learn/2.wide-events.md`
 
-该页面先打印六行 `logger.info`，用四个项目符号说明它们的问题所在，然后展示取代它们的宽事件。实际上的 `D-04`。这个概念根本不需要论证，因为读者已经认出了自己的文件。
+The page prints six `logger.info` lines, names what is broken about them in four bullets, then shows the wide event that replaces them. `D-04` in practice. The concept never has to be argued for, because the reader has already recognized their own file.
 
 ---
 
-## 参考页面上的文体规范
+## Register discipline on a reference page
 
 `2.learn/2.wide-events.md`
 
-> 宽事件是 evlog 背后的核心概念。不要将日志散落在代码库各处，而是针对任意一个工作单元积累上下文，无论它是请求、脚本、任务还是工作流，然后输出一条完整的日志事件。
+> Wide events are the core concept behind evlog. Instead of scattering logs throughout your codebase, you accumulate context over any unit of work, whether a request, script, job, or workflow, and emit a single, comprehensive log event.
 
-第二人称，现在时，系统和读者都在行动。没有最高级，没有破折号，也没有警句。这就是基准文体。大多数文档都应该听起来像这样，而一篇处处都比这更活泼的页面值得再检查一遍。
+Second person, present tense, the system and the reader both acting. No superlative, no dash, no epigram. This is the baseline register. Most of the docs should sound like this, and a page that sounds livelier than this everywhere is worth a second look.
 
 ---
 
-## 这个文件中缺少的内容
+## What is missing from this file
 
-没有博客样例，因为目前还没有博客。第一篇通过评审的文章会被添加到这里；在那之前，博客评审依靠 `rules/blog.md` 和这种文体。
+No blog sample, because there is no blog yet. The first post that passes review gets added here, and until then blog review leans on `rules/blog.md` and this register.
+
+---
+
+## Opening on the result, not the mechanism
+
+`5.use-cases/7.signals/01.overview.md`
+
+> Your logs tell you a request returned 502. A signal tells you it was Stripe, that a retry would have worked, and that it is not worth waking anyone. Your logs tell you a checkout returned 200. A signal tells you the customer left without an order.
+
+Two pairs, each one "what you have" against "what you get", on a request the reader has seen. No definition, no API name, no scenario to walk through. The next screen is a table of judged requests with three numbers read from it, and the install comes after. `D-13` in practice, and the maintainer's reference for what "make them want it" means: the reader sees the column before they see the function that produces it.

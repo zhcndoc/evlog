@@ -4,11 +4,11 @@
 
 ## 如果可以，请优先使用 `evlog map`
 
-在 **Nuxt、Nitro、Next.js App Router、TanStack Start 和 Hono** 上，如果用户愿意，请从 `@evlog/cli` 开始：一个命令即可找到黑暗入口点并指出修复方法：
+在 **Nuxt、Nitro、Next.js App Router、TanStack Start 和 Hono** 上，如果用户愿意，请从随 `evlog` 软件包提供的 `evlog` CLI 开始：一个命令即可找到黑暗入口点并指出修复方法：
 
 ```bash
-npx @evlog/cli map --no-write
-npx @evlog/cli map <file> --no-write   # 单个入口点的建议形式
+npx evlog map --no-write
+npx evlog map <file> --no-write   # 单个入口点的建议形式
 ```
 
 **要求**（将分数移至下方的反模式）：

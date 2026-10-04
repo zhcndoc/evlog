@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { gunzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initLogger } from '../../src/logger'
 import {
@@ -538,6 +539,45 @@ describe('defineHttpDrain', () => {
     })
     await expect(drain.raw(drainCtx())).rejects.toThrow()
     expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('gzips the body once and sends the same bytes on every retry', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('boom', { status: 503 }))))
+    const body = JSON.stringify({ hello: 'world' })
+    const drain = defineHttpDrain<{ apiKey: string; retries?: number }>({
+      name: 'unit-test',
+      resolve: () => ({ apiKey: 'k', retries: 1 }),
+      encode: () => ({ url: 'https://x.test', headers: {}, body, compression: 'gzip' }),
+    })
+    await expect(drain.raw(drainCtx())).rejects.toThrow()
+
+    const { calls } = vi.mocked(fetch).mock
+    expect(calls).toHaveLength(2)
+    const [first, second] = calls.map(([, init]) => init!)
+    expect(first!.headers).toMatchObject({ 'Content-Encoding': 'gzip' })
+    expect(second!.body).toBe(first!.body)
+    expect(gunzipSync(first!.body as Uint8Array).toString()).toBe(body)
+  })
+
+  it('sends a binary body unchanged, and gzipped when asked', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(null, { status: 200 }))))
+    const body = new Uint8Array([0x0A, 0x03, 0x00, 0xFF, 0x80])
+    const plain = defineHttpDrain<{ apiKey: string }>({
+      name: 'unit-test',
+      resolve: () => ({ apiKey: 'k' }),
+      encode: () => ({ url: 'https://x.test', headers: {}, body }),
+    })
+    const gzipped = defineHttpDrain<{ apiKey: string }>({
+      name: 'unit-test',
+      resolve: () => ({ apiKey: 'k' }),
+      encode: () => ({ url: 'https://x.test', headers: {}, body, compression: 'gzip' }),
+    })
+    await plain.raw(drainCtx())
+    await gzipped.raw(drainCtx())
+
+    const [first, second] = vi.mocked(fetch).mock.calls.map(([, init]) => init!)
+    expect(first!.body).toBe(body)
+    expect(new Uint8Array(gunzipSync(second!.body as Uint8Array))).toEqual(body)
   })
 
   it('raw skips when resolve returns null', async () => {

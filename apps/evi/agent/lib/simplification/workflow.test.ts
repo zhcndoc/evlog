@@ -1,8 +1,9 @@
-import type { WorkflowToolContext } from 'eve/tools'
+import type { AgentMessageResult, AgentSession, WorkflowToolContext } from 'eve/tools'
 import { describe, expect, it, vi } from 'vitest'
 import {
   assembleVerification,
   assignFindingIds,
+  batchPullRequestCandidates,
   parseStructuredResult,
   reviewMessage,
   revisionMessage,
@@ -12,12 +13,30 @@ import {
   verificationMessage,
 } from './workflow'
 
-type AgentResult = Awaited<ReturnType<WorkflowToolContext['agent']>>
-type AgentInput = Parameters<WorkflowToolContext['agent']>[1]
+type Reply = { data: unknown } | { message: string } | { error: string }
+
+/** Each sent message settles with the turn `reply` returns for it. */
+function agentSessions(reply: (target: string, message: string) => Reply) {
+  const sent: Array<{ target: string, message: string }> = []
+  const agent = vi.fn((target: string): AgentSession => ({
+    send: <TOutput>(message: string) => {
+      sent.push({ target, message })
+      const settled = reply(target, message)
+      const result: AgentMessageResult = 'error' in settled
+        ? { status: 'failed', data: undefined, message: undefined, error: { message: settled.error } }
+        : { status: 'waiting', data: undefined, message: undefined, ...settled }
+      return Promise.resolve({ result: () => Promise.resolve(result as AgentMessageResult<TOutput>) })
+    },
+  }))
+  return { ctx: { agent } satisfies Pick<WorkflowToolContext, 'agent'>, sent }
+}
+
+const replied = (data: unknown): Reply => ({ data })
 
 const finding = {
   id: 'code-1',
   category: 'code' as const,
+  kind: 'remove' as const,
   path: 'packages/evlog/src/shared/compose.ts',
   lines: '10-14',
   problem: 'Duplicate guard',
@@ -98,6 +117,19 @@ describe('simplification workflow', () => {
     expect(message).toContain('status complete')
   })
 
+  it('asks reviewers to clarify as well as remove, with both texts quoted', () => {
+    const message = reviewMessage(
+      'abcdef0',
+      { agent: 'code_simplifier', category: 'code', scope: 'packages/evlog/src/adapters' },
+      [],
+    )
+
+    expect(message).toContain('remove, deduplicate, or clarify')
+    expect(message).toContain('set kind to remove, dedupe, or clarify')
+    expect(message).toContain('quotes both the current text and the proposed text')
+    expect(message).toContain('a clarify finding without a named ambiguity is taste')
+  })
+
   it('sets a higher evidence bar for removing tests', () => {
     const message = reviewMessage(
       'abcdef0',
@@ -147,6 +179,8 @@ describe('simplification workflow', () => {
     expect(message).toContain('Never confirm a finding based on an incomplete review')
     expect(message).toContain('Return one verdict per candidate id')
     expect(message).toContain('Comment body was truncated.')
+    expect(message).toContain('A clarify candidate quotes current and proposed text')
+    expect(message).toContain('resolves the ambiguity the reviewer named')
   })
 
   it('derives run status and counts from structured results', () => {
@@ -194,8 +228,57 @@ describe('simplification workflow', () => {
       rejected: 1,
       questions: 0,
       pullRequestCandidates: 1,
+      pullRequestBatches: 1,
       proposals: 0,
     })
+    expect(summary.pullRequestBatches).toEqual([
+      { kind: 'remove', area: 'packages/evlog/src/shared', findingIds: ['code-1'] },
+    ])
+  })
+
+  it('batches confirmed pull-request candidates by kind and directory', () => {
+    const adapters = 'packages/evlog/src/adapters'
+    const batches = batchPullRequestCandidates([
+      { ...verifiedFinding, id: 'code-1', kind: 'clarify', path: `${adapters}/sentry.ts` },
+      { ...verifiedFinding, id: 'code-2', kind: 'remove', path: `${adapters}/datadog.ts` },
+      { ...verifiedFinding, id: 'code-3', kind: 'clarify', path: `${adapters}/posthog.ts` },
+      { ...verifiedFinding, id: 'code-4', kind: 'clarify', path: 'packages/evlog/src/shared/compose.ts' },
+      { ...verifiedFinding, id: 'code-5', kind: 'clarify', path: `${adapters}/loki.ts`, delivery: 'proposal' },
+      { ...verifiedFinding, id: 'code-6', kind: 'clarify', path: `${adapters}/axiom.ts`, verdict: 'rejected' },
+    ])
+
+    expect(batches).toEqual([
+      { kind: 'clarify', area: adapters, findingIds: ['code-1', 'code-3'] },
+      { kind: 'remove', area: adapters, findingIds: ['code-2'] },
+      { kind: 'clarify', area: 'packages/evlog/src/shared', findingIds: ['code-4'] },
+    ])
+  })
+
+  it('rejects a finding without a kind', async () => {
+    const { ctx } = agentSessions((target, message) => {
+      if (target === 'finding_verifier' && message.includes('before any review starts'))
+        return replied({ revision })
+
+      if (target === 'finding_verifier')
+        return replied({ findings: [], summary: 'Nothing to verify.' })
+
+      const { kind: _kind, ...withoutKind } = finding
+      return replied({
+        scope: target,
+        status: 'complete',
+        limitations: [],
+        findings: target === 'code_simplifier' ? [withoutKind] : [],
+        cleanAreas: [],
+      })
+    })
+
+    const result = await runSimplificationSweep(input, ctx)
+
+    expect(result.reviewers).toContainEqual(expect.objectContaining({
+      agent: 'code_simplifier',
+      status: 'incomplete',
+      limitations: [expect.stringContaining('Reviewer failed before returning a valid structured result')],
+    }))
   })
 
   it('assigns finding ids in code so reviewers cannot collide', () => {
@@ -241,15 +324,15 @@ describe('simplification workflow', () => {
   })
 
   it('continues with a degraded result when one reviewer fails', async () => {
-    const agent = vi.fn((target: string, agentInput: AgentInput): Promise<AgentResult> => {
-      if (target === 'finding_verifier' && agentInput.message.includes('before any review starts'))
-        return Promise.resolve({ revision })
+    const { ctx, sent } = agentSessions((target, message) => {
+      if (target === 'finding_verifier' && message.includes('before any review starts'))
+        return replied({ revision })
 
       if (target === 'test_reviewer')
-        throw new Error('review failed')
+        return { error: 'review failed' }
 
       if (target === 'finding_verifier') {
-        return Promise.resolve({
+        return replied({
           findings: [
             {
               ...finding,
@@ -262,7 +345,7 @@ describe('simplification workflow', () => {
         })
       }
 
-      return Promise.resolve({
+      return replied({
         scope: target,
         status: 'complete',
         limitations: [],
@@ -271,7 +354,7 @@ describe('simplification workflow', () => {
       })
     })
 
-    const result = await runSimplificationSweep(input, { agent })
+    const result = await runSimplificationSweep(input, ctx)
 
     expect(result.status).toBe('degraded')
     expect(result.counts).toEqual({
@@ -281,6 +364,7 @@ describe('simplification workflow', () => {
       rejected: 0,
       questions: 0,
       pullRequestCandidates: 1,
+      pullRequestBatches: 1,
       proposals: 0,
     })
     expect(result.reviewers).toContainEqual({
@@ -289,19 +373,19 @@ describe('simplification workflow', () => {
       status: 'incomplete',
       limitations: ['Reviewer failed before returning a valid structured result: review failed'],
     })
-    expect(agent).toHaveBeenCalledTimes(6)
-    expect(agent.mock.calls[5]?.[1]?.message).toContain('Reviewer failed before returning a valid structured result: review failed')
+    expect(sent).toHaveLength(6)
+    expect(sent[5]?.message).toContain('Reviewer failed before returning a valid structured result: review failed')
   })
 
   it('degrades instead of failing when verification returns prose', async () => {
-    const agent = vi.fn((target: string, agentInput: AgentInput): Promise<AgentResult> => {
-      if (target === 'finding_verifier' && agentInput.message.includes('before any review starts'))
-        return Promise.resolve({ revision })
+    const { ctx } = agentSessions((target, message) => {
+      if (target === 'finding_verifier' && message.includes('before any review starts'))
+        return replied({ revision })
 
       if (target === 'finding_verifier')
-        return Promise.resolve('Verification complete, but no structured result was produced.')
+        return { message: 'Verification complete, but no structured result was produced.' }
 
-      return Promise.resolve({
+      return replied({
         scope: target,
         status: 'complete',
         limitations: [],
@@ -310,7 +394,7 @@ describe('simplification workflow', () => {
       })
     })
 
-    const result = await runSimplificationSweep(input, { agent })
+    const result = await runSimplificationSweep(input, ctx)
 
     expect(result.status).toBe('degraded')
     expect(result.verification.findings).toEqual([
@@ -330,11 +414,11 @@ describe('simplification workflow', () => {
 
   it('stops before dispatching specialists when the checkout revision differs', async () => {
     const checkoutRevision = 'b'.repeat(40)
-    const agent = vi.fn((): Promise<AgentResult> => Promise.resolve({ revision: checkoutRevision }))
+    const { ctx, sent } = agentSessions(() => replied({ revision: checkoutRevision }))
 
-    await expect(runSimplificationSweep(input, { agent })).rejects.toThrow(
+    await expect(runSimplificationSweep(input, ctx)).rejects.toThrow(
       `Shared checkout revision ${checkoutRevision} does not match requested revision ${revision}.`,
     )
-    expect(agent).toHaveBeenCalledOnce()
+    expect(sent).toHaveLength(1)
   })
 })

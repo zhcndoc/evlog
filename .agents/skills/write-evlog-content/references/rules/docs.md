@@ -1,91 +1,115 @@
-# 文档规则
+# Docs rules
 
-应用于 `apps/docs/content/`。与 `universal.md` 一起加载。
-
----
-
-**D-01 · 一页回答一个意图** · `standard`
-
-规则：页面存在的目的只能是回答一个问题，该问题应在其 `description` frontmatter 中说明。回答不同问题的材料应归属于拥有它的页面，并通过链接访问  
-原因：通过不断添加内容而变大的页面会被快速浏览，读者也就不再能找到原本就在那里的答案
+Apply to `apps/docs/content/`. Load alongside `universal.md`.
 
 ---
 
-**D-02 · description 是答案，而不是标签** · `standard`
+**D-01 · One page answers one intent** · `standard`
 
-规则：frontmatter 中的 `description:` 应用完整句子说明读者能获得什么。它既是搜索结果，也是 LLM 摘要  
-不佳：`description: Documentation for the sampling feature.`  
-较好：`description: Drop low-importance events at emit time and force-keep slow requests and errors, so your bill scales with signal instead of traffic.`  
-原因：这是页面上杠杆作用最大的句子，也是最常被最后才写下的句子  
-长度：介于 50 到 160 个字符之间。搜索结果显示约 160 个字符，因此超过该长度的内容没人会读完，而少于 50 个字符则浪费了一个本可以使用的展示位置。扫描器会同时测量这两项  
-注意：这适用于提供路由的页面。`SKILL.md` 的 description 是面向智能体的路由决策（`M-06`），因此特意较长
+Rule: a page has a single question it exists to answer, stated in its `description` frontmatter. Material that answers a different question belongs on the page that owns it, behind a link.
+Why: pages that grow by accretion get skimmed, and the reader stops finding the answer that was there.
 
 ---
 
-**D-03 · 始终先写说明文字，再写代码** · `standard`
+**D-02 · The description is the answer, not the label** · `standard`
 
-规则：代码块前应有一句话，说明它的作用以及你会在什么情况下使用它。页面绝不能以代码块开头  
-原因：读者会先浏览代码，然后向上寻找原因。如果原因在后面，他们离开时就会形成错误的心智模型
-
----
-
-**D-04 · 展示失败，而不只是成功** · `standard`
-
-规则：如果某项功能的存在是因为会出现问题，页面应先展示错误的形态，再展示正确的形态：先展示分散的日志，再展示宽事件；先展示不透明的错误，再展示结构化的错误  
-原因：这是 evlog 自身最出色的页面采用的方式，也正是它让 API 显得顺理成章而非武断的原因
+Rule: `description:` in frontmatter states what the reader gets, in a full sentence. It is the search result and the LLM summary.
+Bad: `description: Documentation for the sampling feature.`
+Better: `description: Drop low-importance events at emit time and force-keep slow requests and errors, so your bill scales with signal instead of traffic.`
+Why: it is the highest-leverage sentence on the page and the one most often written last.
+Length: between 50 and 160 characters. A search result shows about 160, so anything past that is a sentence nobody finishes reading, and anything under 50 pays for a slot it does not use. The scanner measures both.
+Note: this applies to pages that serve a route. A `SKILL.md` description is a routing decision for an agent (`M-06`) and is long on purpose.
 
 ---
 
-**D-05 · MDC 结构是内容，而不是装饰** · `critical`
+**D-03 · Prose before code, always** · `standard`
 
-规则：`::callout`、`::card-group`、`::code-group`、`::prompt`、`::steps` 都承载着含义。callout 用来承载读者将遇到的例外情况。card group 用来承载读者需要从中选择的集合。不要为了增加视觉纹理而将文字转换为组件，也绝不要让组件的正文读起来和一段普通文字没有区别  
-原因：每个组件都会占用垂直空间，而装饰性组件会把答案推到首屏以下
-
----
-
-**D-06 · Vue 模板或 MDC 块中不得包含 HTML 注释** · `critical`
-
-规则：适用于整个仓库。`<!-- -->` 绝不能出现在 `<template>` 块中或 MDC 内容内
+Rule: a code block is preceded by the sentence that says what it does and when you would reach for it. A page never opens on a block.
+Why: readers scan code first and then look up for the reason. If the reason is below, they leave with the wrong mental model.
 
 ---
 
-**D-07 · 选项应使用表格，而不是文字** · `standard`
+**D-04 · Show the failure, not only the success** · `standard`
 
-规则：一组带有类型和默认值的配置选项应使用表格。依次用文字描述每个选项，就是有人拒绝编写表格  
-原因：没人会线性阅读选项列表，而表格能让缺失的默认值显而易见
-
----
-
-**D-08 · 横向链接一次即可** · `standard`
-
-规则：当页面提到另一个页面所拥有的概念时，应在首次提及时添加链接，之后不再重复。每个页面至少要指向一个下一步  
-原因：文档是读者凭好奇心进行导航的图。没有出站链接的页面是死胡同，而同一个链接出现六次的页面则充满噪音
+Rule: where a feature exists because something goes wrong, the page shows the wrong shape before the right one: the scattered logs before the wide event, the opaque error before the structured one.
+Why: this is how evlog's own strongest pages work, and it is what makes the API feel inevitable instead of arbitrary.
 
 ---
 
-**D-09 · 重写过程中应保持 frontmatter 不变** · `critical`
+**D-05 · MDC structure is content, not decoration** · `critical`
 
-规则：除非某项发现明确指出，否则编辑时应保持键、顺序、`navigation.icon` 以及 `links:` 条目不变。图标和链接颜色是设计决策
-
----
-
-**D-10 · 页面必须与其所记录的代码一致** · `critical`
-
-规则：在评审时，应对照 `packages/evlog/src` 验证符号、选项名称、默认值和错误代码。包中的重命名一经发布，就会立即成为文档错误  
-原因：这是唯一一类会悄无声息地将原本正确的读者变成错误读者的文档缺陷
+Rule: `::callout`, `::card-group`, `::code-group`, `::prompt`, `::steps` carry meaning. A callout holds the exception the reader will hit. A card group holds a set the reader chooses from. Do not convert prose into components for texture, and never leave a component with a body that would read the same as a paragraph.
+Why: every component costs vertical space, and a decorative one pushes the answer below the fold.
 
 ---
 
-**D-11 · 每个页面都应由另一个页面推荐** · `standard`
+**D-06 · No HTML comments in Vue templates or MDC blocks** · `critical`
 
-规则：至少有一个其他页面通过文字、表格或卡片链接到此页面。导航不能替代这一点：它只列出已有内容，却不会告诉读者何时需要这些内容  
-原因：`voice.md` 承诺文档会主动建议下一步，而不是等待读者自行搜索。没有页面指向的页面，只能回答那些已经知道如何发起搜索的问题  
-注意：扫描器会读取文字中的链接、表格单元格中的链接，以及 MDC 组件中 `to:` / `href:` 属性中的链接，因此 card group 也算作推荐。章节索引不受此规则限制，因为它本来就应通过导航访问；页面链接到自身路由也不算被推荐
+Rule: repo-wide. `<!-- -->` never appears in a `<template>` block or inside MDC content.
 
 ---
 
-**D-12 · 锚点必须指向实际存在的标题** · `critical`
+**D-07 · Options are tables, not prose** · `standard`
 
-规则：链接中的每个 `#fragment` 都必须能解析到目标页面上的标题，无论目标页面是当前页面还是其他页面  
-原因：标题重命名后，其锚点也会随之改变，而不会有任何东西报告断链。链接仍然可以解析，页面仍然可以加载，但读者会在原本被告知有某个章节的情况下，落到一个长页面的顶部  
-注意：fragment 会按照渲染器的方式生成 slug，即移除标点符号而不是将其合并。`Drain & Enrichers` 的锚点为 `drain--enrichers`，`The ratchet: --baseline` 的锚点为 `the-ratchet---baseline`，两者都会保留被移除字符留下的额外短横线。指向其他主机的链接包含属于其他人的 fragment，应保持不变
+Rule: a set of configuration options with types and defaults is a table. Prose describing each option in sequence is a table someone refused to write.
+Why: nobody reads an options list linearly, and a table makes a missing default visible.
+
+---
+
+**D-08 · Link laterally, once** · `standard`
+
+Rule: when a page names a concept another page owns, link it on first mention and not again. Every page names at least one next step.
+Why: the docs are a graph the reader navigates by curiosity. A page with no outbound link is a dead end, and a page with the same link six times is noise.
+
+---
+
+**D-09 · Frontmatter stays intact through a rewrite** · `critical`
+
+Rule: keys, order, `navigation.icon`, and `links:` entries survive an edit unchanged unless a finding names them. Icons and link colors are design decisions.
+
+---
+
+**D-10 · The page matches the code it documents** · `critical`
+
+Rule: symbols, option names, defaults, and error codes are verified against `packages/evlog/src` at review time. A rename in the package is a docs bug the moment it ships.
+Why: this is the only class of docs defect that silently converts a correct reader into a wrong one.
+
+---
+
+**D-11 · Every page is suggested by another page** · `standard`
+
+Rule: at least one other page links to this one in prose, a table, or a card. The navigation is not a substitute: it lists what exists, it does not tell a reader when they need it.
+Why: `voice.md` promises that the docs suggest the next move rather than waiting to be searched. A page nothing points at is a page that only answers a search someone already knew how to run.
+Note: the scanner reads links from prose, from table cells, and from `to:` / `href:` props in MDC components, so a card group counts. A section index is exempt, since the navigation is how it is meant to be reached, and a page linking to its own route does not count as being suggested.
+
+---
+
+**D-12 · An anchor points at a heading that exists** · `critical`
+
+Rule: every `#fragment` in a link resolves to a heading on the page it targets, whether that page is this one or another.
+Why: a renamed heading takes its anchor with it, and nothing reports the break. The link still resolves, the page still loads, and the reader lands at the top of a long page having been promised a section.
+Note: the fragment is slugged the way the renderer does it, which removes punctuation rather than collapsing it. `Drain & Enrichers` anchors as `drain--enrichers` and `The ratchet: --baseline` as `the-ratchet---baseline`, both carrying the extra dash the removed character left behind. Links to another host carry someone else's fragments and are left alone.
+
+---
+
+**D-13 · The result comes before the explanation** · `standard`
+
+Rule: the first screen of a page shows what the reader gets: an output, a query result, a number from a real run. The mechanism, the install and the options follow it. A problem is named only as the reason the result matters, never as the opening on its own.
+Bad: a page that opens with a scenario, then the API, then the options, and shows the first output in the fourth section.
+Better: the demo's output table in the second paragraph, three numbers read from it, then "Add your first signal".
+Why: a reader who does not know evlog decides on the first screen whether the page is for them. A problem they recognise keeps them reading; a result they want makes them try it. Only the second one converts.
+
+---
+
+**D-14 · One path in the core, every knob in one place** · `standard`
+
+Rule: the quick start is one sequence of steps. Where a step differs by framework, it is one `::framework-tabs` with every supported framework as an equal tab, in a stable order (Nuxt, Nitro, Next.js, SvelteKit, TanStack Start, React Router, Hono, Express, Fastify, Elysia, NestJS, oRPC, Cloudflare Workers, Standalone); no framework is the lead and none is folded away. Options, defaults, counters and env vars live on one reference page per feature, tabbed by object with `::tabs`, and the prose pages link to it once instead of carrying their own option tables.
+Why: evlog does not know which framework a reader runs, so a page that leads with one tells the others the feature is not for them. A table repeated across three pages drifts across three pages.
+
+---
+
+**D-15 · A reader never has to clone the repo** · `standard`
+
+Rule: a docs page gives no command that only works inside a checkout of evlog: no `pnpm --filter`, no `scripts/`, no demo or benchmark runner. Their output can appear as evidence, labelled for what it shows, never for how it was produced. The command itself lives on a contributor surface: the package README, `AGENTS.md`, a `scripts/` README.
+Why: the reader has an app and a terminal open in it. A command they cannot paste there is a dead end on the first screen, and it makes the page read as the maintainer's test harness instead of their product.
+Note: benchmark pages that exist to be reproduced are the exception, and they say so.

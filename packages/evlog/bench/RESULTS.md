@@ -1,42 +1,55 @@
 # 基准测试结果
 
-> 生成于 2026-05-04
+> 生成于 2026-10-01
 
 ## 包大小
 
 | 条目 | 原始大小 | Gzip |
 |-------|----:|-----:|
-| framework/nitro | 19.36 kB | 7.04 kB |
-| framework/ai | 15.53 kB | 4.23 kB |
-| framework/next | 12.33 kB | 4.23 kB |
-| adapter/datadog | 6.16 kB | 2.46 kB |
+| framework/nitro | 20.35 kB | 7.31 kB |
+| framework/next | 14.69 kB | 5.21 kB |
+| framework/ai | 16.94 kB | 4.67 kB |
+| adapter/fs | 9.97 kB | 3.35 kB |
+| adapter/datadog | 6.22 kB | 2.48 kB |
+| adapter/sentry | 6.40 kB | 2.40 kB |
 | framework/vite | 7.26 kB | 2.40 kB |
-| adapter/sentry | 6.35 kB | 2.39 kB |
-| adapter/otlp | 5.85 kB | 2.12 kB |
+| adapter/memory | 6.13 kB | 2.36 kB |
+| core (index) | 6.21 kB | 2.15 kB |
+| adapter/otlp | 5.91 kB | 2.14 kB |
 | enrichers | 6.24 kB | 1.99 kB |
-| framework/sveltekit | 5.00 kB | 1.59 kB |
-| utils | 3.79 kB | 1.58 kB |
-| adapter/fs | 3.65 kB | 1.54 kB |
-| adapter/axiom | 3.86 kB | 1.48 kB |
-| error | 3.59 kB | 1.46 kB |
-| adapter/posthog | 4.33 kB | 1.45 kB |
+| framework/sveltekit | 6.33 kB | 1.96 kB |
+| utils | 4.23 kB | 1.78 kB |
+| error | 3.84 kB | 1.57 kB |
+| adapter/axiom | 3.92 kB | 1.50 kB |
+| adapter/posthog | 4.39 kB | 1.47 kB |
+| framework/elysia | 3.57 kB | 1.41 kB |
 | pipeline | 4.17 kB | 1.35 kB |
-| framework/elysia | 3.38 kB | 1.34 kB |
-| workers | 3.15 kB | 1.30 kB |
-| framework/nestjs | 2.96 kB | 1.26 kB |
-| adapter/better-stack | 3.15 kB | 1.24 kB |
-| http | 2.88 kB | 1.22 kB |
+| workers | 3.15 kB | 1.31 kB |
+| framework/nestjs | 3.00 kB | 1.26 kB |
+| adapter/better-stack | 3.22 kB | 1.26 kB |
+| http | 2.91 kB | 1.24 kB |
 | adapter/hyperdx | 2.86 kB | 1.18 kB |
-| framework/fastify | 2.34 kB | 1.02 kB |
-| framework/express | 1.35 kB | 734 B |
-| toolkit | 2.00 kB | 720 B |
-| framework/hono | 1.12 kB | 617 B |
-| core (index) | 1.26 kB | 510 B |
+| framework/fastify | 2.40 kB | 1.08 kB |
+| toolkit | 2.17 kB | 782 B |
+| framework/express | 1.39 kB | 737 B |
+| framework/hono | 1.12 kB | 613 B |
 | browser | 650 B | 289 B |
-| logger | 430 B | 230 B |
+| logger | 481 B | 254 B |
 | client | 192 B | 128 B |
 | types | 11 B | 31 B |
-| **总计** | **135.17 kB** | **49.05 kB** |
+| **总计** | **160.29 kB** | **57.59 kB** |
+
+## 与替代方案的打包大小对比
+
+> 每个库使用 `bench/bundled/` 中的标准基础配置，通过 esbuild 0.25.12（esm、node 平台、target node18、启用 minify）打包并进行 gzip 压缩。
+> 方法学请参见 `bench/scripts/bundled-size.ts`。
+
+| 库 | 版本 | 原始大小 | Gzip | 模块数 |
+|---------|---------|----:|-----:|--------:|
+| evlog | 2.29.0 | 31.17 kB | 11.80 kB | 24 |
+| pino | 10.3.1 | 59.94 kB | 20.05 kB | 30 |
+| consola | 3.4.2 | 74.73 kB | 22.61 kB | 6 |
+| winston | 3.19.0 | 144.14 kB | 47.42 kB | 116 |
 
 ## 与替代方案对比
 

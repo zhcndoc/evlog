@@ -3,6 +3,7 @@ import { createError } from '../../src/error'
 import { createLogger, createRequestLogger, getEnvironment, initLogger, isEnabled, log } from '../../src/logger'
 import { withFakeTimers } from '../helpers/timers'
 import { defined } from '../helpers/defined'
+import type { LogLevel, WideEvent } from '../../src/types'
 import { createPipelineSpies, findEventViaDrain } from '../helpers/framework'
 
 describe('initLogger', () => {
@@ -684,6 +685,42 @@ describe('sampling', () => {
 
     expect(infoSpy).toHaveBeenCalledTimes(0)
     expect(warnSpy).toHaveBeenCalledTimes(0)
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops trace by default even when sampling is not configured', () => {
+    initLogger({ pretty: false })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    log.trace('test', 'trace message')
+
+    expect(logSpy).toHaveBeenCalledTimes(0)
+  })
+
+  it('keeps trace when sampling.rates.trace is set', () => {
+    initLogger({
+      pretty: false,
+      sampling: {
+        rates: { trace: 100 },
+      },
+    })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    log.trace('test', 'trace message')
+
+    expect(logSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('always logs fatal even when every other level is sampled out', () => {
+    initLogger({
+      pretty: false,
+      sampling: {
+        rates: { info: 0, warn: 0, debug: 0, error: 0, trace: 100 },
+      },
+    })
+
+    log.fatal('test', 'fatal message')
+
     expect(errorSpy).toHaveBeenCalledTimes(1)
   })
 
@@ -1484,5 +1521,118 @@ describe('pretty-print array field values', () => {
 
     expect(output).not.toContain('[object Object]')
     expect(output).toContain('["a","b","c"]')
+  })
+})
+
+describe('printf interpolation', () => {
+  function loggedEvent(level: LogLevel, emit: () => void): WideEvent {
+    const { drain } = createPipelineSpies()
+    initLogger({ silent: true, redact: false, drain })
+    emit()
+    return defined(findEventViaDrain(drain, e => e.level === level))
+  }
+
+  it('interpolates extra args into a tagged message', () => {
+    const event = loggedEvent('info', () => log.info('auth', 'user %s plan %s', 'alice', 'pro'))
+
+    expect(event.tag).toBe('auth')
+    expect(event.message).toBe('user alice plan pro')
+  })
+
+  it('treats a first string with a specifier as a pino-style format string', () => {
+    const event = loggedEvent('info', () => log.info('user %s logged in', 'alice'))
+
+    expect(event.tag).toBe('log')
+    expect(event.message).toBe('user alice logged in')
+  })
+
+  it('interpolates %d and %j specifiers', () => {
+    const event = loggedEvent('warn', () => log.warn('api', 'quota %d used for %j', 42, { plan: 'pro' }))
+
+    expect(event.tag).toBe('api')
+    expect(event.message).toBe('quota 42 used for {"plan":"pro"}')
+  })
+
+  it('appends surplus arguments to the message', () => {
+    const event = loggedEvent('debug', () => log.debug('cache', 'importing', { key: 'user_123' }))
+
+    expect(event.tag).toBe('cache')
+    expect(event.message).toBe('importing {"key":"user_123"}')
+  })
+
+  it('leaves a message without arguments untouched, including literal percents', () => {
+    const event = loggedEvent('info', () => log.info('auth', '100% done'))
+
+    expect(event.message).toBe('100% done')
+  })
+
+  it('leaves specifiers literal when no argument is provided', () => {
+    const event = loggedEvent('info', () => log.info('auth', 'plan %s'))
+
+    expect(event.message).toBe('plan %s')
+  })
+
+  it('keeps tagged messages working without extra args', () => {
+    const event = loggedEvent('error', () => log.error('payment', 'Payment failed'))
+
+    expect(event.tag).toBe('payment')
+    expect(event.message).toBe('Payment failed')
+  })
+
+  it('prints the interpolated message in pretty output', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    initLogger({ pretty: true })
+    log.info('auth', 'user %s plan %s', 'alice', 'pro')
+
+    const output = logSpy.mock.calls.map(call => String(call[0])).join('\n')
+    expect(output).toContain('user alice plan pro')
+    expect(output).not.toContain('%s')
+  })
+})
+
+describe('fatal and trace levels', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('emits fatal as an error-level console call', () => {
+    initLogger({ pretty: false })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    log.fatal('payments', 'Charge failed')
+
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    const [[output]] = errorSpy.mock.calls
+    expect(output).toContain('"level":"fatal"')
+    expect(output).toContain('"message":"Charge failed"')
+  })
+
+  it('emits fatal wide events through the drain and force-keeps them', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ silent: true, drain, sampling: { rates: { error: 0 } } })
+
+    log.fatal({ action: 'checkout.crash' })
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'fatal'))
+    expect(event.action).toBe('checkout.crash')
+  })
+
+  it('emits trace wide events when opted in via sampling.rates.trace', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ silent: true, drain, sampling: { rates: { trace: 100 } } })
+
+    log.trace({ action: 'cache.miss' })
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'trace'))
+    expect(event.action).toBe('cache.miss')
+  })
+
+  it('drops trace wide events by default', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ silent: true, drain })
+
+    log.trace({ action: 'cache.miss' })
+
+    expect(drain).not.toHaveBeenCalled()
   })
 })

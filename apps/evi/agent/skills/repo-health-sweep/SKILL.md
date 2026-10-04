@@ -1,17 +1,32 @@
 ---
 name: repo-health-sweep
-description: Twice-weekly, coverage-led simplification audit over the whole evlog repository and Evi's real communication. Rotates through code, tests, architecture, skills, docs, examples, instructions, issue replies, review comments, and PR bodies; calls the simplification-sweep workflow for independent parallel review and adversarial verification; opens ready pull requests for fully verified mechanical fixes; records proposals and rejected findings so later runs go deeper instead of repeating easy observations. Load this when the repo-health-sweep schedule fires, or when Hugo asks for repository simplification, an unslop pass, a clarity audit, a skills-vs-reality check, or a convention drift review.
+description: Twice-weekly, coverage-led simplification audit over the whole evlog repository and Evi's real communication. Rotates through code, tests, architecture, skills, docs, examples, instructions, issue replies, review comments, and PR bodies; calls the simplification-sweep workflow for independent parallel review and adversarial verification; removes, deduplicates, and clarifies; opens ready pull requests, one per batch of same-kind mechanical fixes; records proposals and rejected findings so later runs go deeper instead of repeating easy observations. Load this when the repo-health-sweep schedule fires, or when Hugo asks for repository simplification, an unslop pass, a clarity audit, a skills-vs-reality check, or a convention drift review.
 ---
 
 # Repo health sweep
 
-This pass makes the repository easier to understand without changing what it means. It is not a search for short code at any cost. A smaller implementation that hides a protocol constraint, changes public behavior, or moves complexity elsewhere is worse.
+This pass makes the repository easier to understand without changing what it means. It is not a search for short code at any cost. A smaller implementation that hides a protocol constraint, changes public behavior, or moves complexity elsewhere is worse. A comment that is shorter but no clearer is not a win either; the goal is that a reader stops re-reading.
 
 The pass runs twice a week. Each run reviews bounded cohorts, not the whole tree. Coverage accumulates in Linear so the next run reaches code the previous one did not.
 
 ## What counts
 
-A finding needs a concrete cost and a behavior-preserving smaller shape.
+A finding needs a concrete cost and a behavior-preserving smaller shape. Every finding carries a `kind`:
+
+- `remove`: the text or code carries nothing; delete it.
+- `dedupe`: one owner already exists; point to it.
+- `clarify`: the meaning stays, the reader stops guessing. The finding names the ambiguity and quotes current and proposed text.
+
+### Clarify
+
+The repository's job is to make logging simple, and its own prose has to clear that bar. A clarify finding is any of:
+
+- A comment, JSDoc block, or error message a reader cannot act on without reading the code it annotates.
+- A JSDoc block on a public option that restates the type, repeats the docs page, or lists examples the docs already carry. The smaller shape keeps the purpose and the constraint, usually one sentence each, and nothing else. JSDoc on public APIs stays; its length is the finding.
+- A paragraph comment whose durable constraint fits in one or two lines.
+- A sentence in a skill, instruction, README, or PR body that can be read two ways.
+
+The proposed text is part of the finding, not an afterthought. Without it the verifier has nothing to check and rejects the candidate as taste.
 
 ### Code
 
@@ -19,9 +34,9 @@ A finding needs a concrete cost and a behavior-preserving smaller shape.
 - A one-use wrapper that adds no policy, transformation, authority, or test boundary.
 - Duplicated implementations of an invariant already owned by one helper.
 - Defensive code that masks state already validated upstream.
-- A paragraph comment that can become one durable constraint, or a comment that only paraphrases the code.
+- A comment that only paraphrases the code.
 
-Keep comments that explain a protocol quirk, security boundary, compatibility requirement, or deliberate trade-off. Do not report a public rename or behavior change as cleanup.
+Keep comments that explain a protocol quirk, security boundary, compatibility requirement, or deliberate trade-off; shorten them when they ramble, never drop them. Do not report a public rename or behavior change as cleanup.
 
 ### Tests
 
@@ -40,8 +55,9 @@ A proposed removal names the surviving test and compares inputs, runtime boundar
 - A layer that only forwards data and has no independent contract.
 - An abstraction whose second use disappeared.
 - Logic in Eve wiring under `agent/` that belongs under `agent/lib/` with a colocated test.
-- Framework integrations that no longer share the contract required by root `AGENTS.md`.
 - A manual sequence that the installed framework now expresses directly.
+
+Framework integrations drifting from the contract in root `AGENTS.md` are the self-review's lens; do not duplicate it here.
 
 A different design is not evidence. Trace callers, exports, tests, configuration, and failure paths before proposing a boundary change.
 
@@ -63,7 +79,7 @@ Anything claimed about an API, option, export, adapter, example, or framework co
 
 ## 2. Read the coverage ledger
 
-Keep one Linear issue on the evlog team titled `Evi simplification coverage ledger`. Search that exact title once with `linear__list_issues`. Keep the returned issue ID for every read and write in the run, then read its comments with `linear__list_comments`. In a real run, create the issue when the exact search returns none. In a dry run, report the missing ledger and do not create it.
+Keep one Linear issue on the evlog team titled `Evi simplification coverage ledger`. Search that exact title once with `linear__list_issues`, including closed issues. Keep the returned issue ID for every read and write in the run, then read its comments with `linear__list_comments`. In a real run, create the issue when the exact search returns none, and reopen it when it was closed; the ledger is never Done while the schedule runs. In a dry run, report the missing or closed ledger and do not change it.
 
 Each run comment records:
 
@@ -81,7 +97,7 @@ A rejected finding is durable evidence. Do not raise it again unless the relevan
 
 Choose one cohort for each reviewer. Prefer the least recently reviewed eligible area. Make the four scopes non-overlapping where possible.
 
-**Code cohort:** one package directory or a similarly sized part of `apps/evi/agent/lib/`. Name exact paths.
+**Code cohort:** one package directory or a similarly sized part of `apps/evi/agent/lib/`. Name exact paths. A directory whose files are a third comment lines (`packages/evlog/src/adapters/` is one) is a natural clarify cohort.
 
 **Test cohort:** one bounded test directory or one source area and its matching tests. Include both source and test paths so the reviewer can trace behavior rather than compare test names.
 
@@ -106,7 +122,7 @@ The tool first verifies that the shared checkout matches the supplied full commi
 3. `architecture_reviewer`;
 4. `communication_reviewer`.
 
-After all four settle, `finding_verifier` tries to disprove every candidate against the same checkout. The workflow assigns finding ids and keeps the candidate fields itself; the verifier returns a verdict, delivery, and verification per id. The workflow returns reviewer status, limitations, programmatic counts, confirmed findings, rejected findings, and open questions. Read `status`, `reviewers`, and `counts` before the findings. A `degraded` run has missing evidence and cannot produce a pull-request-ready finding. A verification that returns no usable result degrades the run and marks every candidate as a question rather than failing the sweep. A `recovered` run may proceed, but the final report names the recovered failure. Copy counts from the result; never count finding IDs in prose. Do not bypass verification or ask the root model to recreate a failed specialist's report from memory.
+After all four settle, `finding_verifier` tries to disprove every candidate against the same checkout. The workflow assigns finding ids and keeps the candidate fields itself; the verifier returns a verdict, delivery, and verification per id. The workflow returns reviewer status, limitations, programmatic counts, confirmed findings, rejected findings, open questions, and `pullRequestBatches`: confirmed pull-request candidates grouped by `kind` and directory. Read `status`, `reviewers`, and `counts` before the findings. A `degraded` run has missing evidence and cannot produce a pull-request-ready finding. A verification that returns no usable result degrades the run and marks every candidate as a question rather than failing the sweep. A `recovered` run may proceed, but the final report names the recovered failure. Copy counts from the result; never count finding IDs in prose. Do not bypass verification or ask the root model to recreate a failed specialist's report from memory.
 
 ## 5. Verify confirmed findings
 
@@ -125,6 +141,8 @@ For each confirmed finding:
 5. Identify the matching test before editing.
 6. Drop it if implementation requires a new option, compatibility branch, public rename, or judgement the report did not surface.
 
+A candidate whose edit touches only comments, JSDoc, or prose, confirmed by the verifier at confidence 0.9 or above, completes steps 1 and 4 only: there are no callers to trace and no test to match, and the verifier already read the file. Any candidate that changes an executable line completes all six.
+
 A code or prose simplification gets a regression test when behavior could change. Pure removal still needs the existing checks that prove the affected surface.
 
 A test simplification additionally cites the surviving coverage and explains why the removed test has no distinct failure mode, runtime boundary, regression history, or public contract. Run the focused test file before and after the edit, then the full suite and coverage. If the equivalence cannot be demonstrated, keep the test.
@@ -133,21 +151,21 @@ A test simplification additionally cites the surviving coverage and explains why
 
 ### Ready pull request
 
-A workflow-confirmed candidate marked `pull_request` becomes PR-ready only when the parent verification above also passes and all of these hold:
+The unit of delivery is a batch from `pullRequestBatches`: every confirmed candidate of one kind in one directory. A batch becomes PR-ready only when each of its candidates passed the parent verification above and all of these hold:
 
-- it is mechanical and behavior-preserving;
-- the verifier confirmed it with high confidence;
-- the diff contains one finding and no opportunistic cleanup;
+- every candidate is mechanical and behavior-preserving;
+- the verifier confirmed each with high confidence;
+- the diff contains the batch's candidates and no opportunistic cleanup; a candidate that failed parent verification leaves the batch, it does not block it;
 - a matching test covers the change, or a test-only reduction proves the remaining coverage is equivalent;
 - `pnpm run lint`, `pnpm run typecheck`, `pnpm run test`, and affected content checks exit 0;
 - required changesets, skill updates, API snapshot review, and visual evidence are present;
-- the pull request body states the problem, change, preserved behavior, verification, and the reviewed revision.
+- the pull request body shows the change (a snippet, captured output, or capture, not prose alone) and states the problem, preserved behavior, verification, and the reviewed revision.
 
-Immediately before pushing or opening the pull request, run `git merge-base HEAD <reviewed-revision>` and require the output to equal the full reviewed SHA. Inspect `git diff <reviewed-revision>...HEAD` and require it to contain only the verified candidate. If either check fails, do not deliver the branch; restart it from the reviewed revision.
+Immediately before pushing or opening the pull request, run `git merge-base HEAD <reviewed-revision>` and require the output to equal the full reviewed SHA. Inspect `git diff <reviewed-revision>...HEAD` and require it to contain only the batch's verified candidates. If either check fails, do not deliver the branch; restart it from the reviewed revision.
 
-Open a normal, ready pull request, not a draft. Read CI once it settles and fix any failure before requesting review from `hugorcd`. If the branch cannot meet the readiness gate, do not open a half-finished pull request. Keep the result as a blocker or proposal in the report.
+Open a normal, ready pull request, not a draft. Title it by kind and area (`refactor(core): drop paraphrasing comments in shared/`, `docs(evi): clarify the sweep delivery rules`). The body lists each candidate with its before and after. Read CI once it settles and fix any failure before requesting review from `hugorcd`. If the branch cannot meet the readiness gate, do not open a half-finished pull request. Keep the result as a blocker or proposal in the report.
 
-Open at most two pull requests per run. One finding per pull request.
+Open at most three pull requests per run. One batch per pull request; never mix kinds or directories. Batches past the cap go to the ledger as next cohorts.
 
 ### Proposal or question
 
@@ -161,8 +179,8 @@ Use this order in the final response:
 
 1. Run status, revision, duration, and whether writes were enabled.
 2. One line per reviewer with `complete`, `recovered`, or `incomplete` and any limitation.
-3. The workflow's exact proposed, confirmed, rejected, question, proposal, and pull-request-candidate counts.
-4. Each surviving candidate with ID, path and lines, problem, smaller shape, preserved behavior, matching test, parent-verification result, and destination.
+3. The workflow's exact proposed, confirmed, rejected, question, proposal, pull-request-candidate, and batch counts.
+4. Each surviving candidate with ID, kind, path and lines, problem, smaller shape, preserved behavior, matching test, parent-verification result, batch, and destination.
 5. Recoverable errors and their effect on coverage.
 6. Links to created artifacts, or the exact next action in a dry run.
 
@@ -176,7 +194,7 @@ Useful eval coverage includes:
 
 - community answers that lead with the answer and explain the relevant why;
 - maintainer replies that stay direct without deleting necessary context;
-- pull request bodies that state problem, change, preserved behavior, and verification;
+- pull request bodies that show the change and state problem, preserved behavior, and verification;
 - no repeated conclusion or repeated link;
 - internal implementation detail translated into an action the reader can take;
 - uncertainty preserved instead of polished away.

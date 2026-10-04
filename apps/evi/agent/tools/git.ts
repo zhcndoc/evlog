@@ -1,19 +1,14 @@
-import type { SessionAuthContext } from 'eve/context'
 import { useLogger } from 'evlog/eve'
 import type { DynamicResolveContext } from 'eve/tools'
 import { defineDynamic, defineTool } from 'eve/tools'
 import { z } from 'zod'
 import { eviErrors, refusal, type ToolRefusal } from '../lib/errors'
 import { repositoryToken } from '../lib/github/credentials'
-import { brokeredSandbox, isValidRefName, pushBrokerPolicy, validatePushBranch } from '../lib/github/push'
+import { isValidRefName, pushBrokerPolicy, validatePushBranch } from '../lib/github/push'
 import { cloneUrl, homeRepository, parseRepository, type Repository, repositorySlug } from '../lib/repo'
-import { isMaintainer, isScheduleAppAuth } from '../lib/trust'
+import { canAccessAdminTools } from '../lib/trust'
 import { checkoutDir, installCommand, REPO_DIR, runOutput } from '../lib/workspace'
-
-/** Maintainer and schedule-app turns ship code; nothing else reaches git over the network. */
-function canShip(auth: SessionAuthContext | null): boolean {
-  return isMaintainer(auth) || isScheduleAppAuth(auth)
-}
+import { environment } from '../sandbox'
 
 function notAllowed(tool: string) {
   return refusal(eviErrors.TOOL_NOT_AVAILABLE({ tool, message: 'Only maintainer and schedule-app sessions may use git over the network.' }))
@@ -28,8 +23,9 @@ function notInstalled(repository: Repository) {
 }
 
 // Executes stay inline in the resolver (docs/notes.md).
+// Maintainer and schedule-app turns ship code; nothing else reaches git over the network.
 const resolveGitTools = (_event: unknown, ctx: DynamicResolveContext) => {
-  if (!canShip(ctx.session.auth.current)) return null
+  if (!canAccessAdminTools(ctx.session.auth.current)) return null
   const home = repositorySlug(homeRepository())
   return {
     git__checkout: defineTool({
@@ -39,7 +35,7 @@ const resolveGitTools = (_event: unknown, ctx: DynamicResolveContext) => {
         ref: z.string().optional().describe('Branch or commit to check out'),
       }),
       async execute(input, toolCtx) {
-        if (!canShip(toolCtx.session.auth.current)) return notAllowed('git__checkout')
+        if (!canAccessAdminTools(toolCtx.session.auth.current)) return notAllowed('git__checkout')
         const log = useLogger(toolCtx)
         const repository = parseRepository(input.repository)
         if (repository === null) return notSlug(input.repository)
@@ -54,7 +50,7 @@ const resolveGitTools = (_event: unknown, ctx: DynamicResolveContext) => {
           return refused
         }
         const dir = checkoutDir(repository)
-        const sandbox = brokeredSandbox(await toolCtx.getSandbox())
+        const sandbox = await toolCtx.getSandbox(environment)
         await sandbox.setNetworkPolicy(pushBrokerPolicy(token))
         try {
           const clone = await sandbox.run({ command: `test -d ${dir}/.git || (mkdir -p ${dir} && git clone --depth 50 ${cloneUrl(repository)} ${dir})` })
@@ -91,7 +87,7 @@ const resolveGitTools = (_event: unknown, ctx: DynamicResolveContext) => {
         repository: z.string().min(1).describe('owner/repo already checked out'),
       }),
       async execute(input, toolCtx) {
-        if (!canShip(toolCtx.session.auth.current)) return notAllowed('git__install')
+        if (!canAccessAdminTools(toolCtx.session.auth.current)) return notAllowed('git__install')
         const log = useLogger(toolCtx)
         const repository = parseRepository(input.repository)
         if (repository === null) return notSlug(input.repository)
@@ -115,7 +111,7 @@ const resolveGitTools = (_event: unknown, ctx: DynamicResolveContext) => {
         repository: z.string().optional().describe(`owner/repo to push to; defaults to ${home}`),
       }),
       async execute(input, toolCtx) {
-        if (!canShip(toolCtx.session.auth.current)) return notAllowed('git__push')
+        if (!canAccessAdminTools(toolCtx.session.auth.current)) return notAllowed('git__push')
         const log = useLogger(toolCtx)
         const refuse = (refused: ToolRefusal) => {
           log.set({ git: { branch: input.branch, pushed: false, reason: refused.code } })
@@ -134,7 +130,7 @@ const resolveGitTools = (_event: unknown, ctx: DynamicResolveContext) => {
         const token = await repositoryToken(repository)
         if (token === null) return refuse(notInstalled(repository))
         const dir = checkoutDir(repository)
-        const sandbox = brokeredSandbox(await toolCtx.getSandbox())
+        const sandbox = await toolCtx.getSandbox(environment)
         await sandbox.setNetworkPolicy(pushBrokerPolicy(token))
         try {
           // The URL is spelled out, never `origin`: remote config inside the
@@ -159,13 +155,8 @@ const resolveGitTools = (_event: unknown, ctx: DynamicResolveContext) => {
   }
 }
 
-// Session scope alongside turn scope: eve rebinds only session-scoped resolvers
-// when it replays a call parked in a process that is gone, and a push is the
-// last thing a long run does. `execute` re-checks the caller, so the wider
-// scope grants nothing the per-turn gate would refuse.
 export default defineDynamic({
   events: {
-    'session.started': resolveGitTools,
     'turn.started': resolveGitTools,
   },
 })

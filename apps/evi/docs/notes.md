@@ -121,7 +121,7 @@ Gists API 会拒绝安装令牌——此外还包括仓库创建和合并功能�
 
 ## MCP 通道
 
-外部工具（Raycast AI、Claude Code、Cursor）通过 `/eve/v1/mcp` 访问 Evi，并使用 `Authorization: Bearer $EVI_MCP_TOKEN`，该端点由 eve 的原生 MCP 通道（`mcpChannel`）提供服务。客户端会获得持久调用工具——`agent_start`、`agent_get`、`agent_update`、`agent_cancel`：启动会立即返回调用 id，工具端通过轮询 `agent_get` 获取结果，而人工输入请求会以 `input_required` 的形式出现，不会让 HTTP 调用一直挂起。每个 `agent_start` 都是一个由 `mcp:hugo` 主体拥有的任务模式会话，只有在设置了 token 环境变量时才会被信任为维护者；调用之间不存在跨调用对话，因此请求必须携带自身的上下文。设置方法：生成 token（`openssl rand -hex 32`），在项目中设置 `EVI_MCP_TOKEN`，然后在客户端中添加一个 HTTP MCP 服务器，指向生产 URL，并设置 Authorization 标头。通过更改环境变量进行轮换。这里有意不使用 OAuth AS：这是单用户界面，静态 bearer 的规模正合适。
+外部工具（Raycast AI、Claude Code、Cursor）通过 `/eve/v1/mcp` 访问 Evi，并使用 `Authorization: Bearer $EVI_MAINTAINER_TOKEN`，该端点由 eve 的原生 MCP 通道（`mcpChannel`）提供服务。客户端会获得持久调用工具——`agent_start`、`agent_get`、`agent_update`、`agent_cancel`：启动会立即返回调用 id，工具端通过轮询 `agent_get` 获取结果，而人工输入请求会以 `input_required` 的形式出现，不会让 HTTP 调用一直挂起。每个 `agent_start` 都是一个由 `mcp:hugo` 主体拥有的任务模式会话，只有在设置了 token 环境变量时才会被信任为维护者；调用之间不存在跨调用对话，因此请求必须携带自身的上下文。设置方法：生成 token（`openssl rand -hex 32`），在项目中设置 `EVI_MAINTAINER_TOKEN`，然后在客户端中添加一个 HTTP MCP 服务器，指向生产 URL，并设置 Authorization 标头。通过更改环境变量进行轮换。这里有意不使用 OAuth AS：这是单用户界面，静态 bearer 的规模正合适。
 
 ## 待处理
 

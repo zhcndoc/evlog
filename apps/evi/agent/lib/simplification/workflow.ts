@@ -1,4 +1,4 @@
-import type { WorkflowToolContext } from 'eve/tools'
+import type { AgentSendOptions, WorkflowToolContext } from 'eve/tools'
 import { z } from 'zod'
 
 export const simplificationInputSchema = z.object({
@@ -12,9 +12,12 @@ export const simplificationInputSchema = z.object({
 
 export type SimplificationSweepInput = z.infer<typeof simplificationInputSchema>
 
+const findingKinds = ['remove', 'dedupe', 'clarify'] as const
+
 const findingProperties = {
   id: { type: 'string' },
   category: { type: 'string', enum: ['code', 'tests', 'architecture', 'communication'] },
+  kind: { type: 'string', enum: findingKinds },
   path: { type: 'string' },
   lines: { type: 'string' },
   problem: { type: 'string' },
@@ -48,6 +51,7 @@ const reviewOutputSchema = {
 const findingResultSchema = z.object({
   id: z.string(),
   category: z.enum(['code', 'tests', 'architecture', 'communication']),
+  kind: z.enum(findingKinds),
   path: z.string(),
   lines: z.string(),
   problem: z.string(),
@@ -128,9 +132,9 @@ type VerificationResult = z.infer<typeof verificationResultSchema>
 type VerifiedFinding = FindingResult & Omit<VerdictResult, 'id'>
 
 /**
- * A subagent under a schedule can settle with prose when background tasks are
- * still pending, even though an output schema was requested. Recover the
- * structured result when the prose carries one; otherwise fail the parse.
+ * A subagent turn can settle with prose instead of the requested structured
+ * result. Recover the structured result when the prose carries one; otherwise
+ * fail the parse.
  */
 export function parseStructuredResult<T>(schema: z.ZodType<T>, output: unknown): T {
   if (typeof output === 'string') {
@@ -166,7 +170,7 @@ export function reviewMessage(
       : '',
     `Prior decisions that must not be raised again:\n${priorDecisions.length === 0 ? '_None._' : priorDecisions.join('\n')}`,
     'Return status complete when every assigned artifact was reviewed, recovered when a failed lookup was replaced with equivalent complete evidence, or incomplete when any evidence remains missing or truncated. Record every failed or incomplete lookup in limitations. Do not create a finding from incomplete evidence.',
-    'Return only findings that reduce code, tests, or prose while preserving intended behavior. Every finding needs an exact path, line range, evidence, the smaller shape, preserved behavior, risk, and confidence from 0 to 1. Taste is not a finding.',
+    'Return only findings that remove, deduplicate, or clarify code, tests, or prose while preserving intended behavior, and set kind to remove, dedupe, or clarify. A clarify finding keeps the meaning, names the ambiguity the current text leaves, and quotes both the current text and the proposed text in simplification. Every finding needs an exact path, line range, evidence, the smaller shape, preserved behavior, risk, and confidence from 0 to 1. Taste is not a finding; a clarify finding without a named ambiguity is taste.',
   ].filter(Boolean).join('\n\n')
 }
 
@@ -186,6 +190,7 @@ export function verificationMessage(
     `Try to disprove every candidate finding against revision ${revision}.`,
     'The checkout is shared with the parent at /workspace/repo. Resolve every repository-relative path under that directory and use glob before reading or grepping an exact path. Do not write files or change Git state.',
     'Read the cited files and search for callers, tests, constraints, and counterexamples. Reject taste, behavior changes disguised as cleanup, duplicates, and anything covered by a prior maintainer decision. Reject a test removal unless another cited test covers the same behavior and the candidate adds no distinct failure mode, runtime boundary, regression history, or public contract.',
+    'A clarify candidate quotes current and proposed text. Confirm it when the proposed text keeps the meaning and resolves the ambiguity the reviewer named; reject it when the meaning shifts, the ambiguity is not real, or no proposed text is quoted. Wording that both texts express equally well is taste.',
     'Never confirm a finding based on an incomplete review or incomplete source artifact. Mark it as a question when the missing evidence could change the verdict.',
     `Prior decisions:\n${priorDecisions.length === 0 ? '_None._' : priorDecisions.join('\n')}`,
     `Candidate reviews:\n${JSON.stringify(reviews)}`,
@@ -256,6 +261,37 @@ function recordVerificationGap(reviews: ReviewResult[], limitations: readonly st
   review.limitations.push(...limitations)
 }
 
+export interface PullRequestBatch {
+  kind: FindingResult['kind']
+  area: string
+  findingIds: string[]
+}
+
+function areaOf(path: string): string {
+  const slash = path.lastIndexOf('/')
+  return slash === -1 ? '.' : path.slice(0, slash)
+}
+
+/**
+ * Groups confirmed pull-request candidates that share a kind and a directory,
+ * so one mechanical pass over an area ships as one pull request. Groups keep
+ * the order the reviewers reported them in.
+ */
+export function batchPullRequestCandidates(findings: readonly VerifiedFinding[]): PullRequestBatch[] {
+  const batches = new Map<string, PullRequestBatch>()
+
+  for (const finding of findings) {
+    if (finding.verdict !== 'confirmed' || finding.delivery !== 'pull_request') continue
+    const area = areaOf(finding.path)
+    const key = `${finding.kind}\n${area}`
+    const batch = batches.get(key) ?? { kind: finding.kind, area, findingIds: [] }
+    batch.findingIds.push(finding.id)
+    batches.set(key, batch)
+  }
+
+  return [...batches.values()]
+}
+
 export function summarizeSimplificationSweep(
   reviews: readonly ReviewResult[],
   verification: { findings: readonly VerifiedFinding[] },
@@ -266,6 +302,7 @@ export function summarizeSimplificationSweep(
   const questions = verification.findings.filter(finding => finding.verdict === 'question')
   const incomplete = reviews.some(review => review.status === 'incomplete')
   const recovered = reviews.some(review => review.status === 'recovered')
+  const pullRequestBatches = batchPullRequestCandidates(verification.findings)
 
   return {
     status: incomplete ? 'degraded' : recovered ? 'recovered' : 'complete',
@@ -282,9 +319,24 @@ export function summarizeSimplificationSweep(
       rejected: rejected.length,
       questions: questions.length,
       pullRequestCandidates: confirmed.filter(finding => finding.delivery === 'pull_request').length,
+      pullRequestBatches: pullRequestBatches.length,
       proposals: confirmed.filter(finding => finding.delivery === 'proposal').length,
     },
+    pullRequestBatches,
   } as const
+}
+
+/** Rejects on a failed turn, so each caller's fallback sees the reason. */
+async function askAgent(
+  ctx: Pick<WorkflowToolContext, 'agent'>,
+  name: string,
+  message: string,
+  outputSchema: AgentSendOptions['outputSchema'],
+): Promise<unknown> {
+  const response = await ctx.agent(name).send(message, { outputSchema })
+  const result = await response.result()
+  if (result.status === 'failed') throw new Error(result.error?.message ?? `${name} failed`)
+  return result.data ?? result.message
 }
 
 export async function runSimplificationSweep(
@@ -293,10 +345,10 @@ export async function runSimplificationSweep(
 ) {
   'use workflow'
 
-  const checkout = parseStructuredResult(revisionResultSchema, await ctx.agent('finding_verifier', {
-    message: revisionMessage(input.revision),
-    outputSchema: revisionOutputSchema,
-  }))
+  const checkout = parseStructuredResult(
+    revisionResultSchema,
+    await askAgent(ctx, 'finding_verifier', revisionMessage(input.revision), revisionOutputSchema),
+  )
   if (checkout.revision !== input.revision) {
     throw new Error(`Shared checkout revision ${checkout.revision} does not match requested revision ${input.revision}.`)
   }
@@ -311,10 +363,10 @@ export async function runSimplificationSweep(
   const reviews = await Promise.all(
     assignments.map(async (assignment): Promise<ReviewResult> => {
       try {
-        const review = parseStructuredResult(reviewResultSchema, await ctx.agent(assignment.agent, {
-          message: reviewMessage(checkout.revision, assignment, input.priorDecisions),
-          outputSchema: reviewOutputSchema,
-        }))
+        const review = parseStructuredResult(
+          reviewResultSchema,
+          await askAgent(ctx, assignment.agent, reviewMessage(checkout.revision, assignment, input.priorDecisions), reviewOutputSchema),
+        )
 
         return { agent: assignment.agent, category: assignment.category, ...review }
       } catch (error) {
@@ -335,10 +387,10 @@ export async function runSimplificationSweep(
 
   let verification: { findings: VerifiedFinding[], summary: string }
   try {
-    const verdicts = parseStructuredResult(verificationResultSchema, await ctx.agent('finding_verifier', {
-      message: verificationMessage(checkout.revision, identified, input.priorDecisions),
-      outputSchema: verificationOutputSchema,
-    }))
+    const verdicts = parseStructuredResult(
+      verificationResultSchema,
+      await askAgent(ctx, 'finding_verifier', verificationMessage(checkout.revision, identified, input.priorDecisions), verificationOutputSchema),
+    )
     const assembled = assembleVerification(identified, verdicts)
     verification = assembled
     recordVerificationGap(identified, assembled.limitations)

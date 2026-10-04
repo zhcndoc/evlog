@@ -1,23 +1,23 @@
-# Enricher 源代码模板
+# Enricher Source Template
 
-用于使用 `defineEnricher` 向 `packages/evlog/src/enrichers/index.ts` 添加新的 enricher 的模板。
+Template for adding a new enricher to `packages/evlog/src/enrichers/index.ts` using `defineEnricher`.
 
-将 `{Name}`、`{name}` 和 `{DISPLAY}` 替换为实际的 enricher 名称。
+Replace `{Name}`, `{name}`, and `{DISPLAY}` with the actual enricher name.
 
-## 信息接口
+## Info Interface
 
-定义输出形状：
+Define the output shape:
 
 ```typescript
 export interface {Name}Info {
-  /** 字段的描述 */
+  /** Description of field */
   field1?: string
-  /** 字段的描述 */
+  /** Description of field */
   field2?: number
 }
 ```
 
-## 工厂函数
+## Factory Function
 
 ```typescript
 import type { EnrichContext } from '../types'
@@ -25,8 +25,8 @@ import { defineEnricher, type EnricherOptions } from '../shared/enricher'
 import { getHeader, normalizeNumber } from '../shared/headers'
 
 /**
- * 使用 {DISPLAY} 数据丰富事件。
- * 使用 `{Name}Info` 形状设置 `event.{name}`：`{ field1?, field2? }`。
+ * Enrich events with {DISPLAY} data.
+ * Sets `event.{name}` with `{Name}Info` shape: `{ field1?, field2? }`.
  */
 export function create{Name}Enricher(options: EnricherOptions = {}): (ctx: EnrichContext) => void {
   return defineEnricher<{Name}Info>({
@@ -44,38 +44,38 @@ export function create{Name}Enricher(options: EnricherOptions = {}): (ctx: Enric
 }
 ```
 
-## 架构规则
+## Architecture Rules
 
-1. **使用工具包原语**：使用来自 `../shared/enricher` 的 `defineEnricher<T>({ name, field, compute }, options)`（重新导出为 `evlog/toolkit`）。
-2. **使用工具包辅助函数**：使用 `getHeader()` 进行不区分大小写的请求头查找，使用 `normalizeNumber()` 处理数字字符串。两者都来自 `../shared/headers`。
-3. **单一事件字段**：每个 enricher 在 `ctx.event` 上写入一个顶层字段（通过 `field` 选项声明）。
-4. **返回 `undefined` 以跳过**：`compute` 返回 `undefined` 时，该 enricher 对此事件不执行任何操作（不合并字段，也不产生错误）。
-5. **工厂模式**：始终将 `defineEnricher` 包装在 `create{Name}Enricher(options?)` 工厂中并返回其结果（直接返回，或在固定顶层字段时通过规则 7 中的闭包包装器返回）。
-6. **不要使用 try/catch**：`defineEnricher` 已经隔离错误（记录为 `[evlog/{name}] enrich failed:`，并且不会向管道抛出错误）。
-7. **不要在 `compute` 之外进行变更**：让 `defineEnricher` 通过 `mergeEventField` 处理合并。唯一允许的例外是：除了 enricher 自身的字段外固定顶层字段，此操作通过将 `defineEnricher` 的结果包装在闭包中完成（参见 `createTraceContextEnricher`，它还会设置 `event.traceId` / `event.spanId`）。
-8. **组合**：要将多个 enricher 组合为一个回调，请使用来自 `../shared/compose` 的 `composeEnrichers`（`createDefaultEnrichers()` 正是这样构建的），不要使用手动循环。
+1. **Use the toolkit primitive**: `defineEnricher<T>({ name, field, compute }, options)` from `../shared/enricher` (re-exported as `evlog/toolkit`).
+2. **Use the toolkit helpers**: `getHeader()` for case-insensitive header lookup and `normalizeNumber()` for numeric strings. Both come from `../shared/headers`.
+3. **Single event field**: each enricher writes one top-level field on `ctx.event` (declared via the `field` option).
+4. **Return `undefined` to skip**: `compute` returning `undefined` makes the enricher a no-op for that event (no field merge, no errors).
+5. **Factory pattern**: always wrap `defineEnricher` in a `create{Name}Enricher(options?)` factory and return its result (directly, or through the closure wrapper of rule 7 when pinning top-level fields).
+6. **No try/catch**: `defineEnricher` already isolates errors (logs as `[evlog/{name}] enrich failed:` and never throws to the pipeline).
+7. **No mutation outside `compute`**: let `defineEnricher` handle the merge via `mergeEventField`. The one sanctioned exception: pinning top-level fields in addition to the enricher's own field, done by wrapping the `defineEnricher` result in a closure (see `createTraceContextEnricher`, which also sets `event.traceId` / `event.parentSpanId`).
+8. **Composition**: to combine several enrichers into one callback, use `composeEnrichers` from `../shared/compose` (that's how `createDefaultEnrichers()` is built) instead of a manual loop.
 
-## 可用辅助函数
+## Available Helpers
 
-这些辅助函数从 `../shared/headers`（以及 `evlog/toolkit`）导出：
+These helpers are exported from `../shared/headers` (and from `evlog/toolkit`):
 
 ```typescript
-// 不区分大小写的请求头查找
+// Case-insensitive header lookup
 function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined
 
-// 将字符串解析为数字，对非有限值返回 undefined
+// Parse string to number, returning undefined for non-finite values
 function normalizeNumber(value: string | undefined): number | undefined
 ```
 
-对于更底层的合并（很少需要），工具包还从 `../shared/event` 导出 `mergeEventField`。
+For lower-level merging (rarely needed) the toolkit also exports `mergeEventField` from `../shared/event`.
 
-## 数据源
+## Data Sources
 
-增强器通常从 `ctx` 中读取：
+Enrichers typically read from `ctx`:
 
-- **`ctx.headers`**：HTTP 请求头（敏感请求头已过滤）
-- **`ctx.response?.headers`**：HTTP 响应头
-- **`ctx.response?.status`**：HTTP 响应状态码
-- **`ctx.request`**：请求元数据（method、path、requestId）
-- **`process.env`**：环境变量（用于部署元数据）
-- **`ctx.event`**：事件本身（用于计算或派生字段）
+- **`ctx.headers`**: HTTP request headers (sensitive headers already filtered)
+- **`ctx.response?.headers`**: HTTP response headers
+- **`ctx.response?.status`**: HTTP response status code
+- **`ctx.request`**: Request metadata (method, path, requestId)
+- **`process.env`**: Environment variables (for deployment metadata)
+- **`ctx.event`**: The event itself (for computed/derived fields)

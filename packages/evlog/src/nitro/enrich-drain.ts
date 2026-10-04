@@ -1,11 +1,11 @@
 import type { NitroApp } from 'nitropack/types'
 import { getHeaders } from 'h3'
-import { getGlobalPluginRunner } from '../logger'
+import { getGlobalPluginRunner, outputWideEvent } from '../logger'
 import type { EnrichContext, ServerEvent, WideEvent } from '../types'
 import { filterSafeHeaders } from '../utils'
 import { extendDeferredDrain } from './deferred-drain'
 
-function getSafeHeaders(event: ServerEvent): Record<string, string> {
+export function getSafeHeaders(event: ServerEvent): Record<string, string> {
   const allHeaders = getHeaders(event as Parameters<typeof getHeaders>[0])
   return filterSafeHeaders(allHeaders)
 }
@@ -31,7 +31,7 @@ function getSafeResponseHeaders(event: ServerEvent): Record<string, string> | un
   return filterSafeHeaders(headers)
 }
 
-function getResponseStatus(event: ServerEvent): number {
+export function getResponseStatus(event: ServerEvent): number {
   if (event.node?.res?.statusCode) {
     return event.node.res.statusCode
   }
@@ -86,13 +86,8 @@ export async function callEnrichAndDrain(
   } catch (err) {
     console.error('[evlog] enrich failed:', err)
   }
-  if (runner.hasEnrich) {
-    try {
-      await runner.runEnrich(enrichCtx)
-    } catch (err) {
-      console.error('[evlog] enrich failed:', err)
-    }
-  }
+  await runner.runEnrich(enrichCtx)
+  outputWideEvent(emittedEvent)
 
   const drainCtx = {
     event: emittedEvent,
@@ -103,14 +98,8 @@ export async function callEnrichAndDrain(
     nitroApp.hooks.callHook('evlog:drain', drainCtx).catch((err) => {
       console.error('[evlog] drain failed:', err)
     }),
+    runner.runDrain(drainCtx),
   ]
-  if (runner.hasDrain) {
-    drainTasks.push(
-      runner.runDrain(drainCtx).catch((err) => {
-        console.error('[evlog] drain failed:', err)
-      }),
-    )
-  }
   const drainPromise = Promise.all(drainTasks)
 
   // deferDrain: never block the HTTP error response on Nitro Node (h3 2.13+ waitUntil

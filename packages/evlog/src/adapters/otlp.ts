@@ -3,20 +3,25 @@ import type { ConfigField } from '../shared/config'
 import { formatPublicEnvKeys, resolveAdapterConfig } from '../shared/config'
 import type { HttpDrainRequest } from '../shared/drain'
 import { defineHttpDrain, sendEncodedDrainRequest } from '../shared/drain'
+import type { OtlpAttributeValue } from '../shared/event'
 import { formatEventSummary, isPlainObject, toOtlpAttributeValue } from '../shared/event'
+import { EVLOG_VERSION } from '../shared/http'
 import { OTEL_SEVERITY_NUMBER, OTEL_SEVERITY_TEXT } from '../shared/severity'
 
 /**
  * Shape of the emitted log record.
  *
  * - `'json'` — body carries the serialized event; each top-level field becomes
- *   one attribute, nested ones as a JSON string.
+ *   one attribute, nested objects as an OTLP key-value list.
  * - `'compact'` — body is a one-line summary; nested fields flatten to dotted
  *   attributes (`user.id`), which is what backends facet and filter on.
  *
  * `'compact'` becomes the default in the next major.
  */
 export type OTLPRecordShape = 'json' | 'compact'
+
+/** OTLP HTTP transport encoding. */
+export type OTLPProtocol = 'http/json' | 'http/protobuf'
 
 export interface OTLPConfig {
   /** OTLP HTTP endpoint (e.g., http://localhost:4318) */
@@ -30,8 +35,26 @@ export interface OTLPConfig {
   serviceName?: string
   /** Additional resource attributes */
   resourceAttributes?: Record<string, string | number | boolean>
+  /**
+   * Also emit OpenTelemetry semantic convention attributes (`http.request.method`,
+   * `url.path`, `http.response.status_code`, `exception.*`, `gen_ai.*`) and the
+   * `deployment.environment.name` resource attribute, next to the evlog field names.
+   * Default: `false`. Becomes the default in the next major.
+   */
+  semanticConventions?: boolean
   /** Custom headers (e.g., for authentication) */
   headers?: Record<string, string>
+  /**
+   * Request body compression. Default: `'none'`. Falls back to
+   * `OTEL_EXPORTER_OTLP_LOGS_COMPRESSION`, then `OTEL_EXPORTER_OTLP_COMPRESSION`.
+   */
+  compression?: 'gzip' | 'none'
+  /**
+   * Request body encoding. Default: `'http/json'`. Falls back to
+   * `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`, then `OTEL_EXPORTER_OTLP_PROTOCOL`.
+   * The protobuf encoder (`evlog/otlp/protobuf`) is loaded only when selected.
+   */
+  protocol?: OTLPProtocol
   /** Request timeout in milliseconds. Default: 5000 */
   timeout?: number
   /** Number of retry attempts on transient failures. Default: 2 */
@@ -46,7 +69,7 @@ export interface OTLPLogRecord {
   body: { stringValue: string }
   attributes: Array<{
     key: string
-    value: { stringValue?: string, intValue?: string, boolValue?: boolean }
+    value: OtlpAttributeValue
   }>
   traceId?: string
   spanId?: string
@@ -56,7 +79,7 @@ export interface OTLPLogRecord {
 interface OTLPResource {
   attributes: Array<{
     key: string
-    value: { stringValue?: string, intValue?: string, boolValue?: boolean }
+    value: OtlpAttributeValue
   }>
 }
 
@@ -66,8 +89,8 @@ interface OTLPScope {
   version?: string
 }
 
-/** OTLP ExportLogsServiceRequest structure */
-interface ExportLogsServiceRequest {
+/** OTLP `ExportLogsServiceRequest`, in its OTLP/JSON form. */
+export interface OTLPExportLogsRequest {
   resourceLogs: Array<{
     resource: OTLPResource
     scopeLogs: Array<{
@@ -77,15 +100,45 @@ interface ExportLogsServiceRequest {
   }>
 }
 
+const ENDPOINT_ENV = ['NUXT_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'OTLP_ENDPOINT']
+
 const OTLP_FIELDS: ConfigField<OTLPConfig>[] = [
-  { key: 'endpoint', env: ['NUXT_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'OTLP_ENDPOINT'] },
+  { key: 'endpoint', env: ['NUXT_OTLP_ENDPOINT'] },
   { key: 'recordShape' },
   { key: 'serviceName', env: ['NUXT_OTLP_SERVICE_NAME', 'OTEL_SERVICE_NAME'] },
   { key: 'headers' },
   { key: 'resourceAttributes' },
+  { key: 'semanticConventions' },
+  { key: 'compression', env: ['OTEL_EXPORTER_OTLP_LOGS_COMPRESSION', 'OTEL_EXPORTER_OTLP_COMPRESSION'] },
+  { key: 'protocol', env: ['OTEL_EXPORTER_OTLP_LOGS_PROTOCOL', 'OTEL_EXPORTER_OTLP_PROTOCOL'] },
   { key: 'timeout' },
   { key: 'retries' },
 ]
+
+/** Config after {@link createOTLPDrain} has read the `OTEL_*` environment. */
+interface ResolvedOTLPConfig extends OTLPConfig {
+  /** Complete logs URL from `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, posted to without appending `/v1/logs`. */
+  logsUrl?: string
+  /** Parsed `OTEL_RESOURCE_ATTRIBUTES`. Attributes evlog derives and `resourceAttributes` take precedence. */
+  envResourceAttributes?: Record<string, string>
+  /** Loaded when `protocol` is `'http/protobuf'`. */
+  encodeProtobuf?: (request: OTLPExportLogsRequest) => Uint8Array<ArrayBuffer>
+}
+
+async function withProtobufEncoder(config: ResolvedOTLPConfig): Promise<ResolvedOTLPConfig> {
+  if (config.protocol !== 'http/protobuf') return config
+  const { encodeOTLPLogsRequest } = await import('./otlp-protobuf')
+  return { ...config, encodeProtobuf: encodeOTLPLogsRequest }
+}
+
+const TRACE_ID_PATTERN = /^[\da-f]{32}$/i
+const SPAN_ID_PATTERN = /^[\da-f]{16}$/i
+
+/** A W3C trace context id in OTLP's lowercase hex form, or `undefined` when malformed or all zeros. */
+function toTraceContextId(value: unknown, pattern: RegExp): string | undefined {
+  if (typeof value !== 'string' || !pattern.test(value) || /^0+$/.test(value)) return undefined
+  return value.toLowerCase()
+}
 
 // Re-exposed under a local name to keep call-sites tight while delegating to
 // the shared OTLP attribute encoder in `evlog/toolkit`.
@@ -115,16 +168,79 @@ function collectAttributes(
   }
 }
 
+/** A nested plain object as an OTLP key-value list; anything else through the shared encoder. */
+function toNestedAttributeValue(value: unknown): OtlpAttributeValue {
+  if (!isPlainObject(value) || Object.keys(value).length === 0) return toAttributeValue(value)
+  const values: Array<{ key: string, value: OtlpAttributeValue }> = []
+  for (const [key, child] of Object.entries(value)) {
+    if (child === undefined || child === null) continue
+    values.push({ key, value: toNestedAttributeValue(child) })
+  }
+  return { kvlistValue: { values } }
+}
+
+/** `url-path` is a string with the query and fragment removed, which OTel keeps in `url.query` and `url.fragment`. */
+type SemanticConventionValue = 'string' | 'url-path' | 'integer' | 'string[]'
+
+/** OTel semantic convention attribute, the evlog field path it reads, and the value type it requires. */
+const SEMANTIC_CONVENTIONS: ReadonlyArray<readonly [string, readonly string[], SemanticConventionValue]> = [
+  ['http.request.method', ['method'], 'string'],
+  ['url.path', ['path'], 'url-path'],
+  ['http.response.status_code', ['status'], 'integer'],
+  ['user_agent.original', ['userAgent', 'raw'], 'string'],
+  ['exception.type', ['error', 'name'], 'string'],
+  ['exception.message', ['error', 'message'], 'string'],
+  ['exception.stacktrace', ['error', 'stack'], 'string'],
+  ['gen_ai.request.model', ['ai', 'model'], 'string'],
+  ['gen_ai.provider.name', ['ai', 'provider'], 'string'],
+  ['gen_ai.response.id', ['ai', 'responseId'], 'string'],
+  ['gen_ai.usage.input_tokens', ['ai', 'inputTokens'], 'integer'],
+  ['gen_ai.usage.output_tokens', ['ai', 'outputTokens'], 'integer'],
+  ['gen_ai.usage.cache_read.input_tokens', ['ai', 'cacheReadTokens'], 'integer'],
+  ['gen_ai.usage.cache_creation.input_tokens', ['ai', 'cacheWriteTokens'], 'integer'],
+  ['gen_ai.response.finish_reasons', ['ai', 'finishReason'], 'string[]'],
+]
+
+function readPath(event: Record<string, unknown>, path: readonly string[]): unknown {
+  let current: unknown = event
+  for (const segment of path) {
+    if (!isPlainObject(current)) return undefined
+    current = current[segment]
+  }
+  return current
+}
+
+function pushSemanticConventionAttributes(event: Record<string, unknown>, attributes: OTLPLogRecord['attributes']): void {
+  const present = new Set(attributes.map(attribute => attribute.key))
+  for (const [key, path, type] of SEMANTIC_CONVENTIONS) {
+    if (present.has(key)) continue
+    const value = readPath(event, path)
+    if (type === 'integer' ? !Number.isInteger(value) : typeof value !== 'string') continue
+    const normalized = type === 'url-path' && typeof value === 'string' ? value.split(/[?#]/, 1)[0] : value
+    attributes.push({ key, value: toAttributeValue(type === 'string[]' ? [normalized] : normalized) })
+  }
+}
+
+/** Options for {@link toOTLPLogRecord}. */
+export interface OTLPLogRecordOptions {
+  /** @see {@link OTLPConfig.semanticConventions} */
+  semanticConventions?: boolean
+}
+
 /**
  * Convert an evlog WideEvent to an OTLP LogRecord.
  *
  * @param shape See {@link OTLPRecordShape}. Defaults to `'json'`.
  */
-export function toOTLPLogRecord(event: WideEvent, shape: OTLPRecordShape = 'json'): OTLPLogRecord {
+export function toOTLPLogRecord(event: WideEvent, shape: OTLPRecordShape = 'json', options: OTLPLogRecordOptions = {}): OTLPLogRecord {
   const timestamp = new Date(event.timestamp).getTime() * 1_000_000 // Convert to nanoseconds
 
-  // Extract known fields, rest goes to attributes
-  const { level, traceId, spanId, ...rest } = event
+  const { level, ...rest } = event
+  // A malformed id would be rejected in the record's trace fields, so it stays an ordinary attribute.
+  const traceId = toTraceContextId(rest.traceId, TRACE_ID_PATTERN)
+  const spanId = toTraceContextId(rest.spanId, SPAN_ID_PATTERN)
+  if (traceId) delete (rest as Record<string, unknown>).traceId
+  if (spanId) delete (rest as Record<string, unknown>).spanId
   // Remove base fields from rest (they're handled as resource attributes)
   delete (rest as Record<string, unknown>).timestamp
   delete (rest as Record<string, unknown>).service
@@ -139,10 +255,11 @@ export function toOTLPLogRecord(event: WideEvent, shape: OTLPRecordShape = 'json
   } else {
     for (const [key, value] of Object.entries(rest)) {
       if (value !== undefined && value !== null) {
-        attributes.push({ key, value: toAttributeValue(value) })
+        attributes.push({ key, value: toNestedAttributeValue(value) })
       }
     }
   }
+  if (options.semanticConventions) pushSemanticConventionAttributes(event, attributes)
 
   const record: OTLPLogRecord = {
     timeUnixNano: String(timestamp),
@@ -156,98 +273,73 @@ export function toOTLPLogRecord(event: WideEvent, shape: OTLPRecordShape = 'json
     attributes,
   }
 
-  // Add trace context if present
-  if (typeof traceId === 'string') {
-    record.traceId = traceId
-  }
-  if (typeof spanId === 'string') {
-    record.spanId = spanId
-  }
+  if (traceId) record.traceId = traceId
+  if (spanId) record.spanId = spanId
 
   return record
 }
 
 /**
- * Build OTLP resource attributes from event and config.
+ * Build OTLP resource attributes. Later sources replace earlier ones by key:
+ * `OTEL_RESOURCE_ATTRIBUTES`, then the fields evlog derives from the event,
+ * then `config.resourceAttributes`.
  */
 function buildResourceAttributes(
   event: WideEvent,
-  config: OTLPConfig,
+  config: ResolvedOTLPConfig,
 ): OTLPResource['attributes'] {
-  const attributes: OTLPResource['attributes'] = []
+  const attributes = new Map<string, string | number | boolean>(Object.entries(config.envResourceAttributes ?? {}))
 
-  // Service name
-  attributes.push({
-    key: 'service.name',
-    value: { stringValue: config.serviceName ?? event.service },
-  })
-
-  // Environment
+  attributes.set('service.name', config.serviceName ?? event.service)
   if (event.environment) {
-    attributes.push({
-      key: 'deployment.environment',
-      value: { stringValue: event.environment },
-    })
+    attributes.set('deployment.environment', event.environment)
+    if (config.semanticConventions) attributes.set('deployment.environment.name', event.environment)
+  }
+  if (event.version) attributes.set('service.version', event.version)
+  if (event.region) attributes.set('cloud.region', event.region)
+  if (event.commitHash) attributes.set('vcs.commit.id', event.commitHash)
+
+  for (const [key, value] of Object.entries(config.resourceAttributes ?? {})) {
+    attributes.set(key, value)
   }
 
-  // Version
-  if (event.version) {
-    attributes.push({
-      key: 'service.version',
-      value: { stringValue: event.version },
-    })
-  }
-
-  // Region
-  if (event.region) {
-    attributes.push({
-      key: 'cloud.region',
-      value: { stringValue: event.region },
-    })
-  }
-
-  // Commit hash
-  if (event.commitHash) {
-    attributes.push({
-      key: 'vcs.commit.id',
-      value: { stringValue: event.commitHash },
-    })
-  }
-
-  // Custom resource attributes from config
-  if (config.resourceAttributes) {
-    for (const [key, value] of Object.entries(config.resourceAttributes)) {
-      attributes.push({
-        key,
-        value: toAttributeValue(value),
-      })
-    }
-  }
-
-  return attributes
+  return Array.from(attributes, ([key, value]) => ({ key, value: toAttributeValue(value) }))
 }
 
 /**
- * Build headers from OTEL env vars.
- * Kept inline as OTLP-specific (parses OTEL_EXPORTER_OTLP_HEADERS / OTLP_HEADERS as key=val,key=val).
+ * Parse the `key=value,key=value` list format of `OTEL_EXPORTER_OTLP_HEADERS`
+ * and `OTEL_RESOURCE_ATTRIBUTES`. Values are percent-decoded after splitting,
+ * so an encoded `%2C` stays inside its value.
  */
-function getHeadersFromEnv(): Record<string, string> | undefined {
-  const headersEnv = process.env.OTEL_EXPORTER_OTLP_HEADERS || process.env.OTLP_HEADERS || process.env.NUXT_OTLP_HEADERS
-  if (headersEnv) {
-    const headers: Record<string, string> = {}
-    const decoded = decodeURIComponent(headersEnv)
-    for (const pair of decoded.split(',')) {
-      const eqIndex = pair.indexOf('=')
-      if (eqIndex > 0) {
-        const key = pair.slice(0, eqIndex).trim()
-        const value = pair.slice(eqIndex + 1).trim()
-        if (key && value) {
-          headers[key] = value
-        }
-      }
-    }
-    if (Object.keys(headers).length > 0) return headers
+function parseOtelKeyValueList(list: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!list) return out
+  for (const pair of list.split(',')) {
+    const eqIndex = pair.indexOf('=')
+    if (eqIndex <= 0) continue
+    const key = pair.slice(0, eqIndex).trim()
+    const value = decodePercentEncoded(pair.slice(eqIndex + 1).trim())
+    if (key && value) out[key] = value
   }
+  return out
+}
+
+/** A `%` outside a valid escape is kept as written, as OTel SDKs do, so one value cannot disable the drain. */
+function decodePercentEncoded(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+/** Headers from the environment. `OTEL_EXPORTER_OTLP_LOGS_HEADERS` replaces the generic headers by key. */
+function getHeadersFromEnv(): Record<string, string> | undefined {
+  const headers = {
+    ...parseOtelKeyValueList(process.env.OTEL_EXPORTER_OTLP_HEADERS || process.env.OTLP_HEADERS || process.env.NUXT_OTLP_HEADERS),
+    ...parseOtelKeyValueList(process.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS),
+  }
+  if (Object.keys(headers).length > 0) return headers
 
   const auth = process.env.NUXT_OTLP_AUTH
   if (auth) {
@@ -264,7 +356,10 @@ function getHeadersFromEnv(): Record<string, string> | undefined {
  * 1. Overrides passed to createOTLPDrain()
  * 2. runtimeConfig.evlog.otlp
  * 3. runtimeConfig.otlp
- * 4. Environment variables: OTEL_EXPORTER_OTLP_ENDPOINT (or OTLP_ENDPOINT), OTEL_SERVICE_NAME
+ * 4. Environment variables: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT (used as the full
+ *    logs URL), OTEL_EXPORTER_OTLP_ENDPOINT (or OTLP_ENDPOINT), OTEL_SERVICE_NAME,
+ *    OTEL_EXPORTER_OTLP_[LOGS_]HEADERS, OTEL_EXPORTER_OTLP_[LOGS_]COMPRESSION,
+ *    OTEL_EXPORTER_OTLP_[LOGS_]PROTOCOL, OTEL_RESOURCE_ATTRIBUTES
  *
  * @example
  * ```ts
@@ -278,10 +373,10 @@ function getHeadersFromEnv(): Record<string, string> | undefined {
  * ```
  */
 export function createOTLPDrain(overrides?: Partial<OTLPConfig>) {
-  return defineHttpDrain<OTLPConfig>({
+  return defineHttpDrain<ResolvedOTLPConfig>({
     name: 'otlp',
     resolve: async () => {
-      const config = await resolveAdapterConfig<OTLPConfig>('otlp', OTLP_FIELDS, overrides)
+      const config: Partial<ResolvedOTLPConfig> = await resolveAdapterConfig<OTLPConfig>('otlp', OTLP_FIELDS, overrides)
 
       // OTLP-specific: resolve headers from env if not provided via config
       if (!config.headers) {
@@ -289,10 +384,23 @@ export function createOTLPDrain(overrides?: Partial<OTLPConfig>) {
       }
 
       if (!config.endpoint) {
-        console.error(`[evlog/otlp] Missing endpoint. Set ${formatPublicEnvKeys(['NUXT_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'OTLP_ENDPOINT'])} env var, or pass to createOTLPDrain()`)
+        config.logsUrl = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT || undefined
+        config.endpoint = config.logsUrl || process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTLP_ENDPOINT
+      }
+      if (!config.endpoint) {
+        console.error(`[evlog/otlp] Missing endpoint. Set ${formatPublicEnvKeys(ENDPOINT_ENV)} env var, or pass to createOTLPDrain()`)
         return null
       }
-      return config as OTLPConfig
+      if (config.compression !== undefined && config.compression !== 'gzip' && config.compression !== 'none') {
+        console.error(`[evlog/otlp] Unsupported compression "${config.compression}". Use "gzip" or "none".`)
+        return null
+      }
+      if (config.protocol !== undefined && config.protocol !== 'http/json' && config.protocol !== 'http/protobuf') {
+        console.error(`[evlog/otlp] Unsupported protocol "${config.protocol}". Use "http/json" or "http/protobuf".`)
+        return null
+      }
+      config.envResourceAttributes = parseOtelKeyValueList(process.env.OTEL_RESOURCE_ATTRIBUTES)
+      return withProtobufEncoder(config as ResolvedOTLPConfig)
     },
     label: 'OTLP',
     encode: (events, config) => (events.length === 0 ? null : encodeOTLPRequest(events, config)),
@@ -303,21 +411,24 @@ export function createOTLPDrain(overrides?: Partial<OTLPConfig>) {
  * Encode a batch of wide events into the OTLP/HTTP logs request. Shared by
  * {@link createOTLPDrain} and {@link sendBatchToOTLP}.
  */
-function encodeOTLPRequest(events: WideEvent[], config: OTLPConfig): HttpDrainRequest {
+function encodeOTLPRequest(events: WideEvent[], config: ResolvedOTLPConfig): HttpDrainRequest {
+  const payload = buildOTLPPayload(events, config)
   return {
-    url: `${config.endpoint.replace(/\/$/, '')}/v1/logs`,
+    url: config.logsUrl ?? `${config.endpoint.replace(/\/$/, '')}/v1/logs`,
     headers: {
-      'Content-Type': 'application/json',
+      'Content-Type': config.encodeProtobuf ? 'application/x-protobuf' : 'application/json',
       ...config.headers,
     },
-    body: JSON.stringify(buildOTLPPayload(events, config)),
+    body: config.encodeProtobuf ? config.encodeProtobuf(payload) : JSON.stringify(payload),
+    compression: config.compression === 'gzip' ? 'gzip' : undefined,
   }
 }
 
-function buildOTLPPayload(events: WideEvent[], config: OTLPConfig): ExportLogsServiceRequest {
+function buildOTLPPayload(events: WideEvent[], config: ResolvedOTLPConfig): OTLPExportLogsRequest {
   const grouped = new Map<string, WideEvent[]>()
   for (const event of events) {
-    const key = `${event.service}::${event.environment}`
+    // Every field the resource is built from, so no event borrows another's resource.
+    const key = JSON.stringify([event.service, event.environment, event.version, event.region, event.commitHash])
     const group = grouped.get(key)
     if (group) group.push(event)
     else grouped.set(key, [event])
@@ -327,8 +438,8 @@ function buildOTLPPayload(events: WideEvent[], config: OTLPConfig): ExportLogsSe
       resource: { attributes: buildResourceAttributes(groupEvents[0]!, config) },
       scopeLogs: [
         {
-          scope: { name: 'evlog' },
-          logRecords: groupEvents.map(event => toOTLPLogRecord(event, config.recordShape)),
+          scope: { name: 'evlog', version: EVLOG_VERSION },
+          logRecords: groupEvents.map(event => toOTLPLogRecord(event, config.recordShape, { semanticConventions: config.semanticConventions })),
         },
       ],
     })),
@@ -361,7 +472,7 @@ export async function sendToOTLP(event: WideEvent, config: OTLPConfig): Promise<
  */
 export async function sendBatchToOTLP(events: WideEvent[], config: OTLPConfig): Promise<void> {
   if (events.length === 0) return
-  await sendEncodedDrainRequest(encodeOTLPRequest(events, config), {
+  await sendEncodedDrainRequest(encodeOTLPRequest(events, await withProtobufEncoder(config)), {
     label: 'OTLP',
     source: 'otlp',
     timeout: config.timeout,

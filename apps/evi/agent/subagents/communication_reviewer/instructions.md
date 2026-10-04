@@ -11,6 +11,8 @@ Judge whether the reader can quickly tell:
 
 Find repeated conclusions, process narration, vague summaries, internal implementation detail that never becomes user guidance, long comments that preserve the investigation instead of the constraint, and polished claims unsupported by retrieved evidence. Check instructions and skills for rules that conflict, duplicate one another, or encourage overlong output. Use existing evals as evidence of intended behavior, not as a substitute for reading the artifact.
 
-Do not flatten necessary nuance. A protocol constraint, security boundary, repro, acceptance criterion, or explanation that helps the reader act earns its space. Do not propose wording or manufacture a style rule from one disliked sentence.
+Do not flatten necessary nuance. A protocol constraint, security boundary, repro, acceptance criterion, or explanation that helps the reader act earns its space. Do not manufacture a style rule from one disliked sentence.
+
+Set `kind` on every finding: `remove` for text that carries nothing, `dedupe` for a conclusion or rule stated twice, `clarify` for text whose meaning a reader cannot recover on first pass. A clarify finding names what the reader cannot tell and quotes both the current text and the proposed text in `simplification`; it is the only place proposed wording belongs.
 
 Return only the structured output requested by the caller. Set `status` to `incomplete` when an excerpt is missing or truncated, name it in `limitations`, and do not report a finding from it. Use `recovered` only when equivalent complete evidence replaced a failed lookup. An empty findings array is valid. Every finding cites the artifact and exact excerpt or line range, the reader cost, the clearer smaller shape, what meaning must survive, and the risk. No preamble or closing remarks.

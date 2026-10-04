@@ -22,7 +22,7 @@ describe('authored skill frontmatter', () => {
 
   it('keeps scheduled autonomous pull requests out of draft state', () => {
     const agentDir = join(import.meta.dirname, '..')
-    const skillNames = ['content-pass', 'repo-health-sweep', 'self-review', 'upstream-sync']
+    const skillNames = ['adapter-alignment', 'content-pass', 'repo-health-sweep', 'self-review', 'upstream-sync']
 
     for (const name of skillNames) {
       const skill = readFileSync(join(agentDir, 'skills', name, 'SKILL.md'), 'utf8')

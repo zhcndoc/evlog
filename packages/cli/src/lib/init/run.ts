@@ -11,8 +11,9 @@ import { detectFramework } from '../map/detect'
 import type { Framework } from '../map/types'
 import { resolveEvlog, resolveProject } from '../project'
 import type { PackageJson, ProjectInfo } from '../project'
+import { getFramework, isInitFramework } from '../frameworks'
 import type { DrainId, EnricherId, ExtraId, OfferContext, SamplingProfile } from './catalog'
-import { isInitFramework, planWiring } from './frameworks'
+import { planWiring } from './frameworks'
 import type { FileAction, ManualStep } from './frameworks'
 import { readProject } from './insight'
 import type { ProjectInsight } from './insight'
@@ -26,7 +27,6 @@ import {
   confirmPlan,
   showPlan,
   InitCancelled,
-  noteEnvironment,
   noteManual,
   noteSkills,
   noteSkillsStarting,
@@ -127,11 +127,23 @@ function defaultService(project: ProjectInfo): string {
 }
 
 /** The module subpath and config factory differ per major. */
-function detectNitroMajor(pkg: PackageJson | null, framework: Framework): 2 | 3 {
+export function detectNitroMajor(pkg: PackageJson | null, framework: Framework): 2 | 3 {
   if (framework === 'tanstack-start') return 3
   const deps = { ...pkg?.dependencies, ...pkg?.devDependencies }
+  /* Nuxt 4 bundles Nitro v2 and never lists nitropack directly, so the nuxt
+     version decides, not the dependency tree. Nightlies install through an
+     npm: alias, so read the version out of the alias when there is one. */
+  if (framework === 'nuxt') {
+    const { nuxt } = deps
+    return nuxt && majorFromRange(nuxt) >= 5 ? 3 : 2
+  }
   if ('nitropack' in deps) return 2
   return 3
+}
+
+function majorFromRange(range: string): number {
+  const version = range.startsWith('npm:') ? range.slice(range.lastIndexOf('@') + 1) : range.replace(/^[^\d]*/, '')
+  return Number.parseInt(version.split('.')[0] ?? '', 10)
 }
 
 /**
@@ -383,9 +395,8 @@ export async function runInit(
 
   if (interactive) {
     if (agentGuide) noteSkills(ctx, agentGuide)
-    noteEnvironment(answers.prodDrains)
     noteManual(plan.manual)
-    closeInteractive(ctx, answers.framework, frameworkDocs(answers.framework), dryRun)
+    closeInteractive(ctx, answers.framework, getFramework(answers.framework).docs, dryRun)
   }
 
   log.set({ steps: ['done'] })
@@ -449,15 +460,4 @@ function cancelledResult(input: {
 function cancelled(result: InitResult): InitResult {
   recordInitAnswers(result)
   return result
-}
-
-/** Documentation path for a framework's setup guide. */
-export function frameworkDocs(framework: Framework): string {
-  switch (framework) {
-    case 'nuxt': return '/integrate/frameworks/nuxt'
-    case 'nitro': return '/integrate/frameworks/nitro'
-    case 'next': return '/integrate/frameworks/nextjs'
-    case 'tanstack-start': return '/integrate/frameworks/tanstack-start'
-    case 'hono': return '/integrate/frameworks/hono'
-  }
 }

@@ -63,21 +63,32 @@ export function detectEnvironment(): Partial<EnvironmentContext> {
 }
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
+  trace: 0,
   debug: 0,
   info: 1,
   warn: 2,
   error: 3,
+  fatal: 4,
 }
 
 /**
- * True if `level` is at least as severe as `minLevel` (debug < info < warn < error).
+ * True if `level` is at least as severe as `minLevel`
+ * (trace and debug < info < warn < error < fatal).
+ * Trace shares debug's rank: visibility is gated like debug, retention is the
+ * opt-in via `sampling.rates.trace` (default 0).
  */
 export function isLevelEnabled(level: LogLevel, minLevel: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[minLevel]
 }
 
-export function getConsoleMethod(level: LogLevel): LogLevel {
-  return level
+/**
+ * Console method for a level. `console.fatal` / `console.trace` do not exist:
+ * fatal prints as error, trace prints as log (like debug).
+ */
+export function getConsoleMethod(level: LogLevel): 'log' | 'info' | 'warn' | 'error' {
+  if (level === 'fatal') return 'error'
+  if (level === 'trace') return 'log'
+  return level as 'log' | 'info' | 'warn' | 'error'
 }
 
 export const colors = {
@@ -94,7 +105,7 @@ export const colors = {
   gray: '\x1B[90m',
 } as const
 
-const levelColorMap: Record<string, string> = { error: colors.red, warn: colors.yellow, info: colors.cyan, debug: colors.gray }
+const levelColorMap: Record<string, string> = { error: colors.red, fatal: colors.red, warn: colors.yellow, info: colors.cyan, debug: colors.gray, trace: colors.gray }
 
 export function getLevelColor(level: string): string {
   return levelColorMap[level] ?? colors.white
@@ -110,7 +121,7 @@ export const cssColors = {
   reset: 'color: inherit; font-weight: normal',
 } as const
 
-const cssLevelColorMap: Record<string, string> = { error: cssColors.red, warn: cssColors.yellow, info: cssColors.cyan, debug: cssColors.gray }
+const cssLevelColorMap: Record<string, string> = { error: cssColors.red, fatal: cssColors.red, warn: cssColors.yellow, info: cssColors.cyan, debug: cssColors.gray, trace: cssColors.gray }
 
 export function getCssLevelColor(level: string): string {
   return cssLevelColorMap[level] ?? cssColors.reset
@@ -123,6 +134,63 @@ export function getCssLevelColor(level: string): string {
  */
 export function escapeFormatString(str: string): string {
   return str.replace(/%/g, '%%')
+}
+
+/**
+ * True when a message string contains a `%s`, `%d` or `%j` specifier, so
+ * trailing log arguments have something to interpolate into.
+ */
+export function hasMessageSpecifiers(format: string): boolean {
+  return /%[sdj]/.test(format)
+}
+
+/**
+ * Interpolate trailing log arguments into a message with the printf subset
+ * pino and consola call sites rely on: `%s`, `%d`, `%j` and `%%`. Unknown
+ * specifiers and specifiers past the last argument stay literal, surplus
+ * arguments are appended space-separated, and a message without arguments is
+ * returned unchanged. Objects and arrays render as JSON instead of node's
+ * `util.inspect` to keep the formatter free of bundle weight.
+ *
+ * @param format - Message possibly containing format specifiers
+ * @param args - Values for the specifiers
+ */
+export function formatMessage(format: string, args: unknown[]): string {
+  if (args.length === 0) return format
+
+  let argIndex = 0
+  const interpolated = format.replace(/%(.)/g, (specifier, char: string): string => {
+    if (char === '%') return '%'
+    if (char !== 's' && char !== 'd' && char !== 'j') return specifier
+    if (argIndex >= args.length) return specifier
+    return renderMessageValue(char, args[argIndex++])
+  })
+
+  if (argIndex >= args.length) return interpolated
+
+  const extras: string[] = []
+  while (argIndex < args.length) {
+    extras.push(renderMessageValue('s', args[argIndex++]))
+  }
+  return `${interpolated} ${extras.join(' ')}`
+}
+
+function renderMessageValue(specifier: 's' | 'd' | 'j', value: unknown): string {
+  if (specifier === 'j') return renderMessageJson(value)
+  if (typeof value === 'bigint') return `${value}n`
+  if (specifier === 'd') return String(Number(value))
+  if (typeof value === 'string') return value
+  if (value === null || typeof value !== 'object') return String(value)
+  return renderMessageJson(value)
+}
+
+function renderMessageJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value)
+  } catch {
+    // A cyclic or BigInt-containing argument must not crash the log call.
+    return String(value)
+  }
 }
 
 /** Headers that should never be passed to hooks for security */

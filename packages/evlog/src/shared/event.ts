@@ -92,14 +92,46 @@ export function toTypedAttributeValue(value: unknown): TypedAttributeValue | und
   return { value: JSON.stringify(value), type: 'string' }
 }
 
-/** Convert a JS value to the OTLP `AnyValue` shape (`stringValue` / `intValue` / `boolValue`). */
-export function toOtlpAttributeValue(value: unknown): {
-  stringValue?: string
-  intValue?: string
-  boolValue?: boolean
-} {
+/** OTLP `AnyValue` subset evlog emits: primitives, homogeneous primitive arrays, and key-value lists. */
+export type OtlpAttributeValue =
+  | { stringValue: string }
+  | { boolValue: boolean }
+  | { intValue: string }
+  | { doubleValue: number }
+  | { arrayValue: { values: OtlpAttributeValue[] } }
+  | { kvlistValue: { values: Array<{ key: string, value: OtlpAttributeValue }> } }
+
+function toOtlpArrayValue(values: unknown[]): OtlpAttributeValue | undefined {
+  if (values.length === 0) return undefined
+  const kind = typeof values[0]
+  if (!values.every(v => typeof v === kind)) return undefined
+  if (kind === 'string') return { arrayValue: { values: (values as string[]).map(v => ({ stringValue: v })) } }
+  if (kind === 'boolean') return { arrayValue: { values: (values as boolean[]).map(v => ({ boolValue: v })) } }
+  if (kind !== 'number') return undefined
+  const numbers = values as number[]
+  if (!numbers.every(Number.isFinite)) return undefined
+  // An OTLP array must hold a single value type, so one element that is not a safe integer makes every element a double.
+  if (numbers.every(Number.isSafeInteger)) return { arrayValue: { values: numbers.map(v => ({ intValue: String(v) })) } }
+  return { arrayValue: { values: numbers.map(v => ({ doubleValue: v })) } }
+}
+
+/**
+ * Convert a JS value to the OTLP `AnyValue` shape. Safe integers map to `intValue`,
+ * other finite numbers to `doubleValue`, non-empty arrays of one primitive type to `arrayValue`.
+ * Everything else, including non-finite numbers, is sent as a string.
+ */
+export function toOtlpAttributeValue(value: unknown): OtlpAttributeValue {
   if (typeof value === 'boolean') return { boolValue: value }
-  if (typeof value === 'number' && Number.isInteger(value)) return { intValue: String(value) }
   if (typeof value === 'string') return { stringValue: value }
+  if (typeof value === 'number') {
+    // Beyond the safe range `String()` can produce exponent notation, which is not a valid int64.
+    if (Number.isSafeInteger(value)) return { intValue: String(value) }
+    if (Number.isFinite(value)) return { doubleValue: value }
+    return { stringValue: String(value) }
+  }
+  if (Array.isArray(value)) {
+    const array = toOtlpArrayValue(value)
+    if (array) return array
+  }
   return { stringValue: JSON.stringify(value) }
 }

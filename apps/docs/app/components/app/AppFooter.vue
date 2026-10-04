@@ -3,7 +3,6 @@ import type { FooterColumn } from '@nuxt/ui'
 
 const route = useRoute()
 const isLanding = computed(() => route.path === '/')
-const { open: openConsent } = useConsentBanner()
 const { public: pub } = useRuntimeConfig()
 const justUseEvlogUrl = computed(() =>
   typeof pub.justUseEvlogUrl === 'string' ? pub.justUseEvlogUrl.trim() : '',
@@ -57,9 +56,6 @@ const columns = computed<FooterColumn[]>(() => [
 </script>
 
 <template>
-  <ClientOnly>
-    <AppConsentBanner />
-  </ClientOnly>
   <UFooter v-if="!isLanding" :ui="{ top: 'border-b border-default', root: 'z-10 border-t border-default' }">
     <template #top>
       <UContainer>
@@ -73,14 +69,6 @@ const columns = computed<FooterColumn[]>(() => [
         <ULink to="https://hrcd.fr/" target="_blank" class="hover:underline">
           HugoRCD
         </ULink>
-        <span class="text-muted"> · </span>
-        <button type="button" class="text-muted hover:underline cursor-pointer" @click="openConsent">
-          Cookies
-        </button>
-        <span class="text-muted"> | </span>
-        <a style="text-decoration: none;" target="_blank" href="https://www.zhcndoc.com">简中文档</a>
-        <span class="text-muted"> | </span>
-        <a style="text-decoration: none;" rel="nofollow" target="_blank" href="https://beian.miit.gov.cn">沪ICP备2024070610号-3</a>
       </div>
     </template>
 
