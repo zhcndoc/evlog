@@ -3,7 +3,6 @@ import { gradientRule, HEADER_GRADIENT_WIDTH } from '../../core/brand'
 import { DOCS_URL, createStyle } from '../../core/output'
 import type { Style, StyleCode } from '../../core/output'
 import { getFramework } from '../frameworks'
-import { getAdapter } from './adapters/index'
 import type { BaselineComparison } from './baseline'
 import { hasRegressed } from './baseline'
 import { countSuppressed } from './directives'
@@ -11,7 +10,7 @@ import { isInfrastructureRoute } from './exemptions'
 import { REQUIREMENTS, getRule } from './rules/index'
 import type { FixSlot, SuggestContext } from './rules/index'
 import type { ProjectFacts } from './project-facts'
-import { classifyRouteObservability, scoreGlobal } from './score'
+import { classifyRouteObservability, passesMinScore, scoreGlobal } from './score'
 import type { CheckId, CheckResult, Framework, RouteEntry, ScanResult } from './types'
 import { indent } from './utils'
 import { MAP_FILE_NAME } from './write'
@@ -96,11 +95,15 @@ const DIGITS: Record<string, readonly string[]> = {
   7: ['▀▀█', '  █', '  ▀'],
   8: ['█▀█', '█▀█', '▀▀▀'],
   9: ['█▀█', '▀▀█', '▀▀▀'],
+  '-': ['   ', '▀▀▀', '   '],
 }
 
-/** The score as three rows of block art. */
-function bigDigits(value: number): string[] {
-  const chars = String(value).split('')
+/**
+ * The score as three rows of block art. An unscored scan has no score, so the
+ * banner draws the dashes the gate reports instead of a number.
+ */
+function bigDigits(text: string): string[] {
+  const chars = text.split('')
   return [0, 1, 2].map(row => chars.map(char => DIGITS[char]![row]).join(' '))
 }
 
@@ -228,8 +231,8 @@ function priorityReason(route: RouteEntry): { sentence: string, doc: string } {
     : { sentence: 'has gaps', doc: '/cli/rules' }
 }
 
-/** Worst first, sensitive entry points ahead of the rest. */
-function prioritize(routes: RouteEntry[]): RouteEntry[] {
+/** Entry points with gaps, worst first, sensitive ones ahead of the rest: the FIX FIRST order. */
+export function prioritize(routes: RouteEntry[]): RouteEntry[] {
   return [...routes]
     .filter(hasGaps)
     .sort((a, b) => {
@@ -316,10 +319,10 @@ const MORE_WIDTH = 5
 /** The score, as a headline: block digits, gauge, grade, per-entry skyline. */
 function scoreHeadline(style: ReportStyle, result: ScanResult): string[] {
   const { map, grade } = result
-  const color = scoreColor(map.score)
-  const digits = bigDigits(map.score)
+  const color = grade === 'unscored' ? 'dim' : scoreColor(map.score)
+  const digits = bigDigits(grade === 'unscored' ? '--' : String(map.score))
 
-  const gaugeFilled = Math.round((map.score / 100) * 20)
+  const gaugeFilled = grade === 'unscored' ? 0 : Math.round((map.score / 100) * 20)
   const gauge = style.paint(color, '▰'.repeat(gaugeFilled))
     + style.paint('dim', '▱'.repeat(20 - gaugeFilled))
 
@@ -336,7 +339,7 @@ function scoreHeadline(style: ReportStyle, result: ScanResult): string[] {
   return digits.map((digitRow, index) => {
     const middle = index === 0
       ? style.paint('dim', 'score /100')
-      : index === 1 ? gauge : style.paint(color, grade.replace('-', ' '))
+      : index === 1 ? gauge : style.paint(color, grade === 'unscored' ? 'nothing to scan' : grade.replace('-', ' '))
     return `${style.paint([color, 'bold'], digitRow)}   ${pad(middle, HEADLINE_GAUGE_WIDTH)}  ${side[index] ?? ''}`
   })
 }
@@ -602,7 +605,9 @@ export function formatMapMatrix(ctx: CliContext, result: ScanResult): string {
 
   lines.push([
     paint('dim', `${map.projectName} · ${getFramework(map.framework).label} ·`),
-    `${paint([scoreColor(map.score), 'bold'], String(map.score))}${paint('dim', '/100')}`,
+    result.grade === 'unscored'
+      ? paint('dim', '--')
+      : `${paint([scoreColor(map.score), 'bold'], String(map.score))}${paint('dim', '/100')}`,
     paint('dim', `· ${map.routes.length} entry points, worst first`),
   ].join(' '))
   lines.push('')
@@ -727,7 +732,7 @@ function suggestedShape(route: RouteEntry, framework: Framework, project: Projec
      handler skeleton would suggest moving code that should not move. */
   if (route.kind === 'page') return body
 
-  return getAdapter(framework).handlerShape(route, body)
+  return getFramework(framework).shape.handler(route, body)
 }
 
 /**
@@ -883,16 +888,18 @@ export function formatMapWarnings(ctx: CliContext, warnings: readonly string[]):
  * Spells out the exit code because this line is most often read in CI logs,
  * where the reader is looking for why the job went red.
  */
-export function formatGate(ctx: CliContext, result: ScanResult, threshold: number): string {
+export function formatGate(ctx: CliContext, result: ScanResult, threshold: number, from = '--min-score'): string {
   const style = createReportStyle(ctx)
   const { paint } = style
   const { score } = result.map
-  const passed = score >= threshold
+  const passed = passesMinScore(result.grade, score, threshold)
   const badge = paint(['bold', passed ? 'green' : 'red'], ' GATE ')
 
   const verdict = passed
-    ? `${paint('green', `score ${score} meets --min-score ${threshold}`)} ${paint('dim', '— exit code 0')}`
-    : `${paint('red', `score ${score} is below --min-score ${threshold}`)} ${paint('dim', '— exit code 1')}`
+    ? `${paint('green', `score ${score} meets ${from} ${threshold}`)} ${paint('dim', '— exit code 0')}`
+    : result.grade === 'unscored'
+      ? `${paint('red', `nothing to scan, so ${from} ${threshold} cannot be met`)} ${paint('dim', '— exit code 1')}`
+      : `${paint('red', `score ${score} is below ${from} ${threshold}`)} ${paint('dim', '— exit code 1')}`
 
   const lines = ['', `${badge} ${verdict}`]
   if (!passed) {

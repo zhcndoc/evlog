@@ -5,13 +5,6 @@ import type { CollectFields, CollectFlags, FlagDefinitions, TelemetryHandle, Tel
 type AnyCommand = CommandDef<ArgsDef>
 type Runner = Pick<TelemetryHandle, 'run'>
 
-/** citty allows `args` to be lazy; only a plain object can be read synchronously. */
-function syncArgs(args: AnyCommand['args']): FlagDefinitions | undefined {
-  return args && typeof args === 'object' && !('then' in args)
-    ? args as FlagDefinitions
-    : undefined
-}
-
 async function resolve<T>(value: Resolvable<T>): Promise<T> {
   return typeof value === 'function' ? await (value as () => T | Promise<T>)() : await value
 }
@@ -49,15 +42,29 @@ function wrapCommand(
       ? [...path, segment]
       : path
 
+  /* citty resolves `args` once to parse argv, then calls `run`. The event
+     needs the same definitions to tell a defaulted flag from a passed one, so
+     the value citty resolved is kept rather than resolving a second time: a
+     function-valued resolver may not be idempotent, and a rejection from it
+     must not stop the command when telemetry is off. */
+  let resolvedArgs: ArgsDef | undefined
+  const args = command.args === undefined
+    ? undefined
+    : async () => {
+      resolvedArgs = await resolve(command.args!)
+      return resolvedArgs
+    }
+
   return {
     ...command,
+    args,
     subCommands: command.subCommands ? wrapSubCommands(command.subCommands, telemetry, commandPath) : undefined,
     run: command.run
       ? (ctx) => {
         const name = commandPath.join(' ') || segment || 'run'
         return telemetry.run(name, () => command.run!(ctx), {
           flags: ctx.args as Record<string, unknown>,
-          args: syncArgs(command.args),
+          args: resolvedArgs as FlagDefinitions | undefined,
         })
       }
       : command.run,

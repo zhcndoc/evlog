@@ -2,8 +2,9 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Nitro } from 'nitro/types'
 import type { NitroModuleOptions } from '../nitro'
-import { prependNitroErrorHandler } from '../nitro'
-import { FUNCTION_REDACT_POLICY_WARNING, hasFunctionRedactPolicy } from '../redact'
+import { prependNitroErrorHandler, serializeBundledEvlogConfig } from '../nitro'
+import { prepareRedactForBridge } from '../redact'
+import { registerEvlogConfigPlugin } from '../shared/configPlugin'
 
 export type { NitroModuleOptions }
 
@@ -24,6 +25,7 @@ export default function evlog(options?: NitroModuleOptions) {
       // Push the plugin (no extension — Nitro's bundler resolves it)
       nitro.options.plugins = nitro.options.plugins || []
       nitro.options.plugins.push(resolveModulePath('plugin'))
+      registerEvlogConfigPlugin(nitro)
 
       // explicitly tell nitro to bundle evlog's files to correctly resolve nitro dependencies
       if (!nitro.options.noExternals) {
@@ -39,10 +41,10 @@ export default function evlog(options?: NitroModuleOptions) {
       )
       nitro.options.errorHandler = Array.isArray(handlers) ? handlers : [handlers]
 
-      // JSON.stringify below drops function-valued redact policy silently.
-      if (hasFunctionRedactPolicy(options?.redact)) {
-        console.warn(FUNCTION_REDACT_POLICY_WARNING)
-      }
+      // runtimeConfig and the JSON bridges below serialize the config:
+      // RegExps would collapse to {} and function-valued redact policy
+      // would vanish silently.
+      prepareRedactForBridge(options?.redact)
 
       // Inject config into runtimeConfig — works in production where the
       // plugin is bundled through Nitro's builder and the virtual
@@ -57,7 +59,7 @@ export default function evlog(options?: NitroModuleOptions) {
       // but on Vercel + Bun the missing virtual triggers Bun's auto-installer
       // and crashes with `ReadOnlyFileSystem` (see issue #312).
       nitro.options.replace = nitro.options.replace || {}
-      nitro.options.replace.__EVLOG_CONFIG__ = JSON.stringify(options || {})
+      nitro.options.replace.__EVLOG_CONFIG__ = serializeBundledEvlogConfig(options)
 
       // In dev mode, Nitro loads plugins externally (not bundled), so the
       // virtual runtime-config module is unreachable and useRuntimeConfig()

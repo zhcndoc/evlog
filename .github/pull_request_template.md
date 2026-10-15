@@ -56,6 +56,7 @@ scope.
 - react-router (React Router integration)
 - release (release workflow / publishing)
 - repo (the repository: tooling, CI, scripts, root config)
+- sazabi (Sazabi drain adapter)
 - sentry (Sentry drain adapter)
 - signals (`@evlog/signals` package)
 - stream (in-process stream + stream server)

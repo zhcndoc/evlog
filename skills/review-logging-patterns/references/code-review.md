@@ -4,7 +4,7 @@
 
 ## 如果可以，请优先使用 `evlog map`
 
-在 **Nuxt、Nitro、Next.js App Router、TanStack Start 和 Hono** 上，如果用户愿意，请从随 `evlog` 软件包提供的 `evlog` CLI 开始：一个命令即可找到黑暗入口点并指出修复方法：
+在 **Nuxt、Nitro、Next.js App Router、TanStack Start、Hono、Express 和 Fastify** 上，如果用户愿意，请从随 `evlog` 软件包提供的 `evlog` CLI 开始：一个命令即可找到黑暗入口点并指出修复方法：
 
 ```bash
 npx evlog map --no-write

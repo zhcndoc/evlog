@@ -4,6 +4,7 @@ import { createAxiomDrain, sendBatchToAxiom } from '../../src/adapters/axiom'
 import { createBetterStackDrain, sendBatchToBetterStack } from '../../src/adapters/better-stack'
 import { createDatadogDrain, sendBatchToDatadog } from '../../src/adapters/datadog'
 import { createOTLPDrain, sendBatchToOTLP } from '../../src/adapters/otlp'
+import { createSazabiDrain, sendBatchToSazabi } from '../../src/adapters/sazabi'
 import { createSentryDrain, sendBatchToSentry } from '../../src/adapters/sentry'
 
 const event: WideEvent = {
@@ -57,6 +58,12 @@ const ADAPTERS: ParityCase[] = [
     label: 'OTLP',
     drain: () => createOTLPDrain({ endpoint: 'http://localhost:4318' }),
     send: () => sendBatchToOTLP([event], { endpoint: 'http://localhost:4318' }),
+  },
+  {
+    name: 'sazabi',
+    label: 'OTLP',
+    drain: () => createSazabiDrain({ endpoint: 'https://key.us-west-2.intake.sazabi.com' }),
+    send: () => sendBatchToSazabi([event], { endpoint: 'https://key.us-west-2.intake.sazabi.com' }),
   },
   {
     name: 'sentry',

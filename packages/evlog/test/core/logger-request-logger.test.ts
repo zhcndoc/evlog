@@ -259,6 +259,18 @@ describe('createRequestLogger', () => {
     expect(logs.map(entry => entry.level)).toEqual(['info', 'trace'])
   })
 
+  it('records debug entries in requestLogs without escalating the event level', () => {
+    const logger = createRequestLogger({})
+
+    logger.debug('Cart validated', { cart: { validated: true } })
+    const result = logger.emit()
+
+    expect(result).toHaveProperty('level', 'info')
+    expect(result?.cart).toEqual({ validated: true })
+    const logs = (result?.requestLogs as Array<Record<string, unknown>>)
+    expect(logs.map(entry => entry.level)).toEqual(['debug'])
+  })
+
   it('merges context passed to trace()', () => {
     const logger = createRequestLogger({})
 
@@ -369,6 +381,24 @@ describe('createRequestLogger', () => {
       status: 404,
       statusText: 'Not Found',
     })
+  })
+
+  it('serializes an Error passed to set() or a level method context', () => {
+    const logger = createRequestLogger({})
+    const error = new Error('Failed query', { cause: new Error('Connection terminated') })
+
+    logger.set({ error })
+    logger.warn('Retrying', { retry: { failure: error } })
+
+    const context = JSON.parse(JSON.stringify(logger.getContext()))
+    const expected = {
+      name: 'Error',
+      message: 'Failed query',
+      stack: expect.any(String),
+      cause: { name: 'Error', message: 'Connection terminated', stack: expect.any(String) },
+    }
+    expect(context.error).toEqual(expected)
+    expect(context.retry.failure).toEqual(expected)
   })
 
   it('does not include custom properties when absent', () => {

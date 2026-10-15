@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { version as CLI_VERSION } from '../../../package.json'
-import { getAdapter } from './adapters/index'
+import { getFramework } from '../frameworks'
+import { glob } from '../glob'
 import { countSuppressed } from './directives'
 import { buildFileFacts } from './facts'
 import { createParseCache, parseFile } from './parse'
@@ -9,7 +10,7 @@ import type { ProjectFacts } from './project-facts'
 import { RULE_SET_VERSION, getRule, runRules } from './rules/index'
 import type { FrameworkCapabilities } from './rules/index'
 import { classifySensitivity } from './sensitivity'
-import { classifyRouteObservability, gradeFromScore, scoreGlobal, scoreRoute } from './score'
+import { classifyRouteObservability, gradeFromScore, hasScoredRoutes, scoreGlobal, scoreRoute } from './score'
 import type {
   CheckId,
   CheckResult,
@@ -20,7 +21,7 @@ import type {
   ScanContext,
   ScanResult,
 } from './types'
-import { routeId } from './utils'
+import { relativeFromRoot, routeId } from './utils'
 
 interface AnalyseInput {
   ctx: ScanContext
@@ -42,6 +43,7 @@ function analyseRoute(input: AnalyseInput): { route: RouteEntry, warnings: strin
     ? buildFileFacts(parsed, {
       evlogAutoImports: capabilities.evlogAutoImports,
       evlogBarrels: project.evlogBarrels,
+      requestLoggerMember: capabilities.requestLoggerMember,
     })
     : null
 
@@ -79,10 +81,12 @@ export async function scan(input: ScanContext): Promise<ScanResult> {
   /* One parser for the whole run: the adapter and the analysis below read the
      same files, and Next emits one entry per exported method. */
   const ctx: ScanContext = { ...input, parse: input.parse ?? createParseCache() }
-  const adapter = getAdapter(ctx.framework)
+  const definition = getFramework(ctx.framework)
+  const adapter = await definition.map()
   const capabilities: FrameworkCapabilities = {
-    requestLogger: adapter.resolveRequestLogger?.(ctx) ?? adapter.requestLogger,
-    evlogAutoImports: adapter.evlogAutoImports ?? [],
+    requestLogger: adapter.resolveRequestLogger?.(ctx) ?? definition.requestLogger,
+    evlogAutoImports: definition.evlogAutoImports ?? [],
+    requestLoggerMember: definition.requestLoggerMember,
   }
 
   const project = collectProjectFacts(ctx, {
@@ -90,7 +94,9 @@ export async function scan(input: ScanContext): Promise<ScanResult> {
     evlogAutoImports: capabilities.evlogAutoImports,
   })
 
-  const rawRoutes = await adapter.extractRoutes(ctx)
+  const extracted = await adapter.extractRoutes(ctx)
+  const ignored = new Set(ctx.ignore?.length ? glob(ctx.ignore, ctx.projectRoot).map(file => relativeFromRoot(ctx.projectRoot, file)) : [])
+  const rawRoutes = extracted.filter(route => !ignored.has(route.file))
   const analysed = rawRoutes.map(raw => analyseRoute({ ctx, raw, project, capabilities }))
   const routes = analysed.map(entry => entry.route)
   const warnings = analysed.flatMap(entry => entry.warnings)
@@ -117,11 +123,12 @@ export async function scan(input: ScanContext): Promise<ScanResult> {
 
   return {
     map,
-    grade: gradeFromScore(globalScore),
+    grade: hasScoredRoutes(routes) ? gradeFromScore(globalScore) : 'unscored',
     summary: tally,
     project,
     suggestions,
     warnings,
+    ignored: extracted.length - rawRoutes.length,
   }
 }
 

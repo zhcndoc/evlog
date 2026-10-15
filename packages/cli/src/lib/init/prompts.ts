@@ -1,3 +1,4 @@
+import type { CANCEL_SYMBOL } from '@clack/prompts'
 import {
   autocomplete,
   autocompleteMultiselect,
@@ -28,7 +29,7 @@ import {
   SAMPLING_PRESETS,
 } from './catalog'
 import type { DrainId, EnricherId, ExtraGroup, ExtraId, OfferContext, SamplingProfile } from './catalog'
-import type { FileAction, ManualStep } from './frameworks'
+import type { FileAction, ManualStep } from './wiring'
 
 /** Every answer `init` needs, however it was obtained. */
 export interface InitAnswers {
@@ -56,9 +57,9 @@ export class InitCancelled extends Error {
 }
 
 /** Unwrap a clack answer, turning a cancel into a throw. */
-function required<T>(value: T | symbol): T {
+function required<T>(value: T | typeof CANCEL_SYMBOL): T {
   if (isCancel(value)) throw new InitCancelled()
-  return value as T
+  return value
 }
 
 export interface PromptContext {
@@ -286,7 +287,7 @@ export function noteSkills(ctx: CliContext, note: SkillsNote): void {
 
   switch (note.status) {
     case 'already':
-      clackLog.success(`evlog skills already installed${note.dirs?.length ? ` · ${paint('dim', note.dirs.join(', '))}` : ''}`)
+      /* The plan above already said they were installed; this is only the refresh hint. */
       clackLog.message(command(ctx, 'refresh', 'npx skills update'))
       return
     case 'installed':

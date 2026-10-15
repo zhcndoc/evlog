@@ -96,3 +96,4 @@ One line. Spend flat, no drift, and the models in use still the sane choice mean
 ## Settled decisions
 
 - **`openai/gpt-6-luna` (medium), decided 2026-09-24: keep `zai/glm-5.3-flash`.** Luna is cheaper per task and much faster, but trails badly on agentic work (Terminal-Bench 4.0 at 2.5% against 32.8%) and hallucinates far more (85% against 28%). Revisit if a new Luna release closes the agentic gap.
+- **`anthropic/claude-haiku-5.5`, decided 2026-10-09: replaces `zai/glm-5.3-flash` as the base model.** It runs on the team's Anthropic BYOK key, which the gateway tries first, so its rows report `total_cost` near zero while `market_cost` carries the list price. Read `groupBy: 'credential_type'` before calling a drop in spend real: once the key's monthly credit runs out, the same traffic falls back to gateway credentials and bills there.

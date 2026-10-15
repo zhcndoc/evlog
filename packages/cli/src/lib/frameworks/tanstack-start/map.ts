@@ -1,10 +1,11 @@
 import { basename } from 'node:path'
 import type { Node } from 'oxc-parser'
-import { globSync } from 'tinyglobby'
-import type { ParseFn, ParseResult } from '../parse'
-import { findHandlerLocation, nodeLoc, parseFile, walkAst } from '../parse'
-import type { FrameworkAdapter, RawRouteEntry, ScanContext } from '../types'
-import { indent, relativeFromRoot, segmentsToPath, stripExtension } from '../utils'
+import type { ParseFn, ParseResult } from '../../map/parse'
+import { findHandlerLocation, nodeLoc, parseFile, walkAst } from '../../map/parse'
+import type { RawRouteEntry, ScanContext } from '../../map/types'
+import type { MapAdapter } from '../types'
+import { relativeFromRoot, segmentsToPath, stripExtension } from '../../map/utils'
+import { glob } from '../../glob'
 
 function extractTanstackRoutes(file: string, root: string, parse: ParseFn): RawRouteEntry[] {
   const rel = relativeFromRoot(root, file)
@@ -103,28 +104,14 @@ function detectServerHandlers(parsed: ParseResult): Array<{ method: string, line
  * TanStack Start: `src/routes/**` file-based routes, API vs page via HTTP method
  * props / `createServerFn`. No auto-imports — evlog helpers must be imported.
  */
-export const tanstackStartAdapter: FrameworkAdapter = {
-  framework: 'tanstack-start',
-  requestLogger: 'explicit',
-  loggerCall: 'const log = useLogger()',
-  handlerShape(route, body) {
-    return [
-      `export const Route = createFileRoute('${route.path}')({`,
-      indent(1, 'server: { handlers: {'),
-      indent(2, `${route.method ?? 'POST'}: async () => {`),
-      ...body.map(line => indent(3, line)),
-      indent(2, '},'),
-      indent(1, '} },'),
-      '})',
-    ]
-  },
-  // eslint-disable-next-line require-await -- satisfies the async FrameworkAdapter contract
+export const tanstackStartAdapter: MapAdapter = {
+  // eslint-disable-next-line require-await -- satisfies the async MapAdapter contract
   async extractRoutes(ctx: ScanContext): Promise<RawRouteEntry[]> {
     const routes: RawRouteEntry[] = []
     const root = ctx.projectRoot
     const parse = ctx.parse ?? parseFile
 
-    for (const file of globSync('src/routes/**/*.{ts,tsx}', { cwd: root, absolute: true })) {
+    for (const file of glob('src/routes/**/*.{ts,tsx}', root)) {
       routes.push(...extractTanstackRoutes(file, root, parse))
     }
 

@@ -1,6 +1,6 @@
 {
   "name": "@evlog/cli",
-  "version": "0.7.0",
+  "version": "0.10.0",
   "description": "The official command line for evlog",
   "author": "HugoRCD <contact@evlog.dev>",
   "homepage": "https://evlog.dev",
@@ -15,7 +15,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "bin": {
     "evlog": "./bin/evlog.mjs"
@@ -52,22 +52,21 @@
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:watch": "vitest watch",
-    "typecheck": "echo 'Typecheck handled by build'"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.0",
+    "@clack/prompts": "^1.8.1",
     "@evlog/telemetry": "workspace:*",
     "citty": "^0.2.2",
-    "oxc-parser": "^0.149.0",
-    "tinyglobby": "^0.2.17"
+    "oxc-parser": "^0.152.0"
   },
   "peerDependencies": {
-    "evlog": ">=2.29.0"
+    "evlog": ">=2.31.0"
   },
   "devDependencies": {
     "evlog": "workspace:*",
     "tsdown": "^0.23.0",
-    "tsx": "^4.23.13",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
   },

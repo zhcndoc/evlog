@@ -1,17 +1,18 @@
 # GitHub 频道上的授权
 
-设计说明，尚未实现。撰写时 Evi 仍受限于单个用户  
-（`onComment` 会拒绝除 `hugorcd` 之外的所有人）。应在解除该限制之前，  
-或在接入自主 webhook 钩子之前处理此事项。无论实现哪一项，都必须先完成该限制。
+设计说明分为两部分。当前运行的是主体门控（`agent/lib/trust.ts` 中的
+`isMaintainer`，由 `MAINTAINER_PRINCIPALS` 支持）、GitHub 扩展中的按工具
+`requireApproval` 映射（`agent/extensions/github.ts`），以及
+`agent/lib/github/label-approval.ts` 中的 `writePolicy`：它会自动批准维护者，询问其他人，并直接拒绝自主回合。本文其余内容建立在 `tier` / `threadTier` 属性之上，这部分仍是提案。Evi 仍限制为单个用户（`onComment` 会拒绝除 `hugorcd` 之外的所有人），解除该限制前必须先加入层级属性。它不是自主 hook 的前置条件：`onIssue` 已接入，`writePolicy` 会覆盖这些回合。
 
 ## 此处的批准并不是授权控制
 
-Evi 目前具备完整的维护者工具权限面，并且每个写入工具都通过 SDK 的 `always()` 批准机制运行。在 Slack 或 Web 上，这是真正的控制措施。
+Evi 具备维护者工具权限面，而 GitHub 扩展会通过 `requireApproval` 中自己的谓词处理几乎所有写入。只有被省略的 `closeIssue` 和 `createPullRequestReview` 会回退到 SDK 的 `always()` 默认值。在 Slack 或 Web 上，这是真正的控制措施。
 但在 GitHub 上并非如此，原因有三，而且会相互叠加：
 
 1. **不存在批准卡片。** 根据 eve 的 GitHub channel 文档，`input.requested` 事件“会以评论提示的形式发布，而用户的回复评论会映射回待处理的输入请求。”它就是一条评论。
-2. **谁先回复，谁就回答。** 回复并不会绑定到触发该轮交互的人。攻击者可以批准自己的写入操作。
-3. **自主运行的交互轮次无人可询问。** 一旦接入 `onIssue` / `onPullRequest` / `onCheckSuite`，遇到批准闸门的交互轮次就会永久停滞。
+2. **谁先回复，谁就回答。** 上游存在绑定机制：eve 会在待处理请求中记录请求者的 auth，并导出 `ApprovalResponsePolicy`，由它决定回复者能否完成调用。当前部署没有配置该策略，因此攻击者可以在 GitHub 上批准自己的写入操作。
+3. **自主运行的交互轮次无人可询问。** 频道已经接入 `onIssue`，其处理方式是直接拒绝而不是显示卡片：`writePolicy` 会拒绝除标签和分流工作之外的所有自主写入，因为审批请求会永远停留在没有人批准的状态。
 
 批准是一种适用于受信任的一对一频道的交互模式。在公开线程中，它无法确认任何事情。这里需要的是授权：由服务器端根据执行者无法自行选择的身份来决定。
 
@@ -98,7 +99,8 @@ requireApproval: {
 其他所有操作即使对于管理员也仍需获得实际批准：`createIssue`、`closeIssue`、
 `deleteIssueComment`、`deletePullRequestComment`、`createPullRequest`、
 `updatePullRequest`、`createPullRequestReview`。代码本身不会通过 API 移动：
-它会通过 `git__push` 从沙盒发布，而该工具仅挂载在维护者会话中。
+它会通过 `git__push` 从沙盒发布，而该工具仅挂载在通过
+`agent/lib/trust.ts` 中的 `canAccessAdminTools` 的会话上：维护者，以及会推送功能分支来交付 PR 的计划会话。它会对所有调用者拒绝 `main` 和 `master`。
 
 发布相关的写入操作根本不在列表中：`AGENTS.md` 禁止代理创建发布版本，
 因此工具集只提供读取这些内容的能力。
@@ -127,18 +129,17 @@ updateIssue: ({ session, toolInput }) => {
 
 等有了真实流量后，值得重新考虑：标记内容来源（该讨论串是否由层级之外的人开启？），并无论是谁发起请求，都降低这些讨论串的权限上限。
 
-## 自主回合需要自己的身份主体
+## 自主回合使用自己的身份主体
 
-`onIssue`、`onPullRequest` 和 `onCheckSuite` 都通过
-`defaultGitHubAuth(ctx)` 进行调度，其中发送者是创建 issue 或推送
-提交的人。因此，自动化 CI 分流回合将以某个随机贡献者的身份运行，并且——按照上述
-层级逻辑——使用其权限。
+`onIssue` 会使用 `defaultGitHubAuth(ctx)` 调度，然后覆盖其投影：
+`principalId` 变为 `AUTONOMOUS_GITHUB_PRINCIPAL`（`github:evlogai`），
+`principalType` 变为 `"service"`（`agent/channels/github.ts`）。分流回合以机器人身份运行，而不是 issue 创建者的身份。`onPullRequest` 和 `onCheckSuite` 尚未接入；接入时也需要相同的覆盖，否则它们会按照上述逻辑，以 issue 创建者或提交推送者的层级运行。
 
-由代理发起的工作需要一个专门构造的系统身份主体，其层级应根据任务选择，而不是继承自触发 webhook 的人。它通常应当*低于*管理员级别：没有人在监视，也没有人可以批准任何操作，因此它只能访问适合无人值守运行的工具。
+该主体可以运行什么仍是开放问题。当前门控采用保守答案：`writePolicy` 会拒绝自主回合路由的每项写入，只有扩展按工具谓词允许的狭窄集合例外，包括创建和应用标签、创建文档缺口 issue 以及分配维护者。扩展权限时，应根据任务选择层级，而不是继承触发 webhook 的人的层级，并保持其*低于*管理员。没有人在监视，也没有人可以批准操作，因此它只能访问适合无人值守运行的工具。
 
 ## @github-tools/eve-extension 中的缺口
 
-上面的所有机制都在审批层执行，这意味着每个工具仍然存在于每个调用者的上下文中——仅维护者界面的 schema 每轮就大约要消耗 7k 个 token——而一次被拒绝的调用还会浪费模型的一步，让它得知该调用被拒绝。
+上面的所有机制都在审批层执行，这意味着每个工具仍然存在于每个调用者的上下文中，包括 schema；一次被拒绝的调用还会浪费模型的一步，让它得知该调用被拒绝。
 
 真正干净的解决方案是让工具界面因调用者而异。该扩展已经在 `step.started` 上的动态解析器中解析工具，只是忽略了 eve 传递给它的上下文。如果 `include` / `exclude` / `preset` 能够接受一个基于该上下文的解析器以及静态值，那么代理就可以向管理员提供完整的工具界面，而向其他人提供只读界面，并匹配相应的 schema。值得向上游提议——这对任何公共仓库中的代理都有用，而不仅仅是这个代理。
 

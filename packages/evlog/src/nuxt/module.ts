@@ -1,3 +1,4 @@
+import { relative } from 'node:path'
 import {
   addImports,
   addPlugin,
@@ -9,10 +10,13 @@ import {
   createResolver,
   defineNuxtModule,
 } from '@nuxt/kit'
-import type { NitroConfig } from 'nitropack'
+import type { NuxtModule } from '@nuxt/schema'
+import type { Nitro, NitroConfig } from 'nitropack'
 import type { EnvironmentContext, LogLevel, RedactConfig, RouteConfig, SamplingConfig, TransportConfig } from '../types'
 import type { DevTerminalInput } from '../shared/dev-terminal'
-import { prependNitroErrorHandler } from '../nitro'
+import { prependNitroErrorHandler, serializeBundledEvlogConfig } from '../nitro'
+import { prepareRedactForBridge } from '../redact'
+import { findEvlogConfigFile, registerEvlogConfigPlugin } from '../shared/configPlugin'
 import { createStripPlugin } from '../vite/strip'
 import { createSourceLocationPlugin } from '../vite/source-location'
 import { name, version } from '../../package.json'
@@ -314,12 +318,12 @@ export interface ModuleOptions {
   /**
    * How long to retain events before cleanup (used by @evlog/nuxthub).
    * Supports "30d" (days), "24h" (hours), "60m" (minutes).
-   * @default '30d'
+   * @default '7d'
    */
   retention?: string
 }
 
-export default defineNuxtModule<ModuleOptions>({
+const evlogModule: NuxtModule<ModuleOptions, ModuleOptions, false> = defineNuxtModule<ModuleOptions>({
   meta: {
     name,
     version,
@@ -357,6 +361,12 @@ export default defineNuxtModule<ModuleOptions>({
     const streamEnabled = normalizedStream !== false
     options.stream = normalizedStream
 
+    // runtimeConfig and the JSON bridges in the nitro:config hook below
+    // serialize the config: RegExps in redact.patterns would collapse to {}
+    // and be dropped server-side, and function-valued redact policy would
+    // vanish silently.
+    prepareRedactForBridge(options.redact)
+
     nuxt.options.runtimeConfig.evlog = options
 
     // Register custom error handler for proper EvlogError serialization
@@ -371,14 +381,13 @@ export default defineNuxtModule<ModuleOptions>({
 
       const evlogForNitro = nuxt.options.runtimeConfig.evlog ?? options
       if (evlogForNitro !== undefined && typeof evlogForNitro === 'object') {
-        const serialized = JSON.stringify(evlogForNitro)
         nitroConfig.replace = nitroConfig.replace || {}
-        nitroConfig.replace.__EVLOG_CONFIG__ = serialized
-        process.env.__EVLOG_CONFIG = serialized
+        nitroConfig.replace.__EVLOG_CONFIG__ = serializeBundledEvlogConfig(evlogForNitro)
+        process.env.__EVLOG_CONFIG = JSON.stringify(evlogForNitro)
       }
     })
     nuxt.options.runtimeConfig.public.evlog = {
-      enabled: options.enabled ?? true,
+      enabled: options.enabled,
       console: options.console,
       pretty: options.pretty,
       minLevel: options.minLevel,
@@ -411,6 +420,18 @@ export default defineNuxtModule<ModuleOptions>({
     }
 
     addServerPlugin(resolver.resolve('../nitro/plugin'))
+    addServerPlugin(resolver.resolve('../runtime/server/public-config'))
+    // @ts-expect-error nitro:init hook exists but is not in NuxtHooks type
+    nuxt.hook('nitro:init', (nitro: Nitro) => {
+      registerEvlogConfigPlugin(nitro)
+    })
+    // Root files are in no generated tsconfig, so `import.meta.dev` would be untyped in the editor.
+    nuxt.hook('prepare:types', ({ nodeTsConfig }) => {
+      const configFile = findEvlogConfigFile(nuxt.options.rootDir)
+      if (!configFile) return
+      nodeTsConfig.include ||= []
+      nodeTsConfig.include.push(relative(nuxt.options.buildDir, configFile).replace(/\\/g, '/'))
+    })
 
     addPlugin({
       src: resolver.resolve('../runtime/client/plugin'),
@@ -531,3 +552,5 @@ export {}
     }
   },
 })
+
+export default evlogModule

@@ -150,9 +150,13 @@ export interface RedactConfig {
    * - `false` → no built-ins, only custom `paths` and `patterns`
    * - `['email', 'creditCard', ...]` → only the listed built-ins
    *
-   * Available: `'creditCard'`, `'email'`, `'ipv4'`, `'phone'`, `'jwt'`, `'bearer'`, `'iban'`
+   * Available: `'creditCard'`, `'email'`, `'ipv4'`, `'phone'`, `'jwt'`, `'bearer'`, `'iban'`, `'secrets'`
+   *
+   * `'secrets'` matches key names instead of values: any key ending in `password`,
+   * `passwd`, `secret` or `token` (case-insensitive) has its value replaced with
+   * `replacement`. Booleans and `null` are kept.
    */
-  builtins?: false | Array<'creditCard' | 'email' | 'ipv4' | 'phone' | 'jwt' | 'bearer' | 'iban'>
+  builtins?: false | Array<'creditCard' | 'email' | 'ipv4' | 'phone' | 'jwt' | 'bearer' | 'iban' | 'secrets'>
   /**
    * Replacement used for path- and custom pattern redaction.
    * Built-in patterns use smart partial masking instead (e.g. `****1111` for credit cards).
@@ -202,6 +206,8 @@ export interface RedactConfig {
   transform?: (event: WideEvent) => void
   /** @internal Resolved masker functions from built-in patterns. Not user-facing. */
   _maskers?: Array<[RegExp, (match: string) => string]>
+  /** @internal Whether the `secrets` built-in is on, set by `resolveRedactConfig`. Not user-facing. */
+  _secretKeys?: boolean
   /** @internal Precompiled matchers for `paths`, built once by `resolveRedactConfig`. Not user-facing. */
   _pathMatchers?: {
     exactPaths: Set<string>
@@ -683,7 +689,7 @@ export interface InternalFields {
  * Request-scoped log entry captured during a request lifecycle.
  */
 export interface RequestLogEntry {
-  level: 'info' | 'warn' | 'fatal' | 'trace'
+  level: 'info' | 'warn' | 'fatal' | 'debug' | 'trace'
   message: string
   timestamp: string
 }
@@ -701,7 +707,7 @@ export type FieldContext<T extends object = Record<string, unknown>> =
  * Request-scoped logger for building wide events
  *
  * After {@link RequestLogger.emit} runs (including when head sampling drops the event),
- * the logger is **sealed**: further `set`, `error`, `fatal`, `info`, `warn`, and `trace` calls log a
+ * the logger is **sealed**: further `set`, `error`, `fatal`, `info`, `warn`, `debug`, and `trace` calls log a
  * console warning and do not mutate the wide event. A second `emit` is ignored with
  * a warning. Use {@link RequestLogger.fork} on supported integrations for intentional
  * background work that needs its own wide event.
@@ -796,6 +802,16 @@ export interface RequestLogger<T extends object = Record<string, unknown>> {
   warn: (message: string, context?: FieldContext<T>) => void
 
   /**
+   * Capture a debug message inside the request wide event.
+   *
+   * Never raises the event level. The `evlog/vite` plugin strips `log.debug()`
+   * calls from production builds by default.
+   *
+   * No-ops with a console warning after the wide event has been emitted.
+   */
+  debug: (message: string, context?: FieldContext<T>) => void
+
+  /**
    * Capture a trace message inside the request wide event.
    *
    * Events whose most severe entry is `trace` are dropped by head sampling
@@ -829,6 +845,9 @@ export interface RequestLogger<T extends object = Record<string, unknown>> {
    * @param label - Value stored as `operation` on the child wide event.
    * @param fn - Function to run; may return a Promise. Errors are captured on the
    *   child logger and emitted.
+   * @returns A promise that resolves once the child event has been drained. It never
+   *   rejects. Leave it unawaited for background work, or await it when the child's
+   *   drain (an audit write, for example) must finish before the response.
    *
    * @example
    * ```ts
@@ -838,7 +857,7 @@ export interface RequestLogger<T extends object = Record<string, unknown>> {
    * })
    * ```
    */
-  fork?: (label: string, fn: () => void | Promise<void>) => void
+  fork?: (label: string, fn: () => void | Promise<void>) => Promise<void>
 
   /**
    * Record an audit event on this wide event. Strictly equivalent to

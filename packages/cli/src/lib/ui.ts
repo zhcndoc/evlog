@@ -1,5 +1,5 @@
 import type { CheckSummary } from '../core/output'
-import { exitCodeFor, writeHuman, writeJson } from '../core/output'
+import { exitCodeFor, setExitCode, writeHuman, writeJson, writeStdout } from '../core/output'
 
 /**
  * Output helpers for a command run — the only place commands should write
@@ -15,6 +15,8 @@ export interface CliUi {
   human: (text: string) => void
   /** Machine payload on stdout (adds `schemaVersion`). */
   json: (payload: Record<string, unknown>) => void
+  /** A foreign contract on stdout (workflow commands), written as is. */
+  stdout: (text: string) => void
   /** Set exit code from a check summary (`fail > 0` → 1) or a raw code. */
   exit: (summaryOrCode: CheckSummary | number) => void
   /**
@@ -34,10 +36,9 @@ export function createUi(options: { json?: boolean } = {}): CliUi {
   const ui: CliUi = {
     human: writeHuman,
     json: writeJson,
+    stdout: writeStdout,
     exit(summaryOrCode) {
-      process.exitCode = typeof summaryOrCode === 'number'
-        ? summaryOrCode
-        : exitCodeFor(summaryOrCode)
+      setExitCode(typeof summaryOrCode === 'number' ? summaryOrCode : exitCodeFor(summaryOrCode))
     },
     done({ human, json, summary, jsonMode }) {
       const useJson = jsonMode ?? options.json === true

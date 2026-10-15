@@ -9,6 +9,7 @@ import { enrichErrorStackForDev } from '../shared/enrich-error-stack.node'
 import { shouldLog, getServiceForPath, extractErrorStatus } from '../nitro'
 import { extendDeferredDrain } from '../nitro/deferred-drain'
 import { normalizeRedactConfig } from '../redact'
+import { evlogFileConfigPlugins, flushEvlogFileConfigDrain, withEvlogFileConfig } from '../shared/fileConfig'
 import { resolveEvlogConfigForNitroPlugin, setActiveNitroRuntime } from '../shared/nitroConfigBridge'
 import type { EnrichContext, RequestLogger, TailSamplingContext, WideEvent } from '../types'
 import { elapsedMs, filterSafeHeaders } from '../utils'
@@ -35,6 +36,43 @@ function getContext(event: HTTPEvent): Record<string, unknown> {
     event.req.context = {}
   }
   return event.req.context
+}
+
+function resolveRequestId(event: HTTPEvent, ctx: Record<string, unknown>): string {
+  let requestIdOverride: string | undefined
+  if (globalThis.navigator?.userAgent === 'Cloudflare-Workers') {
+    const cfRay = event.req.headers.get('cf-ray')
+    if (cfRay) requestIdOverride = cfRay
+  }
+  return requestIdOverride || ctx.requestId as string | undefined || crypto.randomUUID()
+}
+
+// eslint-disable-next-line max-params
+async function emitWithTailSampling(
+  hooks: Hooks,
+  log: RequestLogger,
+  event: HTTPEvent,
+  status: number,
+  ctx: Record<string, unknown>,
+): Promise<WideEvent | null> {
+  const startTime = ctx._evlogStartTime as number | undefined
+  const durationMs = startTime ? elapsedMs(startTime) : undefined
+
+  const { pathname } = parseURL(event.req.url)
+  const tailCtx: TailSamplingContext = {
+    status,
+    duration: durationMs,
+    path: pathname,
+    method: event.req.method,
+    context: log.getContext(),
+    shouldKeep: false,
+  }
+
+  await hooks.callHook('evlog:emit:keep', tailCtx)
+  const runner = getGlobalPluginRunner()
+  if (runner.hasKeep) await runner.runKeep(tailCtx)
+
+  return log.emit({ _forceKeep: tailCtx.shouldKeep, _durationMs: durationMs })
 }
 
 function getSafeRequestHeaders(event: HTTPEvent): Record<string, string> {
@@ -165,7 +203,7 @@ async function callEnrichAndDrain(
  */
 export default definePlugin(async (nitroApp) => {
   setActiveNitroRuntime('v3')
-  const evlogConfig = await resolveEvlogConfigForNitroPlugin()
+  const evlogConfig = withEvlogFileConfig(await resolveEvlogConfigForNitroPlugin())
 
   const redact = normalizeRedactConfig(evlogConfig?.redact as boolean | Record<string, unknown> | undefined)
 
@@ -179,11 +217,14 @@ export default definePlugin(async (nitroApp) => {
     silent: evlogConfig?.silent,
     sampling: evlogConfig?.sampling,
     minLevel: evlogConfig?.minLevel,
+    stringify: evlogConfig?.stringify,
     redact,
+    plugins: evlogFileConfigPlugins(),
     _suppressDrainWarning: true,
   })
 
   const hooks = nitroApp.hooks as unknown as Hooks
+  hooks.hook('close', flushEvlogFileConfigDrain)
 
   // When globally disabled, createRequestLogger returns a no-op logger — still
   // attach it so handlers can call useLogger without throwing.
@@ -191,15 +232,10 @@ export default definePlugin(async (nitroApp) => {
     hooks.hook('request', (event) => {
       const { pathname } = parseURL(event.req.url)
       const ctx = getContext(event)
-      let requestIdOverride: string | undefined
-      if (globalThis.navigator?.userAgent === 'Cloudflare-Workers') {
-        const cfRay = event.req.headers.get('cf-ray')
-        if (cfRay) requestIdOverride = cfRay
-      }
       ctx.log = createRequestLogger({
         method: event.req.method,
         path: pathname,
-        requestId: requestIdOverride || ctx.requestId as string | undefined || crypto.randomUUID(),
+        requestId: resolveRequestId(event, ctx),
       }, { _deferDrain: true })
     })
     return
@@ -217,16 +253,10 @@ export default definePlugin(async (nitroApp) => {
     // Store start time for duration calculation in tail sampling
     ctx._evlogStartTime = Date.now()
 
-    let requestIdOverride: string | undefined = undefined
-    if (globalThis.navigator?.userAgent === 'Cloudflare-Workers') {
-      const cfRay = event.req.headers.get('cf-ray')
-      if (cfRay) requestIdOverride = cfRay
-    }
-
     const log = createRequestLogger({
       method: event.req.method,
       path: pathname,
-      requestId: requestIdOverride || ctx.requestId as string | undefined || crypto.randomUUID(),
+      requestId: resolveRequestId(event, ctx),
     }, { _deferDrain: true })
 
     // Apply route-based service configuration if a matching route is found
@@ -243,31 +273,12 @@ export default definePlugin(async (nitroApp) => {
     // Skip if already emitted by error hook or route was filtered out
     if (ctx?._evlogEmitted || ctx?._evlogEmitting || !ctx?._evlogShouldEmit) return
 
-    const log = ctx?.log as RequestLogger | undefined
-    if (!log || !ctx) return
+    const log = ctx.log as RequestLogger | undefined
+    if (!log) return
 
     const emitSuccessResponse = async (responseStatus: number) => {
       log.set({ status: responseStatus })
-
-      const startTime = ctx._evlogStartTime as number | undefined
-      const durationMs = startTime ? elapsedMs(startTime) : undefined
-
-      const { pathname } = parseURL(event.req.url)
-
-      const tailCtx: TailSamplingContext = {
-        status: responseStatus,
-        duration: durationMs,
-        path: pathname,
-        method: event.req.method,
-        context: log.getContext(),
-        shouldKeep: false,
-      }
-
-      await hooks.callHook('evlog:emit:keep', tailCtx)
-      const runner = getGlobalPluginRunner()
-      if (runner.hasKeep) await runner.runKeep(tailCtx)
-
-      const emittedEvent = log.emit({ _forceKeep: tailCtx.shouldKeep, _durationMs: durationMs })
+      const emittedEvent = await emitWithTailSampling(hooks, log, event, responseStatus, ctx)
       await callEnrichAndDrain(hooks, emittedEvent, event, res)
     }
 
@@ -301,24 +312,7 @@ export default definePlugin(async (nitroApp) => {
       const errorStatus = extractErrorStatus(actualError)
       log.set({ status: errorStatus })
 
-      const { pathname } = parseURL(e.req.url)
-      const startTime = ctx._evlogStartTime as number | undefined
-      const durationMs = startTime ? elapsedMs(startTime) : undefined
-
-      const tailCtx: TailSamplingContext = {
-        status: errorStatus,
-        duration: durationMs,
-        path: pathname,
-        method: e.req.method,
-        context: log.getContext(),
-        shouldKeep: false,
-      }
-
-      await hooks.callHook('evlog:emit:keep', tailCtx)
-      const runner = getGlobalPluginRunner()
-      if (runner.hasKeep) await runner.runKeep(tailCtx)
-
-      const emittedEvent = log.emit({ _forceKeep: tailCtx.shouldKeep, _durationMs: durationMs })
+      const emittedEvent = await emitWithTailSampling(hooks, log, e, errorStatus, ctx)
       if (emittedEvent) {
         ctx._evlogEmitted = true
         void callEnrichAndDrain(hooks, emittedEvent, e, undefined, { deferDrain: true }).catch((err) => {

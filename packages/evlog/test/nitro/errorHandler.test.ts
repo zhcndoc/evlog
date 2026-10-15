@@ -306,6 +306,54 @@ describe('errorHandler', () => {
       expect(sentBody.message).toBe('Invalid email format')
       expect(sentBody.statusMessage).toBe('Invalid email format')
     })
+
+    it('skips Nitro default logging for an expected 4xx EvlogError in production', async () => {
+      vi.stubEnv('NODE_ENV', 'production')
+
+      const evlogError = Object.assign(new Error('Payment failed'), {
+        name: 'EvlogError',
+        status: 402,
+        data: { why: 'Card declined', fix: 'Use another card' },
+      })
+
+      await invokeErrorHandler(evlogError)
+
+      expect(defaultHandlerMock).not.toHaveBeenCalled()
+      expect(readResponseBody().statusCode).toBe(402)
+    })
+
+    it('keeps Nitro default logging for an EvlogError with a 5xx status in production', async () => {
+      vi.stubEnv('NODE_ENV', 'production')
+
+      const evlogError = Object.assign(new Error('Payment provider unavailable'), {
+        name: 'EvlogError',
+        status: 503,
+      })
+
+      await invokeErrorHandler(evlogError)
+
+      expect(defaultHandlerMock).toHaveBeenCalledWith(evlogError, mockEvent, { silent: false })
+    })
+
+    it('skips Nitro default logging for any error the evlog plugin records', async () => {
+      vi.stubEnv('NODE_ENV', 'production')
+      const event = { ...mockEvent, context: { _evlogShouldEmit: true } } as typeof mockEvent
+
+      await testErrorHandler(new TypeError('Cannot read properties of undefined'), event, { defaultHandler: defaultHandlerMock })
+      await testErrorHandler(Object.assign(new Error('Upstream unavailable'), { statusCode: 503, fatal: true }), event, { defaultHandler: defaultHandlerMock })
+
+      expect(defaultHandlerMock).not.toHaveBeenCalled()
+    })
+
+    it('keeps Nitro default logging when the route is excluded from evlog', async () => {
+      vi.stubEnv('NODE_ENV', 'production')
+      const event = { ...mockEvent, context: { _evlogShouldEmit: false } } as typeof mockEvent
+      const error = new TypeError('Cannot read properties of undefined')
+
+      await testErrorHandler(error, event, { defaultHandler: defaultHandlerMock })
+
+      expect(defaultHandlerMock).toHaveBeenCalledWith(error, event, { silent: false })
+    })
   })
 
   describe('HTML page delegation (#390)', () => {

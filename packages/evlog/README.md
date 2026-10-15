@@ -87,6 +87,27 @@ Your AI copilot will thank you.
 npm install evlog
 ```
 
+## Configure once
+
+Every option lives in `evlog.config.ts` at the root of your app. `npx evlog init` writes it for you:
+
+```typescript
+// evlog.config.ts
+import { defineEvlog } from 'evlog'
+
+export default defineEvlog({
+  service: 'my-app',
+  // Optional: only log specific routes (supports glob patterns)
+  include: ['/api/**'],
+  // Optional: sample only in production
+  sampling: process.env.NODE_ENV === 'production'
+    ? { rates: { info: 10, warn: 50, debug: 0 } }
+    : undefined,
+})
+```
+
+Nuxt, Nitro and TanStack Start load it on their own. Other frameworks import it with `initLogger(toLoggerConfig(config))` and pass `toMiddlewareOptions(config)` to the middleware. See [Configuration](https://www.evlog.dev/reference/configuration).
+
 ## Nuxt Integration
 
 The recommended way to use evlog. Zero config, everything just works.
@@ -95,27 +116,10 @@ The recommended way to use evlog. Zero config, everything just works.
 // nuxt.config.ts
 export default defineNuxtConfig({
   modules: ['evlog/nuxt'],
-
-  evlog: {
-    env: {
-      service: 'my-app',
-    },
-    // Optional: only log specific routes (supports glob patterns)
-    include: ['/api/**'],
-  },
 })
 ```
 
-> **Tip:** Use `$production` to enable [sampling](#sampling) only in production:
-> ```typescript
-> export default defineNuxtConfig({
->   modules: ['evlog/nuxt'],
->   evlog: { env: { service: 'my-app' } },
->   $production: {
->     evlog: { sampling: { rates: { info: 10, warn: 50, debug: 0 } } },
->   },
-> })
-> ```
+The module loads `evlog.config.ts`. The `evlog` key in `nuxt.config.ts` still works and overrides the file.
 
 That's it. Now use `useLogger(event)` in any API route:
 
@@ -190,7 +194,7 @@ import evlog from 'evlog/nitro/v3'
 
 export default defineConfig({
   modules: [
-    evlog({ env: { service: 'my-api' } })
+    evlog()
   ],
 })
 ```
@@ -204,16 +208,16 @@ import evlog from 'evlog/nitro'
 
 export default defineNitroConfig({
   modules: [
-    evlog({ env: { service: 'my-api' } })
+    evlog()
   ],
 })
 ```
 
-Then use `useLogger` in any route. Import from `evlog/nitro/v3` (v3) or `evlog/nitro` (v2). Usage is identical to the Nuxt section above; see the [Nitro docs](https://www.evlog.dev/integrate/frameworks/nitro) for the full route example.
+The module loads `evlog.config.ts`. Then use `useLogger` in any route. Import from `evlog/nitro/v3` (v3) or `evlog/nitro` (v2). Usage is identical to the Nuxt section above; see the [Nitro docs](https://www.evlog.dev/integrate/frameworks/nitro) for the full route example.
 
 ## Standalone TypeScript
 
-For scripts, workers, or any TypeScript project:
+For a small script, inline options are fine. Anything bigger reads `evlog.config.ts`, as the worker below does:
 
 ```typescript
 // scripts/migrate.ts
@@ -241,14 +245,10 @@ migrationLog.emit()
 
 ```typescript
 // workers/sync-job.ts
-import { initLogger, createRequestLogger, createError } from 'evlog'
+import { initLogger, createRequestLogger, createError, toLoggerConfig } from 'evlog'
+import config from '../evlog.config'
 
-initLogger({
-  env: {
-    service: 'sync-worker',
-    environment: process.env.NODE_ENV,
-  },
-})
+initLogger(toLoggerConfig(config))
 
 async function processSyncJob(job: Job) {
   const log = createRequestLogger({ jobId: job.id, type: 'sync' })
@@ -271,15 +271,15 @@ async function processSyncJob(job: Job) {
 
 ## Cloudflare Workers
 
-Use the Workers adapter for structured logs and correct platform severity. With `initWorkersLogger({ drain })`, use **`defineWorkerFetch`** so async drains are registered with `waitUntil` automatically (Cloudflare only passes `ExecutionContext` as the third `fetch` argument, and there is no global).
+Use the Workers adapter for structured logs and correct platform severity. With a `drain` in `evlog.config.ts`, use **`defineWorkerFetch`** so async drains are registered with `waitUntil` automatically (Cloudflare only passes `ExecutionContext` as the third `fetch` argument, and there is no global).
 
 ```typescript
 // src/index.ts
+import { toLoggerConfig } from 'evlog'
 import { defineWorkerFetch, initWorkersLogger } from 'evlog/workers'
+import config from '../evlog.config'
 
-initWorkersLogger({
-  env: { service: 'edge-api' },
-})
+initWorkersLogger(toLoggerConfig(config))
 
 export default defineWorkerFetch(async (request, _env, _ctx, log) => {
   try {
@@ -294,6 +294,8 @@ export default defineWorkerFetch(async (request, _env, _ctx, log) => {
   }
 })
 ```
+
+`evlog.config.ts` is bundled into the Worker and evaluated there, so `process.env` reads in it (such as the `NODE_ENV` check for `sampling` above) only see your Worker's variables with Cloudflare's [`nodejs_compat`](https://developers.cloudflare.com/workers/runtime-apis/nodejs/) compatibility flag. Without it, set those options inline instead.
 
 If you keep a raw `export default { fetch }`, pass `{ executionCtx: ctx }` to `createWorkersLogger` or `waitUntil` on `createRequestLogger`.
 
@@ -520,7 +522,7 @@ FIX FIRST
 
 Same code in, same verdict out, with the file and line for every finding, which also makes it something you can hand to an agent: run it, fix the list, run it again.
 
-> **Early days:** the CLI is tested and safe to run on any project, but it is young: five framework adapters today, rules still being refined. Expect verdicts and scores to move between releases. The executable runs [`@evlog/cli`](https://npmjs.com/package/@evlog/cli) when it is installed and fetches it with your package manager otherwise, so `evlog` itself adds no dependency; add `@evlog/cli` as a dev dependency for a pinned, instant run when you gate CI on the number.
+> **Early days:** the CLI is tested and safe to run on any project, but it is young: seven framework adapters today, rules still being refined. Expect verdicts and scores to move between releases. The executable runs [`@evlog/cli`](https://npmjs.com/package/@evlog/cli) when it is installed and fetches it with your package manager otherwise, so `evlog` itself adds no dependency; add `@evlog/cli` as a dev dependency for a pinned, instant run when you gate CI on the number.
 
 Docs: [CLI](https://www.evlog.dev/cli/overview) · [`evlog map`](https://www.evlog.dev/cli/map) · [Rules](https://www.evlog.dev/cli/rules) · [Scoring](https://www.evlog.dev/cli/scoring) · [CI](https://www.evlog.dev/cli/ci)
 

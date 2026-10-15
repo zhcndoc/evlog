@@ -52,6 +52,10 @@ eve 的打包器转换只有在动态工具的 `execute` 函数以内联形式�
 
 ## 计划
 
+**计划运行会在主仓库中推送功能分支并创建 PR，且不会显示审批卡片。**
+`validatePushBranch` 会拒绝 `main`/`master`。计划轮次使用 `eve:app` 主体，而不是维护者。
+`createPullRequestPolicy` 会跳过针对 `EVI_REPOSITORY` 的就绪 PR 和草稿 PR 的审批（包括省略 owner/repo 的默认情况）。其他仓库仍需要审批。其他写入门控保持不变，工具界面中不包含合并操作。
+
 **使用 `initialMessage` 发送到 Slack 的计划会拥有自己的线程和会话。**`to(slack, { channelId, initialMessage }).send(...)` 会先发布卡片，将会话锚定到该消息，并在其下创建该轮对话。如果没有 `initialMessage`（并且没有 `threadTs`），第一条代理消息会成为锚点，这会导致在任何上下文出现之前，频道中先出现一条孤立回复。`threadTs` 和 `initialMessage` 互斥。发送到现有的 `threadTs` 会恢复该线程的会话，这正是旧版 iMessage 投递对每次运行所做的事情：一个长期存在的会话，其中还包括过时的上下文和待处理请求，因此过去每个任务都带有结尾段落。
 
 **Slack 主体是 `slack:<team>:<member>`。**`defaultSlackAuth` 根据事件的 `team_id` 和执行者的用户 id 生成该主体，而 `trust.ts` 信任 `EVI_SLACK_TEAM_ID` 的每个真人主体，而不是某一个成员：该工作区是私有的，只有 Hugo 可以安装连接器或邀请成员加入，因此工作区本身就是允许列表。Evi 所有的线程中的回复需要连接器的触发器订阅带有 `channels:history` 的 `message.channels`（对于私有频道，还需要 `message.groups` 和 `groups:history`）；没有这些权限，只有提及和私信会到达代理。
@@ -60,11 +64,7 @@ eve 的打包器转换只有在动态工具的 `execute` 函数以内联形式�
 06:00 触发，在冬季（GMT）则变为 05:00。`eve dev` 永远不会触发 cron；
 `POST /eve/v1/dev/schedules/digest` 可在本地触发一次。
 
-**上游同步和自审计划会在没有审批卡的情况下将推送功能分支转换为 PR。**
-该推送不会产生实际影响：它只会创建一个分支，`validatePushBranch`
-会拒绝 `main`/`master`，而引用该分支的草稿 PR 会携带审批卡。
-计划轮次的身份是 `eve:app`，而不是维护者，因此
-`github__createPullRequest` 仍会向线程发布审批卡。
+
 
 ## AI 网关
 
@@ -112,8 +112,8 @@ Gists API 会拒绝安装令牌——此外还包括仓库创建和合并功能�
 
 ## evlog
 
-**文件系统写入端既没有防护其 `mkdir`，也没有防护其 `appendFile`。** 在 Vercel
-上，`/tmp` 之外的所有位置都是只读的，因此将其附加到那里会在每轮抛出一次异常，并写入无人能够读取的事件。
+**文件系统 drain 会在目录只读时自动禁用。**如果写入因 `EROFS`、`EACCES` 或
+`EPERM` 失败，目录会被标记为不可写；发出一次警告后，drain 会在该进程的剩余时间内禁用。因此在 Vercel 上接入它是安全的，但事件不会有去处：只有临时目录可写，而且不会跨实例保留。
 
 必须显式设置 `environment`，否则宽泛事件会将本地流量和评估流量都报告为
 `development`，而支出标签会将两者区分开来。现在两者都会读取

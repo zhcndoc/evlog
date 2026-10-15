@@ -21,6 +21,19 @@ Read and analyze structured wide-event logs from the local `.evlog/logs/` direct
 
 ## Finding the logs
 
+Try the CLI first; it reads both file layouts, every dated file, and knows where the project's drain writes. Prefer the copy the project installed (`pnpm evlog`, or the equivalent for its package manager). The wrappers that fetch on demand (`npx`, `bunx`, `npm exec`) install `@evlog/cli` when the project has none, which runs a release the lockfile never pinned. Ask before that happens.
+
+```bash
+pnpm evlog logs --json                       # the last 50 events
+pnpm evlog logs errors --since 1h --json     # what failed
+pnpm evlog logs slow --over 1s --json        # what was slow, worst first
+pnpm evlog logs "$REQUEST_ID" --json         # one request, every event with that id
+pnpm evlog logs stats --json                 # per route: count, errors, p50, p95; by status and level
+pnpm evlog logs --where 'payment.amount>5000' --where audit.outcome=failure --json
+```
+
+`--json` is an envelope (`sources`, `view`, `matched`, `events`; `stats` carries `stats` instead); filters are `--since`, `--until`, `--level`, `--path`, `--status` (`500` or `5xx`), `--where field=value|field>n|field~regex|field|!field` on any dotted field (repeatable), `--limit`, `--dir` for a non-default directory, and `--url` for an app on the memory drain that exposes `readMemoryLogs()` over HTTP. From a monorepo root it reads every app's `.evlog/logs` and labels each event. Docs: https://www.evlog.dev/cli/logs. If the CLI is unavailable or the user declines it, read the files directly as below.
+
 Logs are written by evlog's file system drain as `.jsonl` files, organized by date.
 
 **Format detection**: The drain supports two modes:
@@ -52,7 +65,7 @@ Files are named by date: `2026-03-14.jsonl`. Start with the most recent file.
 
 Before wiring a new drain, you can try `npx evlog doctor --json`, which checks whether `evlog` is installed and whether a local `.evlog/logs` drain already exists (read-only). Optional; skip if the CLI is unavailable.
 
-The file system drain may not be enabled. On Nuxt, Nitro, Next.js, TanStack Start, or Hono, the fastest path is the CLI, which detects the framework and wires the fs drain (its default dev drain) in one pass:
+The file system drain may not be enabled. On Nuxt, Nitro, Next.js, TanStack Start, Hono, Express, or Fastify, the fastest path is the CLI, which detects the framework and wires the fs drain (its default dev drain) in one pass:
 
 ```bash
 npx evlog init --dry-run --yes   # preview first
@@ -62,12 +75,11 @@ npx evlog init --yes --drain fs  # apply
 Ask before running it. On other frameworks (or if the user declines), guide the manual setup:
 
 ```typescript
+import { defineEvlog } from 'evlog'
 import { createFsDrain } from 'evlog/fs'
 
-// Nuxt / Nitro: server/plugins/evlog-drain.ts
-export default defineNitroPlugin((nitroApp) => {
-  nitroApp.hooks.hook('evlog:drain', createFsDrain())
-})
+// Nuxt / Nitro: evlog.config.ts at the app root, which the module loads
+export default defineEvlog({ drain: createFsDrain() })
 
 // Hono / Express / Elysia: pass in middleware options
 app.use(evlog({ drain: createFsDrain() }))
@@ -118,7 +130,7 @@ Read the latest `.jsonl` file. Each line is one JSON event. Parse each line inde
 
 Filter based on the user's question:
 
-- **Errors**: look for `"level":"error"` or `status >= 400`
+- **Errors**: `"level"` of `"error"` or `"fatal"`, `status >= 500`, or an `error` object on the event, which is what `evlog logs errors` matches. A 4xx status on its own is the client's and does not count, though a 4xx event still matches when it carries one of the other two signals; read `status` or pass `--status 4xx` to see them all
 - **Specific endpoint**: match on `path`
 - **Slow requests**: filter on `durationMs` (e.g. `durationMs > 500`)
 - **Specific user/action**: match on application-specific fields

@@ -6,14 +6,15 @@ One row per drain adapter that talks to a third-party API. The row names the aut
 
 | Adapter | Ingest documentation | Official client | Start here | Aligned to |
 | --- | --- | --- | --- | --- |
-| `axiom.ts` | https://axiom.co/docs/send-data/ingest-api | `axiomhq/axiom-js` (`@axiomhq/js`) | `packages/js/src/client.ts` | unset |
-| `better-stack.ts` | https://betterstack.com/docs/logs/http-rest-api/ | `logtail/logtail-js` (`@logtail/node`) | `packages/node/src/node.ts` | unset |
+| `axiom.ts` | https://axiom.co/docs/restapi/ingest | `axiomhq/axiom-js` (`@axiomhq/js`) | `packages/js/src/client.ts` | @axiomhq/js 2.0.0 @ a34dffd |
+| `better-stack.ts` | https://betterstack.com/docs/logs/http-rest-api/ | `logtail/logtail-js` (`@logtail/node`) | `packages/node/src/node.ts` | @logtail/node 0.5.12 @ a34dffd |
 | `clickhouse.ts` | https://clickhouse.com/docs/interfaces/http | `ClickHouse/clickhouse-js` (`@clickhouse/client`) | `packages/client-common/src/client.ts`, `packages/client-node/src/connection/node_base_connection.ts` | unset |
 | `datadog.ts` | https://docs.datadoghq.com/api/latest/logs/#send-logs | `DataDog/datadog-api-client-typescript` (`@datadog/datadog-api-client`) | `packages/datadog-api-client-v2/apis/LogsApi.ts` | unset |
 | `hyperdx.ts` | https://www.hyperdx.io/docs/install/opentelemetry | `hyperdxio/hyperdx-js` (`@hyperdx/node-logger`) | `packages/node-logger/src/logger.ts` | unset |
 | `loki.ts` | https://grafana.com/docs/loki/latest/reference/loki-http-api/#ingest-logs | `grafana/alloy` (`loki.write` component; Promtail is retired) | the first run pins the file | unset |
 | `otlp.ts`, `otlp-protobuf.ts` | https://opentelemetry.io/docs/specs/otlp/ | `open-telemetry/opentelemetry-js` (`@opentelemetry/exporter-logs-otlp-http`) | `experimental/packages/exporter-logs-otlp-http/src/platform/node/OTLPLogExporter.ts`, `experimental/packages/otlp-exporter-base/src/configuration/otlp-http-configuration.ts` | unset |
 | `posthog.ts` | https://posthog.com/docs/api/capture | `PostHog/posthog-js` (`posthog-node`) | `packages/node/src/client.ts`, `packages/core/src/posthog-core.ts` | unset |
+| `sazabi.ts` | https://docs.sazabi.com (OTLP/HTTP log streams) | none: OTLP/HTTP through evlog's own encoder (`otlp.ts`) | `packages/evlog/src/adapters/otlp.ts` | unset |
 | `sentry.ts` | https://develop.sentry.dev/sdk/data-model/envelopes/ | `getsentry/sentry-javascript` (`@sentry/core`) | `packages/core/src/envelope.ts`, `packages/core/src/transports/base.ts` | unset |
 
 `Aligned to` is the client's published version and the evlog commit that last matched it, written as `@sentry/core 11.2.0 @ 5e0d543`. `unset` means no run has compared the two yet; the first run over that adapter writes the first pin and files every mismatch it finds along the way.

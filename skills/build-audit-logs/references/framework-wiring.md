@@ -94,4 +94,5 @@ audit({
 
 - drain 之间的故障隔离来自 `initLogger({ drain: [...] })` 对每个 drain 的独立调用。如果改用 `Promise.all`，单个 rejection 会导致其他 drain 一并失败。请使用 `Promise.allSettled` 并记录失败，或者坚持使用数组形式。
 - `auditOnly` 上的 `await: true` 会使被包装的 drain 阻塞请求，直到事件完成 flush。对防篡改 drain 使用它，这样崩溃时不会丢失审计记录；可查询的 drain 则可以保持异步。
+- 在 `log.fork()` 中记录的审计事件会由子事件而不是请求事件执行 drain。如果该审计必须在处理器返回前写入，请使用 `await log.fork(label, fn)`。未等待的 fork 仍会执行 drain；在支持 `waitUntil` 的运行时中，调用 `log.fork()` 时会将它注册到 `waitUntil`。
 - 对于使用 hash-chain 的多进程部署，请持久化 `state.{load,save}`（Redis 是常见选择），这样链条才能跨越重启和滚动部署而持续存在。

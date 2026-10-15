@@ -65,6 +65,7 @@ jobs:
             react-router
             release
             repo
+            sazabi
             sentry
             signals
             stream

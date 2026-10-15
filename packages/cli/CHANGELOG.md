@@ -1,5 +1,59 @@
 # @evlog/cli
 
+## 0.10.0
+
+### Minor Changes
+
+- [#807](https://github.com/evloghq/evlog/pull/807) [`7e6282a`](https://github.com/evloghq/evlog/commit/7e6282ad8ad43d440285930b63c6c2ff635282ef) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog config` reads the options passed to the evlog module in `nuxt.config.ts` or `nitro.config.ts`, which override `evlog.config.ts` at runtime. A note under the file name says so, and each setting they replace shows the value that applies with its line, and the value of the file under it. `--json` adds `moduleOptions` and an `overrides: { value, source }` field on those settings.
+
+- [#806](https://github.com/evloghq/evlog/pull/806) [`704c311`](https://github.com/evloghq/evlog/commit/704c311569adcbf84ef7b49529d2d4727023724e) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog map` and `evlog logs` read `evlog.config.ts` (or `.mts`, `.js`, `.mjs`), the nearest one from the package up to the workspace root, without running it. `map.rules` turns checks off or back on for every entry point, `map.ignore` leaves entry points out by file glob and `--json` reports how many as `ignored`, `map.minScore` and `map.baseline` gate like `--min-score` and `--baseline`, and `logs.dir` and `logs.limit` set the defaults of `--dir` and `--limit`. A flag wins over the config. The config can extend a local file or a published preset, one level deep. `evlog config` prints the settings that apply, grouped into service, sampling, redaction, pipeline and CLI, with the file and line each one comes from and evlog's defaults where the file says nothing, `--json` for the same as JSON, and `evlog doctor` reports a config it cannot read. A misspelt setting, an `extends` written as a path instead of an imported config, a value under `map` or `logs` computed at runtime, or turning off `wide-event` or `context` stops the command with a `cli.CONFIG_*` error. The CLI now needs `evlog` 2.31.0 or later.
+
+- [#808](https://github.com/evloghq/evlog/pull/808) [`09b8d50`](https://github.com/evloghq/evlog/commit/09b8d50c69c0ca5073eaff433d476c5354a0420d) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog init` writes `evlog.config.ts` with the service name, drains, enrichers and sampling you pick, dev and production branched in one place. Nuxt and Nitro load it through the module, and on Next.js, Hono, Express and Fastify the generated `evlog.ts` imports it. In a workspace with a root `evlog.config.ts`, the app config extends it and leaves out what the root already sets. A config you already have is read and never rewritten: a setting it lacks becomes a manual step, and the service it names becomes the default answer.
+
+- [#833](https://github.com/evloghq/evlog/pull/833) [`62637e9`](https://github.com/evloghq/evlog/commit/62637e97bab1d6be5fc99219cc9ff5f14de4d0df) Thanks [@evlogai](https://github.com/apps/evlogai)! - A global `evlog` now hands off to the `@evlog/cli` installed in the project it runs in, so a project always runs the CLI version it pins. In a directory with no install, the global copy runs as before.
+
+- [#831](https://github.com/evloghq/evlog/pull/831) [`b7b8c8b`](https://github.com/evloghq/evlog/commit/b7b8c8b4d200b33f5c118a0d2450af4d51d0469e) Thanks [@evlogai](https://github.com/apps/evlogai)! - `evlog agents` and `evlog init` now install the agent skills globally by default, for `universal` (the shared `.agents/skills` directory that Codex and the other agents read) and `claude-code` (a symlink into it). Pass `--local` to install into the project instead, with `.agents/skills` and `.claude/skills` at the project root.
+
+  Breaking: `--global` is removed, since global is now the default. `evlog agents` no longer writes `CLAUDE.md`. Most agents read `AGENTS.md` directly, and Claude Code does too unless a `CLAUDE.md` sits above it. Add a one-line `@AGENTS.md` yourself if you want one; an existing `CLAUDE.md` is left alone.
+
+### Patch Changes
+
+- [#824](https://github.com/evloghq/evlog/pull/824) [`75a32d8`](https://github.com/evloghq/evlog/commit/75a32d8b98dd321d0579e67f168ca3600b3d81b7) Thanks [@evlogai](https://github.com/apps/evlogai)! - Print the "evlog skills already installed" line once in `evlog init` and `evlog agents`. The plan already lists it, so the status line below now shows only the `npx skills update` refresh command.
+
+- [#822](https://github.com/evloghq/evlog/pull/822) [`2d7503a`](https://github.com/evloghq/evlog/commit/2d7503a1dac7adf2a735e80bc3a676fe4ea6a36e) Thanks [@evlogai](https://github.com/apps/evlogai)! - Fix two `evlog map` results. `useLogger(event).set({ … })` written inline, without binding the logger to a variable, is now credited as request context, so the `context` rule no longer reports the handler as missing `log.set()`. A project with no entry points to score is now graded `unscored` ("nothing to scan") instead of a free "excellent" 100, and `--min-score` exits 1 in that case because there is nothing to meet the threshold against.
+
+- [#823](https://github.com/evloghq/evlog/pull/823) [`b603f28`](https://github.com/evloghq/evlog/commit/b603f2828bcb52001d79f398c4df0970383fe786) Thanks [@evlogai](https://github.com/apps/evlogai)! - `evlog map` no longer draws a score for an unscored scan. A project with no entry points to score showed a full banner reading `100` and a full bar, next to "nothing to scan". The banner now draws `--` with an empty bar, and `--all` shows `--` in place of `100/100`. The JSON output and the `--min-score` gate were already correct and are unchanged.
+
+- [#836](https://github.com/evloghq/evlog/pull/836) [`f3613ee`](https://github.com/evloghq/evlog/commit/f3613ee77be5f7eceec3d818af2a4307254d01bf) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Redact secrets by key name. A new `secrets` built-in, on by default with the other built-ins, replaces the value of any key ending in `password`, `passwd`, `secret` or `token` (case-insensitive, at any depth) with `replacement`. So `password`, `newPassword`, `client_secret` and `accessToken` no longer reach production logs, while counters such as `totalTokens` and `tokensPerSecond` are kept. Values are replaced in full, booleans and `null` are left alone, and listing `builtins` without `'secrets'` turns it off. `evlog config` lists `secrets` among the built-ins.
+
+## 0.9.0
+
+### Minor Changes
+
+- [#773](https://github.com/evloghq/evlog/pull/773) [`a053adb`](https://github.com/evloghq/evlog/commit/a053adb9ec5813626c73c98274ae7188d18f62e5) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog map --json` now carries `grade` next to `map` and `summary`, the same word the report prints, so a consumer no longer recomputes it from the score. `--baseline-label <text>` names the baseline in the report and the `--format github` annotations when the map was copied to a temp file, so CI can say `regressed against main` instead of printing a path.
+
+- [#774](https://github.com/evloghq/evlog/pull/774) [`5ca8bd4`](https://github.com/evloghq/evlog/commit/5ca8bd4fbe481acaf05dd226e5cfc44618dd50c9) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog logs` reads the wide events the fs drain wrote to `.evlog/logs`: the last 50 (`evlog logs`), the failures (`evlog logs errors`), the slowest (`evlog logs slow --over 1s`), one request in full by id (`evlog logs <requestId>`, a UUID prefix is enough), or the shape of the traffic (`evlog logs stats`: per route, status class and level). Filters compose with every view: `--since 15m`, `--until`, `--level error,fatal`, `--path`, `--status 5xx`, `--where payment.amount>5000` on any field of the event (`=`, `!=`, `>`, `>=`, `<`, `<=`, `~regex`, present, `!absent`, repeatable), `--limit`, `--dir`. `-f` follows new events like `tail -f`; `--json` returns the events as JSON. It finds the project's log directory the way `doctor` does, reads every app of a workspace when the root has none, reads the memory drain's dev endpoint with `--url` (a follow there survives the app restarting, and says so when the endpoint stays quiet), handles both the compact and the pretty layout, and never writes.
+
+### Patch Changes
+
+- Updated dependencies [[`302fd0e`](https://github.com/evloghq/evlog/commit/302fd0ea8726e19dfb9ac6e7fb8f09d926878aba)]:
+  - @evlog/telemetry@0.3.4
+
+## 0.8.0
+
+### Minor Changes
+
+- [#766](https://github.com/evloghq/evlog/pull/766) [`53e3837`](https://github.com/evloghq/evlog/commit/53e38371d31ce73125f2fb647810719b7a512554) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog map` and `evlog init` now support Express and Fastify. `map` finds `app.get('/path', …)` and `router.*` registrations (Fastify's `app.route({ method, url })` too), credits handlers that use `req.log` / `request.log`, and treats the per-request event as ambient once `app.use(evlog())` or `app.register(evlog)` is found. `init` writes `src/evlog.ts` with `initLogger` and the middleware (Express) or the plugin options (Fastify), and prints the registration line to paste. Internally every framework is now one directory under `lib/frameworks/`, so adding one no longer touches the scanner, the planner dispatch or the help text.
+
+- [#765](https://github.com/evloghq/evlog/pull/765) [`c7f1356`](https://github.com/evloghq/evlog/commit/c7f135629c8dfa6ab0190508d1f25175541d8623) Thanks [@HugoRCD](https://github.com/HugoRCD)! - The CLI now requires Node 22 or later. `--cwd <dir>` is accepted by every command, not only `doctor`, `map`, `init` and `agents`. `evlog --help` no longer loads any command module, and `tinyglobby` is replaced by Node's own `fs.globSync`, so the install carries one fewer dependency tree.
+
+- [#767](https://github.com/evloghq/evlog/pull/767) [`30c9916`](https://github.com/evloghq/evlog/commit/30c9916f8a7c29a2a587b682766a8ffd96babd15) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog map --format github` writes GitHub Actions workflow commands to stdout so findings land on the pull request diff. With `--baseline` it emits the regressions as `::error`; without one, the FIX FIRST list as `::warning`, worst entry point first. `--limit <n>` caps the list (default 10, GitHub's per-step cap) and the closing `::notice` says how many were left out. Paths are rebased on `GITHUB_WORKSPACE` when it is set, so a package scanned with `--cwd` inside a monorepo checkout still annotates the right file. `--format json` is the same as `--json`; asking for both is refused.
+
+### Patch Changes
+
+- Updated dependencies [[`c7f1356`](https://github.com/evloghq/evlog/commit/c7f135629c8dfa6ab0190508d1f25175541d8623)]:
+  - @evlog/telemetry@0.3.3
+
 ## 0.7.0
 
 ### Minor Changes

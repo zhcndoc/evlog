@@ -1,6 +1,10 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import nitroV2Module from '../../src/nitro/module'
 import nitroV3Module from '../../src/nitro-v3/module'
+import { EVLOG_CONFIG_PLUGIN_ID } from '../../src/shared/configPlugin'
 
 // Nitro builds its #nitro/virtual/plugins and #nitro/virtual/error-handler
 // virtual modules by raw-interpolating these paths into JS string literals:
@@ -13,6 +17,8 @@ describe('nitro modules avoid backslash paths', () => {
   function makeNitroStub() {
     return {
       options: {
+        rootDir: mkdtempSync(join(tmpdir(), 'evlog-module-paths-')),
+        virtual: {} as Record<string, string>,
         plugins: [] as string[],
         errorHandler: undefined as string | string[] | undefined,
         noExternals: undefined as undefined | true | string[],
@@ -26,25 +32,23 @@ describe('nitro modules avoid backslash paths', () => {
     const nitro = makeNitroStub()
     nitroV2Module({ env: { service: 'test' }, silent: true }).setup(nitro as never)
 
-    expect(nitro.options.plugins).toHaveLength(1)
-    expect(nitro.options.plugins[0]).not.toMatch(/\\/)
-    expect(nitro.options.plugins[0]).toMatch(/\/nitro\/plugin$/)
+    expect(nitro.options.plugins).toEqual([EVLOG_CONFIG_PLUGIN_ID, expect.stringMatching(/\/nitro\/plugin$/)])
+    expect(nitro.options.plugins[1]).not.toMatch(/\\/)
 
     expect(nitro.options.errorHandler).toBeTypeOf('string')
     expect(nitro.options.errorHandler).not.toMatch(/\\/)
     expect(nitro.options.errorHandler).toMatch(/\/nitro\/errorHandler$/)
 
     const { replace } = nitro.options as { replace?: Record<string, string> }
-    expect(JSON.parse(replace!.__EVLOG_CONFIG__)).toEqual({ env: { service: 'test' }, silent: true })
+    expect(JSON.parse(replace!.__EVLOG_CONFIG__)).toEqual({ env: { service: 'test' }, silent: true, _suppressDrainWarning: true })
   })
 
   it('nitro v3 module pushes POSIX-style plugin and errorHandler paths', () => {
     const nitro = makeNitroStub()
     nitroV3Module({ env: { service: 'test' } }).setup(nitro as never)
 
-    expect(nitro.options.plugins).toHaveLength(1)
-    expect(nitro.options.plugins[0]).not.toMatch(/\\/)
-    expect(nitro.options.plugins[0]).toMatch(/\/nitro-v3\/plugin$/)
+    expect(nitro.options.plugins).toEqual([EVLOG_CONFIG_PLUGIN_ID, expect.stringMatching(/\/nitro-v3\/plugin$/)])
+    expect(nitro.options.plugins[1]).not.toMatch(/\\/)
 
     expect(Array.isArray(nitro.options.errorHandler)).toBe(true)
     const handlers = nitro.options.errorHandler as string[]

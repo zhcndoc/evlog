@@ -333,15 +333,11 @@ describe('telemetry status command', () => {
 
     try {
       const tree = defineTelemetryCommands({ name: TOOL })
-      const status = tree.subCommands?.status
+      const subs = typeof tree.subCommands === 'function' ? await tree.subCommands() : await tree.subCommands
+      const status = subs?.status
       expect(status).toBeDefined()
       const cmd = typeof status === 'function' ? await status() : await status
-      await cmd!.run?.({
-        args: {},
-        rawArgs: [],
-        data: undefined,
-        cmd: cmd!,
-      })
+      await runCommand(cmd!, { rawArgs: [] })
       const out = writes.join('')
       expect(out).toContain(`Data directory: ${getTelemetryDir(TOOL)}`)
       expect(out).toMatch(/Telemetry: (enabled|disabled)/)
@@ -426,5 +422,44 @@ describe('citty flag capture', () => {
     expect(event!.command).toBe('scan')
     expect(event!.flags).toEqual({ all: true })
     expect(loadedOther).toBe(false)
+  })
+
+  it('reads the argument definitions citty resolved instead of resolving them again', async () => {
+    let resolutions = 0
+    const command = withTelemetry(
+      defineCommand({
+        meta: { name: 'scan' },
+        args: () => {
+          resolutions += 1
+          return { write: { type: 'boolean', default: true } }
+        },
+        run: () => {},
+      }),
+      { name: TOOL, version: '0.0.0' },
+    )
+    await runCommand(command, { rawArgs: ['--no-write'] })
+    const [event] = await new TelemetryOutbox({ toolName: TOOL }).readAll()
+    expect(resolutions).toBe(1)
+    expect(event!.flags).toEqual({ write: false })
+  })
+
+  it('records one event for a leaf under a parent that has no run of its own', async () => {
+    const command = withTelemetry(
+      defineCommand({
+        meta: { name: 'tool' },
+        subCommands: {
+          telemetry: {
+            meta: { name: 'telemetry' },
+            subCommands: {
+              status: defineCommand({ meta: { name: 'status' }, run: () => {} }),
+            },
+          },
+        },
+      }),
+      { name: TOOL, version: '0.0.0' },
+    )
+    await runCommand(command, { rawArgs: ['telemetry', 'status'] })
+    const events = await new TelemetryOutbox({ toolName: TOOL }).readAll()
+    expect(events.map(event => event.command)).toEqual(['telemetry status'])
   })
 })

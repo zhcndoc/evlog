@@ -9,7 +9,7 @@ describe('MODEL', () => {
   it('defaults to the production model', async () => {
     vi.stubEnv('EVI_MODEL', undefined)
     const { MODEL } = await import('./model')
-    expect(MODEL).toBe('zai/glm-5.3-flash')
+    expect(MODEL).toBe('anthropic/claude-haiku-5.5')
   })
 
   it('EVI_MODEL overrides the default', async () => {

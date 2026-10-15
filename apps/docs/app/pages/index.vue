@@ -51,11 +51,13 @@ useHead({
 
 useSeo({
   title:
-    page.value?.title
-    || `Evlog 中文文档 - 适用于 TypeScript 的结构化日志库`,
+    page.value?.seo?.title
+    || page.value?.title
+    || `evlog — 挖日志不是可观测性，而是希望。`,
   description:
-    page.value?.description
-    || '一个现代的 TypeScript 日志器，适用于你交付的一切——脚本、库、任务、边缘、请求。一个 API 即可实现简单日志、广泛事件和结构化错误。',
+    page.value?.seo?.description
+    || page.value?.description
+    || '一个为你交付的一切而构建的现代 TypeScript 日志器——脚本、库、任务、边缘环境和请求。通过一个 API 提供简单日志、广泛事件和结构化错误。',
   type: 'website',
   ogImage: '/og.png',
 })

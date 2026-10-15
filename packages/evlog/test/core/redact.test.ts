@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { redactEvent, normalizeRedactConfig, resolveRedactConfig, builtinPatterns, hasFunctionRedactPolicy, compileRedactPathMatchers, redactPathsInTree } from '../../src/redact'
+import { redactEvent, normalizeRedactConfig, resolveRedactConfig, builtinPatterns, hasFunctionRedactPolicy, FUNCTION_REDACT_POLICY_WARNING, prepareRedactForBridge, compileRedactPathMatchers, redactPathsInTree } from '../../src/redact'
 import type { RedactConfig } from '../../src/types'
 import { createLogger, initLogger } from '../../src/logger'
 import { defined } from '../helpers/defined'
@@ -476,6 +476,58 @@ describe('redactEvent - edge cases', () => {
   })
 })
 
+describe('redactEvent - secrets built-in', () => {
+  const redact = (event: Record<string, unknown>, input: Parameters<typeof resolveRedactConfig>[0] = true) =>
+    redactEvent(event, defined(resolveRedactConfig(input), 'redact config'))
+
+  it('replaces keys ending in password, passwd, secret or token at any depth', () => {
+    const result = redact({
+      password: 'hunter2',
+      user: { newPassword: 'n3w', db_passwd: 'pw' },
+      oauth: { client_secret: 'cs_1', accessToken: 'at_1', refresh_token: 'rt_1' },
+      env: { API_TOKEN: 'tok', SECRET: 's' },
+      sessions: [{ token: 'abc' }],
+    })
+    expect(result).toEqual({
+      password: '[REDACTED]',
+      user: { newPassword: '[REDACTED]', db_passwd: '[REDACTED]' },
+      oauth: { client_secret: '[REDACTED]', accessToken: '[REDACTED]', refresh_token: '[REDACTED]' },
+      env: { API_TOKEN: '[REDACTED]', SECRET: '[REDACTED]' },
+      sessions: [{ token: '[REDACTED]' }],
+    })
+  })
+
+  it('keeps token counters and keys that only start with a secret word', () => {
+    const event = {
+      ai: { totalTokens: 1200, inputTokens: 800, tokensPerSecond: 42 },
+      auth: { tokenType: 'Bearer', passwordChangedAt: '2026-01-01' },
+    }
+    expect(redact(event)).toEqual(event)
+  })
+
+  it('keeps booleans and null, and replaces numbers and objects whole', () => {
+    const result = redact({ hasPassword: true, secret: null, pinPassword: 1234, token: { value: 'abc', expiresIn: 60 } })
+    expect(result).toEqual({ hasPassword: true, secret: null, pinPassword: '[REDACTED]', token: '[REDACTED]' })
+  })
+
+  it('uses the configured replacement', () => {
+    expect(redact({ password: 'hunter2' }, { replacement: '***' })).toEqual({ password: '***' })
+  })
+
+  it('is on by default and off when not listed in builtins', () => {
+    expect(redact({ password: 'x' }, {}).password).toBe('[REDACTED]')
+    expect(redact({ password: 'x' }, { builtins: ['email'] }).password).toBe('x')
+    expect(redact({ password: 'x' }, { builtins: ['secrets'] }).password).toBe('[REDACTED]')
+    expect(redact({ password: 'x' }, { builtins: false }).password).toBe('x')
+  })
+
+  it('survives the JSON config bridge', () => {
+    const config = defined(normalizeRedactConfig({ builtins: ['secrets'] }), 'redact config')
+    expect(config._maskers).toHaveLength(0)
+    expect(redactEvent({ password: 'x', email: 'a@b.com' }, config)).toEqual({ password: '[REDACTED]', email: 'a@b.com' })
+  })
+})
+
 describe('resolveRedactConfig', () => {
   it('returns undefined for false', () => {
     expect(resolveRedactConfig(false)).toBeUndefined()
@@ -606,6 +658,17 @@ describe('normalizeRedactConfig', () => {
     })
     expect(config?.patterns).toHaveLength(1)
     expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('warns on pattern objects without a source field instead of dropping them silently', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const config = normalizeRedactConfig({
+      builtins: false,
+      patterns: [{ source: '\\d+' }, {}],
+    })
+    expect(config?.patterns).toHaveLength(1)
+    expect(warn).toHaveBeenCalledWith('[normalizeRedactConfig] Ignoring redact pattern object without a `source` field')
     warn.mockRestore()
   })
 
@@ -844,5 +907,34 @@ describe('function-valued redact policy across the config bridge', () => {
     // being called before serialization, not after.
     expect(hasFunctionRedactPolicy(serialized)).toBe(false)
     expect(normalizeRedactConfig(serialized)?.replacement).toBeUndefined()
+  })
+
+  it('warns when a function-valued policy crosses the bridge', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    prepareRedactForBridge({ replacement: () => '[x]' })
+    expect(warn).toHaveBeenCalledWith(FUNCTION_REDACT_POLICY_WARNING)
+    warn.mockRestore()
+  })
+})
+
+describe('RegExp patterns across the config bridge', () => {
+  it('rewrites RegExp patterns to source/flags so a JSON round-trip still redacts', () => {
+    const redact = { builtins: false, patterns: [/sk_live_\w+/g] }
+    prepareRedactForBridge(redact)
+    const serialized = JSON.parse(JSON.stringify(redact))
+
+    const resolved = defined(normalizeRedactConfig(serialized), 'redact config')
+    expect(resolved.patterns).toHaveLength(1)
+    expect(defined(resolved.patterns?.[0], 'patterns[0]').flags).toBe('g')
+
+    const event = redactEvent({ key: 'sk_live_abc123' }, resolved)
+    expect(event.key).toBe('[REDACTED]')
+  })
+
+  it('keeps patterns intact when the config is passed live, not through the bridge', () => {
+    const redact = { builtins: false, patterns: [/sk_live_\w+/g] }
+    prepareRedactForBridge(redact)
+    const resolved = defined(normalizeRedactConfig(redact), 'redact config')
+    expect(defined(resolved.patterns?.[0], 'patterns[0]')).toBeInstanceOf(RegExp)
   })
 })

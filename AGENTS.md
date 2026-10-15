@@ -57,13 +57,13 @@ skills/                     Published skills (analyze-logs, build-audit-logs, re
 
 - All code in TypeScript. Follow existing patterns in `packages/evlog/src/`.
 - JSDoc on all public APIs.
-- No HTML comments (`<!-- -->`) in Vue templates.
+- HTML comments in Vue templates are fine when they explain something the markup cannot say, such as a precise layout decision. Comments that only name a section or element (`<!-- Hero -->`, `<!-- Row summary -->`) are not: component and element names already carry that.
 - `README.md` at root is a **symlink** to `packages/evlog/README.md`. Edit the source directly.
 - `evlog/toolkit` is the public entrypoint for `src/shared/`. Never use `evlog/shared`.
 - `evlog/browser` is deprecated, use `evlog/http` instead.
 - Every framework integration exposes the **same contract**: `evlog()` middleware, `useLogger()`, `log.fork()`, and the full `BaseEvlogOptions` surface. Framework-native accessors (`c.get('log')`, `req.log`, `event.locals.log`, `context.get(loggerContext)`) stay alongside it. They are the idiomatic path inside handlers, `useLogger()` is for the layers underneath. When adding an integration, provide both.
 - `useLogger()` is backed by `AsyncLocalStorage`. On Cloudflare Workers that needs the `nodejs_compat` / `nodejs_als` flag, so `evlog/workers` deliberately has no `useLogger()` and passes the logger as the handler's fourth argument instead.
-- New export? Update `packages/evlog/package.json` exports, its `typesVersions`, and `packages/evlog/tsdown.config.ts`. A subpath missing from `typesVersions` resolves at runtime and fails to type-check.
+- New export? Update `packages/evlog/package.json` exports, its `typesVersions`, and `packages/evlog/tsdown.config.ts`. A subpath missing from `typesVersions` resolves at runtime and fails to type-check. `packages/evlog/test/toolkit/entrypoint-registry.test.ts` catches the mismatch without a build.
 - Creating a new adapter, enricher, or framework integration? Read the matching skill at `.agents/skills/` **before starting**:
   - `.agents/skills/create-adapter/SKILL.md`
   - `.agents/skills/create-enricher/SKILL.md`
@@ -158,7 +158,7 @@ A task is complete when **all** of the following pass:
 - Skip tests or lint to "fix later"
 - Loosen an assertion, widen a type, or delete a test to make it pass: a failing test is a signal; fix the cause
 - Ship a feature, bug fix, or refactor without a matching test
-- Add HTML comments in Vue `<template>` blocks
+- Add HTML comments in Vue `<template>` blocks that only name what the markup already shows
 - Modify `node_modules/` or generated files
 - Open a PR for a user-facing change without a changeset
 

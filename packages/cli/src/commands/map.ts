@@ -1,12 +1,14 @@
 import { EvlogError } from 'evlog'
 import type { CliContext } from '../core/context'
-import { EXIT_FAIL, EXIT_USAGE } from '../core/output'
+import { createStyle, EXIT_FAIL, EXIT_USAGE } from '../core/output'
 import { defineEvlogCommand } from '../lib/command'
+import { loadCliConfig } from '../lib/config'
+import type { CliConfig } from '../lib/config'
 import { FRAMEWORK_IDS, isFramework } from '../lib/frameworks'
 import type { CliDebug } from '../lib/debug'
 import { createNoopCliDebug } from '../lib/debug'
 import { cliErrors } from '../lib/errors'
-import { resolveEvlog, resolveProject } from '../lib/project'
+import { prettyPath, resolveEvlog, resolveProject } from '../lib/project'
 import type { ProjectInfo } from '../lib/project'
 import { checkBaselineVersion, compareToBaseline, hasRegressed, loadBaseline } from '../lib/map/baseline'
 import type { BaselineComparison } from '../lib/map/baseline'
@@ -22,10 +24,13 @@ import {
   formatMapWarnings,
 } from '../lib/map/report'
 import { scan } from '../lib/map/scan'
+import { passesMinScore } from '../lib/map/score'
 import { recordMapRun, resolveGate } from '../lib/map/telemetry'
 import type { MapView } from '../lib/map/telemetry-fields'
 import type { Framework, ScanContext, ScanResult } from '../lib/map/types'
 import { writeMapFile } from '../lib/map/write'
+import { formatGithubAnnotations } from '../lib/map/formats'
+import { VERSION } from '../lib/constants'
 
 /** Typed result of `evlog map` — rendered by {@link formatMapReport}. */
 export interface MapResult {
@@ -33,12 +38,16 @@ export interface MapResult {
   framework: Framework
   frameworkWarnings: string[]
   scan: ScanResult
+  /** Absolute directory the scan ran in — what the scan's file paths are relative to. */
+  projectRoot: string
   /** Path `evlog.map.json` was written to, or `null` with `--no-write`. */
   mapPath: string | null
   /** Diff against the committed map, when `--baseline` was passed. */
   baseline: BaselineComparison | null
   /** Baseline problems that do not stop the run — a map that predates version reporting. */
   baselineWarnings: string[]
+  /** The `evlog.config` the run applied, if any. */
+  config: CliConfig | null
 }
 
 /**
@@ -48,7 +57,14 @@ export interface MapResult {
 export async function runMap(
   ctx: CliContext,
   log: CliDebug = createNoopCliDebug(),
-  options: { framework?: Framework, noWrite?: boolean, verbose?: boolean, baseline?: string | true } = {},
+  options: {
+    framework?: Framework
+    noWrite?: boolean
+    verbose?: boolean
+    baseline?: string | true
+    /** What to call the baseline in the report and the annotations, in place of how it was spelled. */
+    baselineLabel?: string
+  } = {},
 ): Promise<MapResult> {
   const project = await log.step(
     'resolveProject',
@@ -71,24 +87,34 @@ export async function runMap(
     r => ({ hasEvlog: !!r.install }),
   )
 
+  const config = await log.step(
+    'loadConfig',
+    () => loadCliConfig(project),
+    c => ({ config: c && { file: prettyPath(ctx.cwd, c.file), rulesOff: [...c.map.off], ignore: c.map.ignore.length } }),
+  )
+
   const scanCtx: ScanContext = {
     projectRoot: project.packageDir,
     framework,
     projectName: project.packageName ?? 'unknown',
     hasEvlog: !!resolved.install,
     verbose: options.verbose ?? false,
+    rulesOff: config?.map.off,
+    ignore: config?.map.ignore,
   }
 
   /* Read before the scan writes: `writeMapFile` overwrites `evlog.map.json` in
      place, so loading the baseline afterwards would compare this run against
      itself and never report a regression. */
-  const baselineMap = options.baseline
+  const baselineSpec = options.baseline ?? config?.map.baseline
+  const baselineMap = baselineSpec
     ? await log.step(
       'loadBaseline',
-      () => loadBaseline(project.packageDir, typeof options.baseline === 'string' ? options.baseline : undefined),
+      () => loadBaseline(project.packageDir, typeof baselineSpec === 'string' ? baselineSpec : undefined),
       r => ({ baselineSource: r.source.label, baselineScore: r.map.score }),
     )
     : null
+  if (baselineMap && options.baselineLabel) baselineMap.source = { ...baselineMap.source, label: options.baselineLabel }
 
   /* A map written before version reporting cannot prove its rule set matches
      the running one, so it gets a warning instead of a gate: hard-failing every
@@ -127,10 +153,24 @@ export async function runMap(
     framework,
     frameworkWarnings: warnings,
     scan: scanResult,
+    projectRoot: project.packageDir,
     mapPath,
     baseline,
     baselineWarnings,
+    config,
   }
+}
+
+/** What the config changed about this run, so a score is never read without it. */
+function formatConfigNote(ctx: CliContext, result: MapResult): string | null {
+  const { config } = result
+  if (!config) return null
+  const changes = [
+    config.map.off.size > 0 ? `${[...config.map.off].join(', ')} off` : null,
+    result.scan.ignored > 0 ? `${result.scan.ignored} entry point${result.scan.ignored === 1 ? '' : 's'} ignored` : null,
+  ].filter(change => change !== null)
+  if (changes.length === 0) return null
+  return createStyle(ctx).paint('dim', `${prettyPath(ctx.cwd, config.file)}: ${changes.join(', ')}`)
 }
 
 /**
@@ -144,7 +184,7 @@ export async function runMap(
 export function formatMapReport(
   ctx: CliContext,
   result: MapResult,
-  options: { all?: boolean, entry?: string, minScore?: number } = {},
+  options: { all?: boolean, entry?: string, minScore?: number, minScoreFrom?: string } = {},
 ): string {
   const sections: string[] = []
 
@@ -155,6 +195,8 @@ export function formatMapReport(
   if (warnings.length > 0) {
     sections.push(formatMapWarnings(ctx, warnings))
   }
+  const note = formatConfigNote(ctx, result)
+  if (note) sections.push(note)
 
   if (options.entry) {
     const route = findEntryPoint(result.scan, options.entry)
@@ -172,7 +214,7 @@ export function formatMapReport(
   }
 
   if (options.minScore !== undefined) {
-    sections.push(formatGate(ctx, result.scan, options.minScore))
+    sections.push(formatGate(ctx, result.scan, options.minScore, options.minScoreFrom))
   }
 
   return sections.join('\n')
@@ -202,6 +244,32 @@ function parseMinScoreArg(value: unknown): number | undefined {
   return threshold
 }
 
+const FORMATS = ['human', 'json', 'github'] as const
+type MapFormat = typeof FORMATS[number]
+
+/**
+ * Read `--format`, with `--json` as the long-standing spelling of `--format json`.
+ * Two formats cannot share stdout, so asking for both is refused rather than
+ * letting one silently win.
+ */
+function parseFormatArg(value: unknown, json: boolean | undefined): MapFormat {
+  if (typeof value !== 'string' || value.length === 0) return json ? 'json' : 'human'
+  if (!(FORMATS as readonly string[]).includes(value)) throw cliErrors.MAP_INVALID_FORMAT({ value })
+  if (json && value !== 'json') throw cliErrors.MAP_FORMAT_CONFLICT({ format: value })
+  return value as MapFormat
+}
+
+/** GitHub's cap: it keeps this many annotations per level per step and drops the rest. */
+const DEFAULT_LIMIT = 10
+
+/** Read `--limit`; the whole string has to parse, for the same reason as `--min-score`. */
+function parseLimitArg(value: unknown): number {
+  if (typeof value !== 'string' || value.length === 0) return DEFAULT_LIMIT
+  const limit = Number(value)
+  if (!Number.isInteger(limit) || limit < 1) throw cliErrors.MAP_INVALID_LIMIT({ value })
+  return limit
+}
+
 /**
  * Read `--baseline`, which is a flag and an option at once.
  *
@@ -221,10 +289,9 @@ function parseBaselineArg(value: unknown): string | true | undefined {
  * Logic lives in {@link runMap}; this file owns the citty surface.
  */
 export default defineEvlogCommand('map', {
-  meta: { name: 'map', description: 'Static observability map — Lighthouse for wide events' },
+  meta: { name: 'map' },
   args: {
     entry: { type: 'positional', required: false, description: 'Inspect one entry point by route or file path' },
-    cwd: { type: 'string', description: 'Project directory (default: current)' },
     framework: { type: 'string', description: `Override framework detection (${FRAMEWORK_IDS.join(', ')})` },
     all: { type: 'boolean', description: 'Every entry point, as a check matrix' },
     minScore: { type: 'string', description: 'Exit 1 if the global score is below this threshold' },
@@ -232,34 +299,41 @@ export default defineEvlogCommand('map', {
       type: 'string',
       description: 'Compare against the committed evlog.map.json and exit 1 on regression (path, or git:<ref>)',
     },
+    baselineLabel: { type: 'string', description: 'Name the baseline this way in the report and the annotations (a branch, where the file is a temp copy)' },
     // `default: true` + citty's `--no-write` negation — declaring this as `noWrite`
     // directly would not work: citty's parser treats any `--no-x` flag as negating
     // `x`, not as setting `noX` (see `wantsHeader`'s `--no-header` argv fallback).
     write: { type: 'boolean', default: true, description: 'Write evlog.map.json (--no-write to skip)' },
     verbose: { type: 'boolean', description: 'Show per-file parse warnings' },
+    format: { type: 'string', description: 'Output: human (default), json, github (workflow annotations)' },
+    limit: { type: 'string', description: `Most annotations --format github emits (default ${DEFAULT_LIMIT}, GitHub's cap)` },
   },
   async run({ args, cli, log, ui }) {
-    const cwd = typeof args.cwd === 'string' && args.cwd.length > 0 ? args.cwd : undefined
-    const ctx = cwd ? { ...cli, cwd } : cli
-
     const entry = typeof args.entry === 'string' && args.entry.length > 0 ? args.entry : undefined
-    const view: MapView = entry ? 'inspect' : args.all ? 'all' : 'summary'
 
     let result: MapResult
     let threshold: number | undefined
+    let thresholdFrom = '--min-score'
     let framework: Framework | undefined
+    let format: MapFormat = 'human'
+    let limit = DEFAULT_LIMIT
     try {
       /* Before the scan, not after: an unusable threshold should cost nothing,
          and validating it afterwards means the command reads the whole project
          and writes evlog.map.json before admitting it cannot gate on it. */
-      threshold = parseMinScoreArg(args.minScore)
+      format = parseFormatArg(args.format, args.json)
+      limit = parseLimitArg(args.limit)
+      const minScoreFlag = parseMinScoreArg(args.minScore)
       framework = parseFrameworkArg(args.framework)
-      result = await runMap(ctx, log, {
+      result = await runMap(cli, log, {
         framework,
         noWrite: !args.write,
         verbose: args.verbose,
         baseline: parseBaselineArg(args.baseline),
+        baselineLabel: typeof args.baselineLabel === 'string' && args.baselineLabel.length > 0 ? args.baselineLabel : undefined,
       })
+      threshold = minScoreFlag ?? result.config?.map.minScore
+      if (minScoreFlag === undefined && threshold !== undefined) thresholdFrom = 'map.minScore'
     } catch (error) {
       if (error instanceof EvlogError) {
         log.finding({ code: error.code ?? 'cli.MAP_FAILED', why: error.why, fix: error.fix, link: error.link }, { status: 'fail' })
@@ -276,6 +350,7 @@ export default defineEvlogCommand('map', {
       throw error
     }
 
+    const view: MapView = format === 'github' ? format : entry ? 'inspect' : args.all ? 'all' : 'summary'
     recordMapRun({
       scan: result.scan,
       frameworkForced: framework !== undefined,
@@ -284,20 +359,32 @@ export default defineEvlogCommand('map', {
       baseline: result.baseline,
       view,
       wrote: result.mapPath !== null,
+      config: result.config && { rulesOff: result.config.map.off.size },
     })
 
-    ui.done({
-      jsonMode: args.json,
-      json: {
-        map: result.scan.map,
-        summary: result.scan.summary,
-        mapPath: result.mapPath,
-        ...(result.baseline ? { baseline: result.baseline } : {}),
-      },
-      human: formatMapReport(ctx, result, { all: args.all, entry, minScore: threshold }),
-    })
+    const human = formatMapReport(cli, result, { all: args.all, entry, minScore: threshold, minScoreFrom: thresholdFrom })
+    if (format === 'github') {
+      /* Annotations are the stdout contract; the report still goes to stderr so
+         the job log reads the same as a local run. */
+      const location = { projectRoot: result.projectRoot, workspace: cli.env.GITHUB_WORKSPACE }
+      ui.stdout(formatGithubAnnotations(result.scan, result.baseline, location, { minScore: threshold, minScoreFrom: thresholdFrom, limit }))
+      ui.human(human)
+    } else {
+      ui.done({
+        jsonMode: format === 'json',
+        json: {
+          map: result.scan.map,
+          grade: result.scan.grade,
+          summary: result.scan.summary,
+          ignored: result.scan.ignored,
+          mapPath: result.mapPath,
+          ...(result.baseline ? { baseline: result.baseline } : {}),
+        },
+        human,
+      })
+    }
 
-    if (threshold !== undefined && result.scan.map.score < threshold) {
+    if (threshold !== undefined && !passesMinScore(result.scan.grade, result.scan.map.score, threshold)) {
       ui.exit(EXIT_FAIL)
       return
     }

@@ -1,5 +1,5 @@
 import type { AuditableLogger, AuditInput, AuditMethod } from './audit'
-import type { DrainContext, EnvironmentContext, FieldContext, Log, LogLevel, LoggerConfig, RequestLogger, RequestLoggerOptions, TailSamplingContext, WideEvent } from './types'
+import type { DrainContext, EnvironmentContext, FieldContext, Log, LogLevel, LoggerConfig, RequestLogEntry, RequestLogger, RequestLoggerOptions, TailSamplingContext, WideEvent } from './types'
 import { buildAuditFields, consumeAuditForceKeep, finalizeAudit } from './audit'
 import { markGloballyRedacted, redactEvent, resolveRedactConfig } from './redact'
 import type { PluginRunner } from './shared/plugin'
@@ -16,15 +16,20 @@ const nativeStdoutWrite =
     ? process.stdout.write.bind(process.stdout)
     : undefined
 
-/** Cross-bundle global slot for the native stdout write registered by captureOutput patching. */
+/** Cross-bundle flag read by captureOutput patching. */
 export interface EvlogProcessOutputGlobal {
-  __evlogNativeStdoutWrite?: typeof process.stdout.write
+  /** Set while evlog writes its own output, so captureOutput passes the write through. */
+  __evlogOwnOutput?: boolean
 }
 
-function writePrettyStdout(text: string): void {
+function writeOwnOutput(write: () => void): void {
   const global = globalThis as EvlogProcessOutputGlobal
-  const write = global.__evlogNativeStdoutWrite ?? nativeStdoutWrite
-  write?.(text)
+  global.__evlogOwnOutput = true
+  try {
+    write()
+  } finally {
+    global.__evlogOwnOutput = false
+  }
 }
 
 function isPlainObject(val: unknown): val is Record<string, unknown> {
@@ -61,6 +66,10 @@ function mergeInto(target: Record<string, unknown>, source: Record<string, unkno
       Reflect.set(target, key, sourceVal)
     }
   }
+}
+
+function mergeFields(target: Record<string, unknown>, fields: Record<string, unknown>): void {
+  mergeInto(target, removeErrorCycles(fields, new WeakSet()) as Record<string, unknown>)
 }
 
 const pendingDrainState = new WeakMap<WideEvent, { drainStarted: boolean }>()
@@ -195,7 +204,7 @@ export function getGlobalDrain(): ((ctx: DrainContext) => void | Promise<void>) 
  * Trace defaults to 0% (opt-in via `sampling.rates.trace`).
  * Fatal is force-kept regardless of the sampling configuration.
  */
-function shouldSample(level: LogLevel): boolean {
+export function shouldSample(level: LogLevel): boolean {
   if (level === 'fatal') {
     return true
   }
@@ -335,6 +344,19 @@ function emitWideEvent(
 }
 
 /**
+ * Apply the global `redact` config to a wide event built outside the logger,
+ * such as a client event received by the ingest endpoint. Returns the event
+ * unchanged when redaction is off.
+ * @internal
+ */
+export function redactWithGlobalConfig(event: WideEvent): WideEvent {
+  if (!state.redact) return event
+  const redacted = redactEvent(event, state.redact) as WideEvent
+  markGloballyRedacted(redacted)
+  return redacted
+}
+
+/**
  * Write an emitted wide event to the console, honoring `silent`, `pretty` and
  * `stringify`. Runners call it once enrichers have run.
  * @internal
@@ -344,9 +366,9 @@ export function outputWideEvent(event: WideEvent): void {
   if (state.pretty) {
     prettyPrintWideEvent(event)
   } else if (state.stringify) {
-    console[getConsoleMethod(event.level)](JSON.stringify(event))
+    writeOwnOutput(() => console[getConsoleMethod(event.level)](JSON.stringify(event)))
   } else {
-    console[getConsoleMethod(event.level)](event)
+    writeOwnOutput(() => console[getConsoleMethod(event.level)](event))
   }
 }
 
@@ -374,7 +396,7 @@ function emitTaggedLog(level: LogLevel, tag: string, message: string): void {
     } else {
       const color = getLevelColor(level)
       const timestamp = isoNow().slice(11, 23)
-      console.log(`${colors.dim}${timestamp}${colors.reset} ${color}[${tag}]${colors.reset} ${message}`)
+      writeOwnOutput(() => console.log(`${colors.dim}${timestamp}${colors.reset} ${color}[${tag}]${colors.reset} ${message}`))
     }
 
     return
@@ -630,16 +652,15 @@ function buildAIEntries(ai: Record<string, unknown>): TreeEntry[] {
 
 function flushPrettyLines(lines: string[]): void {
   if (lines.length === 0) return
-  const text = `${lines.join('\n')}\n`
   if (
     nativeStdoutWrite
     && !isBrowser()
     && process.env.VITEST !== 'true'
   ) {
-    writePrettyStdout(text)
+    writeOwnOutput(() => nativeStdoutWrite(`${lines.join('\n')}\n`))
     return
   }
-  console.log(lines.join('\n'))
+  writeOwnOutput(() => console.log(lines.join('\n')))
 }
 
 function prettyPrintWideEvent(event: Record<string, unknown>): void {
@@ -794,7 +815,62 @@ function removeErrorCycles(value: unknown, ancestors: WeakSet<object>): unknown 
   return changed ? copy : value
 }
 
+/**
+ * h3 wraps a thrown error in an H3Error that keeps the original as `cause` and
+ * reads its stack from it, so the pair describe the same failure. Serializing
+ * both repeats the message, the stack and the payload.
+ */
+function isWrapperOf(err: Error, cause: unknown): cause is Error {
+  return cause instanceof Error
+    && cause !== err
+    && cause.message === err.message
+    && cause.stack === err.stack
+}
+
+const H3_INPUT_FIELDS: Record<string, string> = {
+  message: 'message',
+  stack: 'stack',
+  statusCode: 'statusCode',
+  status: 'statusCode',
+  statusMessage: 'statusMessage',
+  statusText: 'statusMessage',
+  data: 'data',
+  fatal: 'fatal',
+  unhandled: 'unhandled',
+}
+
+/**
+ * h3's `createError({ statusCode, message })` keeps the options object itself
+ * as `cause`. It only restates fields the error already carries, so it counts
+ * as a copy when every key is one h3 reads and every value matches the error.
+ */
+function isH3InputOf(err: Error, cause: unknown): boolean {
+  if (typeof cause !== 'object' || cause === null || cause instanceof Error || Array.isArray(cause)) return false
+  const keys = Object.keys(cause)
+  if (keys.length === 0) return false
+  const errRecord = err as unknown as Record<string, unknown>
+  const causeRecord = cause as Record<string, unknown>
+  return keys.every((key) => {
+    const target = H3_INPUT_FIELDS[key]
+    if (!target) return false
+    const value = causeRecord[key]
+    if (value === undefined || value === errRecord[target]) return true
+    return target === 'statusCode' && Number(value) === errRecord.statusCode
+  })
+}
+
 function serializeError(err: Error, ancestors = new WeakSet<object>()): Record<string, unknown> {
+  if (isWrapperOf(err, err.cause) && !ancestors.has(err.cause)) {
+    ancestors.add(err)
+    const errorObj = serializeError(err.cause, ancestors)
+    ancestors.delete(err)
+    const wrapper = err as unknown as Record<string, unknown>
+    for (const k of ['statusCode', 'statusMessage', 'data'] as const) {
+      if (wrapper[k] !== undefined) errorObj[k] = removeErrorCycles(wrapper[k], ancestors)
+    }
+    return errorObj
+  }
+
   const errorObj: Record<string, unknown> = {
     name: err.name,
     message: err.message,
@@ -803,6 +879,13 @@ function serializeError(err: Error, ancestors = new WeakSet<object>()): Record<s
   const errRecord = err as unknown as Record<string, unknown>
   ancestors.add(err)
   for (const k of ['code', 'status', 'statusText', 'statusCode', 'statusMessage', 'data', 'cause', 'internal'] as const) {
+    if (k === 'cause' && isH3InputOf(err, err.cause)) {
+      const cause = err.cause as Record<string, unknown>
+      for (const flag of ['fatal', 'unhandled'] as const) {
+        if (cause[flag] !== undefined) errorObj[flag] = cause[flag]
+      }
+      continue
+    }
     if (k in err) errorObj[k] = removeErrorCycles(errRecord[k], ancestors)
   }
   ancestors.delete(err)
@@ -832,7 +915,7 @@ function createLogMethod(level: LogLevel) {
     } else if (tagOrEvent instanceof Error) {
       emitWideEvent(level, { error: serializeError(tagOrEvent) })
     } else if (typeof tagOrEvent === 'object') {
-      emitWideEvent(level, tagOrEvent)
+      emitWideEvent(level, removeErrorCycles(tagOrEvent, new WeakSet()) as Record<string, unknown>)
     } else {
       emitTaggedLog(level, 'log', String(tagOrEvent))
     }
@@ -878,6 +961,7 @@ export const noopLogger: AuditableLogger = {
   fatal() {},
   info() {},
   warn() {},
+  debug() {},
   trace() {},
   emit() {
     return null
@@ -932,7 +1016,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
   let emitted = false
   let pendingWideEvent: WideEvent | null = null
 
-  function addLog(level: 'info' | 'warn' | 'fatal' | 'trace', message: string): void {
+  function addLog(level: RequestLogEntry['level'], message: string): void {
     if (!Array.isArray(context.requestLogs)) {
       context.requestLogs = []
     }
@@ -980,7 +1064,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
         warnPostEmit('log.set()', `Keys dropped: ${keys.length ? keys.join(', ') : '(empty)'}.`)
         return
       }
-      mergeInto(context, data as Record<string, unknown>)
+      mergeFields(context, data as Record<string, unknown>)
     },
 
     setLevel(level: LogLevel): void {
@@ -1003,7 +1087,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       const err = typeof error === 'string' ? new Error(error) : error
 
       if (errorContext) {
-        mergeInto(context, errorContext as Record<string, unknown>)
+        mergeFields(context, errorContext as Record<string, unknown>)
       }
 
       const errorObj = serializeError(err)
@@ -1027,7 +1111,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       addLog('fatal', message)
       if (fatalContext) {
         const { requestLogs: _, ...rest } = fatalContext as Record<string, unknown>
-        mergeInto(context, rest)
+        mergeFields(context, rest)
       }
     },
 
@@ -1042,7 +1126,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       addLog('info', message)
       if (infoContext) {
         const { requestLogs: _, ...rest } = infoContext as Record<string, unknown>
-        mergeInto(context, rest)
+        mergeFields(context, rest)
       }
     },
 
@@ -1058,7 +1142,22 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       addLog('warn', message)
       if (warnContext) {
         const { requestLogs: _, ...rest } = warnContext as Record<string, unknown>
-        mergeInto(context, rest)
+        mergeFields(context, rest)
+      }
+    },
+
+    debug(message: string, debugContext?: FieldContext<T>): void {
+      if (emitted) {
+        const keys = debugContext
+          ? ['message', ...Object.keys(debugContext as Record<string, unknown>).filter(k => k !== 'requestLogs')]
+          : ['message']
+        warnPostEmit('log.debug()', `Keys dropped: ${keys.join(', ')}.`)
+        return
+      }
+      addLog('debug', message)
+      if (debugContext) {
+        const { requestLogs: _, ...rest } = debugContext as Record<string, unknown>
+        mergeFields(context, rest)
       }
     },
 
@@ -1073,7 +1172,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       addLog('trace', message)
       if (traceContext) {
         const { requestLogs: _, ...rest } = traceContext as Record<string, unknown>
-        mergeInto(context, rest)
+        mergeFields(context, rest)
       }
     },
 

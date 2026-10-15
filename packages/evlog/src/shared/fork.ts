@@ -39,10 +39,7 @@ export function attachForkToLogger(
   middlewareOptions: MiddlewareLoggerOptions,
   lifecycle?: ForkLifecycle,
 ): void {
-  const log = parent as RequestLogger & { fork?: (label: string, fn: () => void | Promise<void>) => void }
-  log.fork = (label: string, fn: () => void | Promise<void>) => {
-    forkBackgroundLogger({ storage, parent, middlewareOptions, label, fn, lifecycle })
-  }
+  parent.fork = (label, fn) => forkBackgroundLogger({ storage, parent, middlewareOptions, label, fn, lifecycle })
 }
 
 /**
@@ -50,11 +47,17 @@ export function attachForkToLogger(
  * child while `fn` runs. The child emits a separate wide event when `fn` settles,
  * with `operation` and `_parentRequestId` set for correlation.
  *
+ * Returns the child's lifetime: it resolves once `fn` has settled and the child
+ * event has been enriched and drained, and never rejects. When `waitUntil` is set,
+ * that lifetime is registered with it synchronously, while the caller is still in
+ * the request scope.
+ *
  * @beta Part of `evlog/toolkit` — used by framework integrations; prefer `log.fork()`
  * on the request logger when available.
  */
-export function forkBackgroundLogger(options: ForkBackgroundLoggerOptions): void {
-  const { storage, parent, middlewareOptions, label, fn, lifecycle } = options
+export function forkBackgroundLogger(options: ForkBackgroundLoggerOptions): Promise<void> {
+  const { storage, parent, label, fn, lifecycle } = options
+  const { waitUntil, ...middlewareOptions } = options.middlewareOptions
 
   const parentCtx = parent.getContext() as Record<string, unknown>
   const parentRequestId = parentCtx.requestId
@@ -88,39 +91,45 @@ export function forkBackgroundLogger(options: ForkBackgroundLoggerOptions): void
     requestId: child.getContext().requestId as string,
   }
 
-  storage.run(child, () => {
+  const lifetime = storage.run(child, () => {
     lifecycle?.onChildEnter?.(child)
-    void Promise.resolve()
+    return Promise.resolve()
       .then(() => fn())
-      .then(async () => {
+      .then(
+        () => {
+          const ctxStatus = child.getContext().status
+          return typeof ctxStatus === 'number' ? ctxStatus : undefined
+        },
+        (err: unknown) => {
+          const error = err instanceof Error ? err : new Error(String(err))
+          const status = extractErrorStatus(error)
+          child.error(error)
+          child.set({ status })
+          return status
+        },
+      )
+      .then(async (status) => {
         const emittedEvent = child.emit()
-        const ctxStatus = child.getContext().status
-        const status = (emittedEvent?.status
-          ?? (typeof ctxStatus === 'number' ? ctxStatus : undefined)) as number | undefined
-        if (emittedEvent) {
-          if (middlewareOptions.enrich || middlewareOptions.drain || getGlobalDrain()) {
-            await runEnrichAndDrain(emittedEvent, middlewareOptions, childRequestInfo, status)
-          } else {
-            outputWideEvent(emittedEvent)
-          }
+        if (!emittedEvent) return
+        if (middlewareOptions.enrich || middlewareOptions.drain || getGlobalDrain()) {
+          await runEnrichAndDrain(emittedEvent, middlewareOptions, childRequestInfo, (emittedEvent.status as number | undefined) ?? status)
+        } else {
+          outputWideEvent(emittedEvent)
         }
       })
-      .catch(async (err: unknown) => {
-        const error = err instanceof Error ? err : new Error(String(err))
-        child.error(error)
-        child.set({ status: extractErrorStatus(error) })
-        const emittedEvent = child.emit()
-        const status = extractErrorStatus(error)
-        if (emittedEvent) {
-          if (middlewareOptions.enrich || middlewareOptions.drain || getGlobalDrain()) {
-            await runEnrichAndDrain(emittedEvent, middlewareOptions, childRequestInfo, status)
-          } else {
-            outputWideEvent(emittedEvent)
-          }
-        }
+      .catch((err: unknown) => {
+        console.error('[evlog] log.fork() failed to emit the child event:', err)
       })
       .finally(() => {
         lifecycle?.onChildExit?.(child)
       })
   })
+
+  if (waitUntil) {
+    // Covers a pipeline's batch delivery without making an awaited fork wait for it.
+    const { settled } = (middlewareOptions.drain ?? getGlobalDrain() ?? {}) as { settled?: () => Promise<void> }
+    waitUntil(typeof settled === 'function' ? lifetime.then(() => settled()) : lifetime)
+  }
+
+  return lifetime
 }

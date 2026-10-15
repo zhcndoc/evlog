@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs'
 import type { Node } from 'oxc-parser'
-import { globSync } from 'tinyglobby'
-import type { ParseResult } from '../parse'
+import type { ParseResult } from '../../map/parse'
 import {
   findHandlerLocation,
   findHttpMethodExports,
@@ -9,9 +8,11 @@ import {
   nodeLoc,
   parseFile,
   walkAst,
-} from '../parse'
-import type { FrameworkAdapter, RawRouteEntry, ScanContext } from '../types'
-import { indent, relativeFromRoot, segmentsToPath } from '../utils'
+} from '../../map/parse'
+import type { RawRouteEntry, ScanContext } from '../../map/types'
+import type { MapAdapter } from '../types'
+import { relativeFromRoot, segmentsToPath } from '../../map/utils'
+import { glob } from '../../glob'
 
 /**
  * Where the App Router lives, `app/` or `src/app/`.
@@ -21,7 +22,7 @@ import { indent, relativeFromRoot, segmentsToPath } from '../utils'
  */
 function resolveAppDir(root: string): string {
   for (const candidate of ['app', 'src/app']) {
-    if (globSync(`${candidate}/**/{page,route}.{tsx,jsx,ts,js}`, { cwd: root }).length > 0) {
+    if (glob(`${candidate}/**/{page,route}.{tsx,jsx,ts,js}`, root).length > 0) {
       return candidate
     }
   }
@@ -40,21 +41,15 @@ function routeDirFromFile(rel: string, appDir: string): string {
  * actions. No auto-imports — every evlog helper is imported explicitly, and
  * nothing is emitted until a handler opts in with `useLogger()` or `withEvlog()`.
  */
-export const nextAdapter: FrameworkAdapter = {
-  framework: 'next',
-  requestLogger: 'explicit',
-  loggerCall: 'const log = useLogger()',
-  handlerShape(route, body) {
-    return [`export async function ${route.method ?? 'POST'}(request: Request) {`, ...body.map(line => indent(1, line)), '}']
-  },
-  // eslint-disable-next-line require-await -- satisfies the async FrameworkAdapter contract
+export const nextAdapter: MapAdapter = {
+  // eslint-disable-next-line require-await -- satisfies the async MapAdapter contract
   async extractRoutes(ctx: ScanContext): Promise<RawRouteEntry[]> {
     const routes: RawRouteEntry[] = []
     const root = ctx.projectRoot
     const appDir = resolveAppDir(root)
     const parse = ctx.parse ?? parseFile
 
-    for (const file of globSync(`${appDir}/**/route.{ts,js,tsx,jsx}`, { cwd: root, absolute: true })) {
+    for (const file of glob(`${appDir}/**/route.{ts,js,tsx,jsx}`, root)) {
       const rel = relativeFromRoot(root, file)
       const dir = routeDirFromFile(rel, appDir)
       const apiPath = segmentsToPath(dir.split('/')) || '/'
@@ -96,7 +91,7 @@ export const nextAdapter: FrameworkAdapter = {
       }
     }
 
-    for (const file of globSync(`${appDir}/**/page.{tsx,jsx,ts,js}`, { cwd: root, absolute: true })) {
+    for (const file of glob(`${appDir}/**/page.{tsx,jsx,ts,js}`, root)) {
       const rel = relativeFromRoot(root, file)
       const inner = rel.slice(`${appDir}/`.length)
       const dir = inner.replace(/^(.*\/)?page\.(tsx?|jsx?)$/, (_m, parent) => parent ?? '')
@@ -111,7 +106,7 @@ export const nextAdapter: FrameworkAdapter = {
       })
     }
 
-    for (const file of globSync(['middleware.{ts,js}', 'src/middleware.{ts,js}'], { cwd: root, absolute: true })) {
+    for (const file of glob(['middleware.{ts,js}', 'src/middleware.{ts,js}'], root)) {
       const rel = relativeFromRoot(root, file)
       const parsed = parse(file)
       routes.push({
@@ -126,7 +121,7 @@ export const nextAdapter: FrameworkAdapter = {
       })
     }
 
-    for (const file of globSync([`${appDir}/**/*.{ts,tsx,js,jsx}`, 'src/**/*.{ts,tsx,js,jsx}'], { cwd: root, absolute: true })) {
+    for (const file of glob([`${appDir}/**/*.{ts,tsx,js,jsx}`, 'src/**/*.{ts,tsx,js,jsx}'], root)) {
       /* This glob covers the whole source tree, and almost none of it declares
          an action. The directive has to appear literally for Next to treat the
          module as one, so a substring test rules most files out before oxc. */
@@ -173,9 +168,10 @@ function findServerActionExports(parsed: ParseResult): Array<{ name: string, lin
 
   walkAst(parsed.program, (node) => {
     if (node.type === 'ExportDefaultDeclaration') {
-      const { declaration } = node as { declaration?: Node & { id?: { name: string } } }
+      const { declaration } = node as { declaration?: Node }
       if (declaration?.type !== 'FunctionDeclaration' && declaration?.type !== 'ArrowFunctionExpression') return
-      exports.push({ name: declaration.id?.name ?? 'default', line: lineOf(node) })
+      const name = declaration.type === 'FunctionDeclaration' ? declaration.id?.name ?? 'default' : 'default'
+      exports.push({ name, line: lineOf(node) })
       return
     }
 

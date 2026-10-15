@@ -5,6 +5,8 @@ import {
   extractErrorStatus,
   buildPlainNitroErrorBody,
   isSensitiveNitroError,
+  isExpectedEvlogError,
+  isRecordedByEvlog,
   serializeEvlogErrorResponse,
   shouldSerializeNitroErrorAsJson,
   shouldSuppressNitroDevOverlay,
@@ -18,10 +20,8 @@ import type { NitroErrorHandlerContext } from '../shared/nitro-types'
  * This ensures that 'data' (containing 'why', 'fix', 'link') is preserved
  * in the JSON response regardless of the underlying HTTP framework.
  *
- * Usage in nitro.config.ts:
- * ```ts
- * export { default } from 'evlog/nitro/v3/errorHandler'
- * ```
+ * Registered automatically by the `evlog()` Nitro module, which prepends
+ * this handler before any framework handler (see `evlog/nitro/v3`).
  */
 function getNitroV3RequestHeader(
   headers: Headers | Record<string, string | string[] | undefined>,
@@ -50,7 +50,7 @@ export default defineErrorHandler(async (error, event, ctx: NitroErrorHandlerCon
 
   const suppressOverlay = shouldSuppressNitroDevOverlay()
 
-  if (!suppressOverlay) {
+  if (!suppressOverlay && !isExpectedEvlogError(evlogError) && !isRecordedByEvlog(event.req.context)) {
     await ctx.defaultHandler(error, event, { silent: false })
   }
 

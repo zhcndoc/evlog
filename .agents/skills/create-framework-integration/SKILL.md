@@ -147,7 +147,7 @@ export function evlog(options: Evlog{Framework}Options = {}): FrameworkMiddlewar
 - **Express**: `src/express/index.ts`. `req.log`, ALS storage, `res.on('finish')` for terminal status
 - **Fastify**: `src/fastify/index.ts`. Fastify hooks (`onRequest` / `onResponse` / `onError`), `fastify-plugin` wrapper
 - **Elysia**: `src/elysia/index.ts`. Plugin with `.derive({ as: 'global' })`, `storage.enterWith`-style ALS, streaming deferral
-- **NestJS**: `src/nestjs/index.ts`. `EvlogModule.forRoot()` / `forRootAsync()` on top of the manifest
+- **NestJS**: `src/nestjs/index.ts`. `EvlogModule.forRoot()` / `forRootAsync()` on top of the manifest. On `@nestjs/platform-fastify` the middleware only sees the raw request, so a `preHandler` hook (registered through `HttpAdapterHost`) copies the logger onto `FastifyRequest.log`
 - **oRPC**: `src/orpc/index.ts`. `evlog()` procedure middleware + `withEvlog(handler)` wrapper
 - **React Router**: `src/react-router/index.ts`. `loggerContext = createContext<AuditableLogger>()`
 - **SvelteKit**: `src/sveltekit/index.ts`. `evlog()` handle + `evlogHandleError()` + `createEvlogHooks()`
@@ -192,7 +192,8 @@ In `packages/evlog/package.json`:
 ```json
 "./{framework}": {
   "types": "./dist/{framework}/index.d.mts",
-  "import": "./dist/{framework}/index.mjs"
+  "import": "./dist/{framework}/index.mjs",
+  "default": "./dist/{framework}/index.mjs"
 }
 ```
 
@@ -200,7 +201,7 @@ In `packages/evlog/package.json`:
 
 **In `peerDependencies`** (version range) + **`peerDependenciesMeta`** (`"optional": true`), and add the framework name to `keywords`.
 
-Exports without matching `tsdown.config.ts` entries fail `test/toolkit/api-surface.test.ts`.
+`test/toolkit/entrypoint-registry.test.ts` fails when an export has no matching `typesVersions["*"]` or `tsdown.config.ts` entry, or when its `import` and `default` do not point at the `.mjs` next to `types`. It runs without a build.
 
 ## Step 4: Tests
 

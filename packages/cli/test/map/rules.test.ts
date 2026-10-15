@@ -13,7 +13,7 @@ import { scoreRoute } from '../../src/lib/map/score'
 import type { FrameworkCapabilities, MapRule, RuleTarget } from '../../src/lib/map/rules/index'
 import { classifySensitivity } from '../../src/lib/map/sensitivity'
 import type { CheckId, CheckResult, Framework, RouteKind, ScanContext } from '../../src/lib/map/types'
-import { getAdapter } from '../../src/lib/map/adapters/index'
+import { getFramework } from '../../src/lib/frameworks'
 
 interface Case {
   name: string
@@ -75,10 +75,11 @@ function check(rule: MapRule, testCase: Case): CheckResult | undefined {
   const parsed = parseSource(file, testCase.code)
   if (!parsed) throw new Error('fixture did not parse')
 
-  const adapter = getAdapter(framework)
+  const definition = getFramework(framework)
   const capabilities: FrameworkCapabilities = {
-    requestLogger: adapter.requestLogger,
-    evlogAutoImports: adapter.evlogAutoImports ?? [],
+    requestLogger: definition.requestLogger,
+    evlogAutoImports: definition.evlogAutoImports ?? [],
+    requestLoggerMember: definition.requestLoggerMember,
   }
   const evlogBarrels = new Map(
     Object.entries(testCase.barrels ?? {}).map(([key, names]) => [key, new Set(names)]),
@@ -86,6 +87,7 @@ function check(rule: MapRule, testCase: Case): CheckResult | undefined {
   const facts = buildFileFacts(parsed, {
     evlogAutoImports: capabilities.evlogAutoImports,
     evlogBarrels,
+    requestLoggerMember: capabilities.requestLoggerMember,
   })
   const raw = {
     framework,
@@ -196,8 +198,30 @@ const CASES: Record<CheckId, RuleCases> = {
         name: 'the same logger used without ever being bound',
         code: 'export default defineEventHandler((event) => { event.context.log.set({ a: 1 }) })',
       },
+      {
+        name: 'the logger parked on the express request, bound then used',
+        framework: 'express',
+        code: 'app.post(\'/x\', (req, res) => { const log = req.log\nlog.set({ a: 1 }) })',
+      },
+      {
+        name: 'the logger parked on the fastify request, used without being bound',
+        framework: 'fastify',
+        code: 'app.post(\'/x\', async (request) => { request.log.set({ a: 1 }) })',
+      },
     ],
     invalid: [
+      {
+        name: 'fastify\'s own instance logger is not the request logger',
+        framework: 'fastify',
+        code: 'const fastify = Fastify()\nfastify.post(\'/x\', async () => { fastify.log.info(\'hit\') })',
+        message: /dark event/,
+      },
+      {
+        name: 'binding the instance logger does not make it the request logger either',
+        framework: 'fastify',
+        code: 'const app = Fastify()\napp.post(\'/x\', async () => { const log = app.log\nlog.info(\'hit\') })',
+        message: /dark event/,
+      },
       {
         name: 'nothing at all, on an ambient framework, says the event is empty not absent',
         code: 'export default defineEventHandler(() => ({ ok: true }))',
@@ -269,6 +293,10 @@ const CASES: Record<CheckId, RuleCases> = {
         code: 'export default defineEventHandler((event) => { const wide = useLogger(event); wide.set({ a: 1 }) })',
       },
       {
+        name: 'set called straight on the useLogger() call, with no variable',
+        code: 'export default defineEventHandler((event) => { useLogger(event).set({ a: 1 }) })',
+      },
+      {
         name: 'set on a logger taken off the request context',
         code: 'export default defineEventHandler((event) => { const log = event.context.log\nlog.set({ a: 1 }) })',
       },
@@ -281,6 +309,11 @@ const CASES: Record<CheckId, RuleCases> = {
       {
         name: 'logger with no context',
         code: 'export default defineEventHandler((event) => { const log = useLogger(event) })',
+        message: /no log\.set\(\)/,
+      },
+      {
+        name: 'set on a local useLogger() stub is not evlog\'s logger',
+        code: 'function useLogger(event) { return { set() {} } }\nexport default defineEventHandler((event) => { useLogger(event).set({ a: 1 }) })',
         message: /no log\.set\(\)/,
       },
       {

@@ -1,6 +1,6 @@
 ---
 name: review-logging-patterns
-description: Review code for logging patterns and suggest evlog adoption. Optionally use the evlog CLI, shipped with the evlog package (`evlog init` to wire evlog, `evlog agents` to write the conventions into AGENTS.md, `evlog map` to score entry-point coverage, `--baseline` to gate regressions in CI) on Nuxt, Nitro, Next.js, TanStack Start, and Hono. Guides setup on those plus SvelteKit, React Router, NestJS, Express, Fastify, Elysia, oRPC, Cloudflare Workers, AWS Lambda, Astro, and standalone TypeScript. Detects console.log spam, unstructured errors, and missing context. Covers wide events, structured errors, drain adapters (Axiom, OTLP, HyperDX, PostHog, Sentry, Better Stack, Datadog, Loki, ClickHouse, NuxtHub, Memory), sampling, enrichers, and AI SDK integration.
+description: Review code for logging patterns and suggest evlog adoption. Optionally use the evlog CLI, shipped with the evlog package (`evlog init` to wire evlog, `evlog agents` to write the conventions into AGENTS.md, `evlog map` to score entry-point coverage, `--baseline` to gate regressions in CI) on Nuxt, Nitro, Next.js, TanStack Start, Hono, Express, and Fastify. Guides setup on those plus SvelteKit, React Router, NestJS, Express, Fastify, Elysia, oRPC, Cloudflare Workers, AWS Lambda, Astro, and standalone TypeScript. Detects console.log spam, unstructured errors, and missing context. Covers wide events, structured errors, drain adapters (Axiom, OTLP, HyperDX, Sazabi, PostHog, Sentry, Better Stack, Datadog, Loki, ClickHouse, NuxtHub, Memory), sampling, enrichers, and AI SDK integration.
 license: MIT
 metadata:
   author: HugoRCD
@@ -54,9 +54,9 @@ Docs: https://www.evlog.dev/use-cases/audit/overview
 npm install evlog
 ```
 
-## Use the CLI (recommended on Nuxt, Nitro, Next.js, TanStack Start, Hono)
+## Use the CLI (recommended on Nuxt, Nitro, Next.js, TanStack Start, Hono, Express, Fastify)
 
-The `evlog` executable ships with the `evlog` package: `pnpm evlog`, `npx evlog`, `bunx evlog`. It runs `@evlog/cli` when installed and fetches it on demand otherwise (no dependency added to the project), so it works on a project with nothing yet. Early but worth trying. It reads the project on disk (no traffic, no config). On the five supported frameworks it covers the whole loop: **wire evlog in** (`init`), **score coverage** (`map`), **lock the score in CI** (`--min-score`, `--baseline`). If the CLI is unavailable, the framework has no adapter yet, or the user declines, continue with the manual sections below; the skill does not depend on it. **Ask before installing anything**.
+The `evlog` executable ships with the `evlog` package: `pnpm evlog`, `npx evlog`, `bunx evlog`. It runs `@evlog/cli` when installed and fetches it on demand otherwise (no dependency added to the project), so it works on a project with nothing yet. Early but worth trying. It reads the project on disk (no traffic, no config needed). On the seven supported frameworks it covers the whole loop: **wire evlog in** (`init`), **score coverage** (`map`), **lock the score in CI** (`--min-score`, `--baseline`). If the CLI is unavailable, the framework has no adapter yet, or the user declines, continue with the manual sections below; the skill does not depend on it. **Ask before installing anything**.
 
 ### 1. Setup: `evlog init`
 
@@ -75,7 +75,7 @@ npx evlog init --yes \
   --sampling medium
 ```
 
-Useful flags: `--framework` (override detection: `nuxt`, `nitro`, `next`, `tanstack-start`, `hono`), `--prodDrain` (comma-separated: `axiom`, `otlp`, `posthog`, `sentry`, `better-stack`, `datadog`, `hyperdx`), `--extras` (`enrichers`, `pipeline`, `sampling`, `vite`, `error-catalog`, `audit-catalog`, `ai`, `better-auth`), `--enrichers`, `--sampling` (traffic tier: `all`, `low`, `medium`, `high`, `very-high`), `--apps` (monorepo: which workspace packages), `--no-install`. Review the `--dry-run` output with the user before applying. Docs: https://www.evlog.dev/cli/init
+Useful flags: `--framework` (override detection: `nuxt`, `nitro`, `next`, `tanstack-start`, `hono`, `express`, `fastify`), `--prodDrain` (comma-separated: `axiom`, `otlp`, `posthog`, `sentry`, `better-stack`, `datadog`, `hyperdx`), `--extras` (`enrichers`, `pipeline`, `sampling`, `vite`, `error-catalog`, `audit-catalog`, `ai`, `better-auth`), `--enrichers`, `--sampling` (traffic tier: `all`, `low`, `medium`, `high`, `very-high`), `--apps` (monorepo: which workspace packages), `--no-install`. Review the `--dry-run` output with the user before applying. Docs: https://www.evlog.dev/cli/init
 
 ### 2. Score: `evlog map`
 
@@ -96,6 +96,8 @@ Work FIX FIRST in order, keep changes minimal (`useLogger()`, `log.set()`, `log.
 
 ### 3. Lock it in CI: `--min-score` and `--baseline`
 
+On GitHub Actions, suggest the [evlog action](https://github.com/evloghq/action) (`uses: evloghq/action@v1` with `min-score`): it scans the pull request base itself, so no map file has to be committed, and puts regressions on the diff and in one comment. The commands below are the same gate from a `run:` step.
+
 After fixing, propose making the score durable. This is where the CLI earns its keep:
 
 ```bash
@@ -105,6 +107,8 @@ pnpm exec evlog map --baseline       # ratchet: exits 1 if this PR made things w
 ```
 
 `--baseline` compares the fresh scan against the committed `evlog.map.json`, **per entry point and per requirement**, so a refactor that instruments one route and breaks another fails even if the total score is unchanged. Disabling a passing check with a comment counts as a regression too. New uninstrumented routes are listed as `NEW AND DARK` without failing. Workflow: commit `evlog.map.json` once, add the `--baseline` run to CI, then re-run `map` without `--baseline` to accept an intentional change. Docs: https://www.evlog.dev/cli/ci
+
+When the project has an `evlog.config.ts`, the gate can live there instead of in the CI step: `map: { minScore: 80, baseline: true }` makes a bare `evlog map` gate the same way, and a flag still wins. The same `map` block turns checks off for every entry point (`rules: { 'error-catalog': 'off' }`) and leaves entry points out by file glob (`ignore`). The CLI reads these values without running the file, so they must be literals. Docs: https://www.evlog.dev/cli/config
 
 Early days: adapters and rules are still evolving; expect scores to move between releases. Docs: https://www.evlog.dev/cli/map · Rules: https://www.evlog.dev/cli/rules
 
@@ -136,7 +140,20 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
-Drain, enrich, and tail sampling use Nitro hooks in server plugins:
+Drain, enrich, sampling and redaction can live in `evlog.config.ts` at the app root. The module loads it on the server, and the `evlog` key in `nuxt.config.ts` overrides it. The browser logger reads only the `evlog` key.
+
+```typescript
+// evlog.config.ts
+import { defineEvlog } from 'evlog'
+import { createAxiomDrain } from 'evlog/axiom'
+
+export default defineEvlog({
+  service: 'my-app',
+  drain: createAxiomDrain(),
+})
+```
+
+Nitro hooks in server plugins keep working next to the file, and an event reaches both drains:
 
 ```typescript
 // server/plugins/evlog-drain.ts
@@ -413,7 +430,7 @@ export default defineNitroConfig({
 })
 ```
 
-Import `useLogger` from `evlog/nitro` in routes.
+Import `useLogger` from `evlog/nitro` in routes. On Nitro v2 and v3, an `evlog.config.ts` at the app root is loaded by the module, and the options passed to `evlog()` override it.
 
 ### NestJS
 
@@ -428,7 +445,7 @@ import { EvlogModule } from 'evlog/nestjs'
 export class AppModule {}
 ```
 
-`EvlogModule.forRoot()` registers a global middleware. Use `useLogger()` to access the request-scoped logger from any controller or service:
+`EvlogModule.forRoot()` registers a global middleware, on both `@nestjs/platform-express` and `@nestjs/platform-fastify`. `req.log` in controllers is the evlog logger on both platforms. Do not also register `evlog/fastify` on a Nest Fastify app, or every request emits two wide events. Use `useLogger()` to access the request-scoped logger from any controller or service:
 
 ```typescript
 import { useLogger } from 'evlog/nestjs'
@@ -895,6 +912,8 @@ log.emit()  // Manual emit required in standalone
 
 All options work in Nuxt (`evlog` key), Nitro (passed to `evlog()`), Next.js (`createEvlog()`), and standalone (`initLogger()`).
 
+They can also live in `evlog.config.ts`, written with `defineEvlog()`. Nuxt and Nitro load the file on their own, with module options overriding it. Other frameworks import it and pass `toLoggerConfig(config)` to `initLogger()` and `toMiddlewareOptions(config)` to the middleware. `evlog init` writes the file, `evlog config` prints what it resolves to, and `extends` shares a base config across apps (one level). Docs: https://www.evlog.dev/cli/config
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `env.service` / `service` | `string` | `'app'` | Service name in logs |
@@ -930,6 +949,7 @@ All options work in Nuxt (`evlog` key), Nitro (passed to `evlog()`), Next.js (`c
 | Axiom | `evlog/axiom` | `AXIOM_API_KEY`, `AXIOM_DATASET` |
 | OTLP | `evlog/otlp` | `OTLP_ENDPOINT` (or the standard `OTEL_EXPORTER_OTLP_[LOGS_]ENDPOINT`, `_HEADERS`, `_COMPRESSION`, `_PROTOCOL`, `OTEL_RESOURCE_ATTRIBUTES`). `protocol: 'http/protobuf'` sends binary protobuf. `semanticConventions: true` adds OTel attribute names (`http.*`, `exception.*`, `gen_ai.*`) |
 | HyperDX | `evlog/hyperdx` | `HYPERDX_API_KEY` (optional `HYPERDX_OTLP_ENDPOINT`; defaults to `https://in-otel.hyperdx.io`) |
+| Sazabi | `evlog/sazabi` | `SAZABI_INTAKE_URL` (the log stream's intake URL; its key is part of the URL), optional `SAZABI_SERVICE_NAME` |
 | PostHog | `evlog/posthog` | `POSTHOG_API_KEY`, `POSTHOG_HOST` |
 | Sentry | `evlog/sentry` | `SENTRY_DSN` |
 | Better Stack | `evlog/better-stack` | `BETTER_STACK_API_KEY` |

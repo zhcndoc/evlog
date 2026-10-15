@@ -17,7 +17,7 @@ The command line behind the `evlog` executable. [`evlog`](https://npmjs.com/pack
 
 Score what your app can tell you when something goes wrong. Diagnose your install when nothing shows up.
 
-> **Early days.** Safe to run on any project, since it reads your source and writes a single `evlog.map.json` at the root (`--no-write` to skip), and it is covered by tests, but young. `evlog map` has adapters for five frameworks today, its rules are still being refined, and both will grow. Expect verdicts and scores to move between releases: install it as a dev dependency when you gate CI on the number.
+> **Early days.** Safe to run on any project, since it reads your source and writes a single `evlog.map.json` at the root (`--no-write` to skip), and it is covered by tests, but young. `evlog map` has adapters for seven frameworks today, its rules are still being refined, and both will grow. Expect verdicts and scores to move between releases: install it as a dev dependency when you gate CI on the number.
 
 ## Usage
 
@@ -48,23 +48,34 @@ pnpm evlog map
 | `evlog init --dry-run` | Print the plan without touching a file |
 | `evlog init --service <name>` | Service name on every wide event (default: package name, unscoped) |
 | `evlog init --no-install` | Print the install command instead of running it |
-| `evlog init --no-agents` | Skip all of it — no `AGENTS.md`, no `CLAUDE.md`, no skills |
-| `evlog agents` | Write the evlog conventions into `AGENTS.md`, point `CLAUDE.md` at it, install the skills via `npx skills add` |
+| `evlog init --no-agents` | Skip all of it: no `AGENTS.md`, no skills |
+| `evlog agents` | Write the evlog conventions into `AGENTS.md`, install the skills globally via `npx skills add` |
 | `evlog agents --skills <a,b>` | Install only these skills (default: every published one) |
-| `evlog agents --no-skills` | Still write `AGENTS.md` and `CLAUDE.md`; skip only the skills — nothing is spawned |
-| `evlog agents --global` | Install the skills for every project instead of just this one |
+| `evlog agents --no-skills` | Still write `AGENTS.md`; skip only the skills, so nothing is spawned |
+| `evlog agents --local` | Install the skills into this project instead of for every project (default: global) |
 | `evlog agents --source <url>` | Where the skills are published — a plain http(s) origin (default: `https://www.evlog.dev`) |
 | `evlog agents --dry-run` | Print the plan without touching a file or spawning anything |
 | `evlog agents --yes` | Apply without confirming (also implied by `--json`, no TTY, or `CI`) |
 | `evlog map` | Static observability score for the current app — Lighthouse for wide events |
 | `evlog map <route-or-file>` | Explain one entry point: why it was scanned, each verdict, the shape it could take |
 | `evlog map --all` | Every entry point as a check matrix, grouped by directory |
-| `evlog map --framework <name>` | Override framework detection (`nuxt`, `nitro`, `next`, `tanstack-start`, `hono`) |
+| `evlog map --framework <name>` | Override framework detection (`nuxt`, `nitro`, `next`, `tanstack-start`, `hono`, `express`, `fastify`) |
 | `evlog map --min-score <n>` | Exit 1 if the global score is below `n` |
 | `evlog map --baseline [ref]` | Exit 1 on a regression against the committed `evlog.map.json` (path, or `git:<ref>`) |
 | `evlog map --no-write` | Skip writing `evlog.map.json` to the project root |
+| `evlog map --format github` | GitHub Actions annotations on stdout; or use [`evloghq/action`](https://github.com/evloghq/action), which adds the base comparison, the job summary and a pull request comment |
 | `evlog map --verbose` | Show per-file parse warnings |
 | `evlog map --cwd <dir>` | Scan another app in the workspace |
+| `evlog logs` | The last 50 wide events the fs drain wrote, oldest first |
+| `evlog logs errors` | The ones that failed: a `5xx`, an `error` or `fatal` level, or an `error` block |
+| `evlog logs slow [--over 1s]` | Over the bar (default 500ms), worst first |
+| `evlog logs <requestId>` | One request in full: error with `why`/`fix`, audit record, business fields |
+| `evlog logs stats` | Per route: count, errors, p50, p95; then by status class and level |
+| `evlog logs --where 'payment.amount>5000' --where audit.outcome=failure` | Any field on the event: `=`, `!=`, `>`, `>=`, `<`, `<=`, `~regex`, present, `!absent` |
+| `evlog logs --url http://localhost:8787/_evlog/logs` | Read the memory drain's dev endpoint instead of files |
+| `evlog logs -f` | Follow new events as the app writes them |
+| `evlog logs --since 15m --path /api/x --status 5xx --level error` | Filters, composable with every view |
+| `evlog logs --json` | The events as JSON on stdout (one line per event with `-f`) |
 | `evlog doctor` | Monorepo-aware diagnosis: Node, project/workspace, stack, evlog install, `.evlog/logs` |
 | `evlog doctor --cwd <dir>` | Run against another directory |
 | `evlog doctor --debug` | Same, plus a debug wide event (see Debug) |
@@ -147,7 +158,7 @@ Maintainer notes on frictions / wishlist: [`DEBUG-DX.md`](./DEBUG-DX.md).
 ## Adding a command
 
 1. Create `src/commands/<name>.ts` with `defineEvlogCommand('name', { run({ args, cli, log, ui }) { … } })`: the header, `--json` / `--debug` / `--no-header`, and the debug file is automatic. Use `log.step` / `log.finding` for diagnostics; `ui.done` / `ui.human` / `ui.json` for output.
-2. Add one lazy entry in [`src/commands/index.ts`](src/commands/index.ts), so the command only loads when it runs.
+2. Add one `lazyCommand` entry in [`src/commands/index.ts`](src/commands/index.ts) with the description `--help` shows. The module loads only when the command runs; `--help` never loads it.
 
 `src/index.ts` stays a thin shell (meta + `withTelemetry`). Do not embed command bodies there.
 

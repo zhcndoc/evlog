@@ -1,4 +1,4 @@
-import type { EnvironmentContext, LogLevel, RedactConfig, RouteConfig, SamplingConfig } from './types'
+import type { EnvironmentContext, LogLevel, RedactConfig, RouteConfig, SamplingConfig, TransportConfig } from './types'
 import type { DevTerminalInput, DevTerminalResolveInput } from './shared/dev-terminal'
 import { extractErrorStatus } from './shared/errors'
 import { resolveDevTerminal, shouldShowFrameworkOverlay } from './shared/dev-terminal'
@@ -115,6 +115,25 @@ export function resolveEvlogError(error: Error): Error | null {
 
 export { extractErrorStatus } from './shared/errors'
 
+/**
+ * Whether an error is an EvlogError with a 4xx status: an expected outcome that
+ * the wide event already records, so Nitro's default logging is skipped for it.
+ * @internal
+ */
+export function isExpectedEvlogError(evlogError: Error | null): boolean {
+  return evlogError !== null && extractErrorStatus(evlogError) < 500
+}
+
+/**
+ * Whether the evlog plugin records this request's error in its wide event, so
+ * Nitro's default `[request error]` log would print it a second time. False when
+ * evlog is disabled, the route is excluded, or the plugin is not registered.
+ * @internal
+ */
+export function isRecordedByEvlog(context: { _evlogShouldEmit?: unknown } | undefined): boolean {
+  return context?._evlogShouldEmit === true
+}
+
 /** Request metadata used to decide JSON vs framework error-page rendering. */
 export interface NitroErrorRequestContext {
   pathname: string
@@ -193,6 +212,17 @@ export function prependNitroErrorHandler(
   }
   if (errorHandler === handlerPath) return handlerPath
   return [handlerPath, errorHandler]
+}
+
+/**
+ * Serialize module options into the config literal the Nitro and Nuxt modules
+ * bake into the bundle. The logger initializes from it on import, before any
+ * drain hook is registered, so the silent-without-drain warning is suppressed
+ * as it is in the plugin.
+ * @internal
+ */
+export function serializeBundledEvlogConfig(options: object | undefined): string {
+  return JSON.stringify({ ...options, _suppressDrainWarning: true })
 }
 
 /**

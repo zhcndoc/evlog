@@ -222,6 +222,159 @@ export const cliErrors = defineErrorCatalog('cli', {
     fix: 'Pass a whole number between 0 and 100, e.g. --min-score 80',
     tags: ['map'],
   },
+  MAP_INVALID_FORMAT: {
+    status: 400,
+    message: ({ value }: { value: string }) =>
+      `Unknown --format "${value}"`,
+    why: 'map renders human, json and github (workflow annotations)',
+    fix: 'Pass one of: human, json, github',
+    tags: ['map'],
+  },
+  MAP_INVALID_LIMIT: {
+    status: 400,
+    message: ({ value }: { value: string }) =>
+      `Invalid --limit "${value}"`,
+    why: 'The limit caps how many annotations reach the pull request, and a cap that cannot be read would silently become the default',
+    fix: 'Pass a whole number of 1 or more, e.g. --limit 10',
+    tags: ['map'],
+  },
+  MAP_FORMAT_CONFLICT: {
+    status: 400,
+    message: ({ format }: { format: string }) =>
+      `--json and --format ${format} both claim stdout`,
+    why: 'Each format is a different contract on stdout, and a consumer can only parse one of them',
+    fix: 'Drop --json, or pass --format json',
+    tags: ['map'],
+  },
+  LOGS_NO_SINK: {
+    status: 404,
+    message: ({ cwd }: { cwd: string }) =>
+      `No local logs under ${cwd}`,
+    why: 'There is no .evlog/logs directory here and no fs drain is configured, so nothing has been written to read',
+    fix: 'Run evlog init --drain fs, start the app and make a request, or pass --dir <path>',
+    link: 'https://evlog.dev/cli/logs',
+    tags: ['logs'],
+  },
+  LOGS_INVALID_TIME: {
+    status: 400,
+    message: ({ flag, value }: { flag: string, value: string }) =>
+      `Invalid --${flag} "${value}"`,
+    why: 'A time bound that cannot be read would silently become no bound, and the run would show everything',
+    fix: 'Pass a duration back from now (15m, 2h, 3d) or a date (2026-10-01, 2026-10-01T09:00)',
+    tags: ['logs'],
+  },
+  LOGS_INVALID_LEVEL: {
+    status: 400,
+    message: ({ value }: { value: string }) =>
+      `Unknown level "${value}"`,
+    why: 'Levels are the six evlog writes',
+    fix: 'Pass one or more of: trace, debug, info, warn, error, fatal',
+    tags: ['logs'],
+  },
+  LOGS_INVALID_STATUS: {
+    status: 400,
+    message: ({ value }: { value: string }) =>
+      `Invalid --status "${value}"`,
+    why: 'A status filter that cannot be read would silently match nothing',
+    fix: 'Pass a status (404) or a class (4xx)',
+    tags: ['logs'],
+  },
+  LOGS_INVALID_DURATION: {
+    status: 400,
+    message: ({ flag, value }: { flag: string, value: string }) =>
+      `Invalid --${flag} "${value}"`,
+    why: 'A duration that cannot be read would silently fall back to the default',
+    fix: 'Pass milliseconds (500) or a unit (500ms, 1.5s)',
+    tags: ['logs'],
+  },
+  LOGS_INVALID_WHERE: {
+    status: 400,
+    message: ({ value }: { value: string }) =>
+      `Invalid --where "${value}"`,
+    why: 'A clause that cannot be read would silently match everything',
+    fix: 'Write field=value, field!=value, field>n, field>=n, field<n, field<=n, field~regex, field (present) or !field (absent); dotted fields reach into objects',
+    tags: ['logs'],
+  },
+  LOGS_URL_UNREACHABLE: {
+    status: 502,
+    message: ({ url, reason }: { url: string, reason: string }) =>
+      `Could not read events from ${url}: ${reason}`,
+    why: 'The memory drain only exists while the app runs, and only where the app exposes readMemoryLogs() over HTTP',
+    fix: 'Start the app, check the endpoint returns a JSON array of events, and pass its URL to --url',
+    link: 'https://evlog.dev/cli/logs',
+    tags: ['logs'],
+  },
+  LOGS_INVALID_LIMIT: {
+    status: 400,
+    message: ({ value }: { value: string }) =>
+      `Invalid --limit "${value}"`,
+    why: 'A limit that cannot be read would silently become the default',
+    fix: 'Pass a whole number of 1 or more, e.g. --limit 20',
+    tags: ['logs'],
+  },
+  CONFIG_PARSE_FAILED: {
+    status: 400,
+    message: ({ file, reason }: { file: string, reason: string }) =>
+      `Could not parse ${file}: ${reason}`,
+    why: 'The CLI reads evlog.config without running it, so the file has to parse on its own',
+    fix: 'Fix the syntax error and run the command again',
+    link: 'https://evlog.dev/cli/config',
+    tags: ['config'],
+  },
+  CONFIG_NO_EXPORT: {
+    status: 400,
+    message: ({ file, name }: { file: string, name: string }) =>
+      `${file} has no ${name === 'default' ? 'default export' : `export named ${name}`} the CLI can read`,
+    why: 'The CLI reads the object literal passed to defineEvlog, through same-file consts and relative imports',
+    fix: 'Write the config as export default defineEvlog({ ... })',
+    link: 'https://evlog.dev/cli/config',
+    tags: ['config'],
+  },
+  CONFIG_NOT_STATIC: {
+    status: 400,
+    message: ({ key, at }: { key: string, at: string }) =>
+      `${key} in ${at} is computed at runtime`,
+    why: 'The CLI reads evlog.config without running it, so map and logs settings have to be literals',
+    fix: 'Write the value inline, as a const, or import it from a local file',
+    link: 'https://evlog.dev/cli/config',
+    tags: ['config'],
+  },
+  CONFIG_INVALID: {
+    status: 400,
+    message: ({ key, at, problem }: { key: string, at: string, problem: string }) =>
+      `${key} in ${at} ${problem}`,
+    why: 'A setting the CLI cannot read would silently fall back to its default',
+    fix: 'Use a setting and a value the config reference lists',
+    link: 'https://evlog.dev/cli/config',
+    tags: ['config'],
+  },
+  CONFIG_EXTENDS_NOT_FOUND: {
+    status: 404,
+    message: ({ specifier, at }: { specifier: string, at: string }) =>
+      `Cannot resolve "${specifier}", extended in ${at}`,
+    why: 'The CLI follows extends to read the parent config, and the import does not lead to a file',
+    fix: 'Install the package, or correct the import path',
+    link: 'https://evlog.dev/cli/config',
+    tags: ['config'],
+  },
+  CONFIG_EXTENDS_DEPTH: {
+    status: 400,
+    message: ({ parent, at }: { parent: string, at: string }) =>
+      `${parent} extends another config, so ${at} cannot extend it`,
+    why: 'A config extends one level only, so every setting is at most one file away from where it applies',
+    fix: 'Extend the config it extends directly, or copy the settings you need into one of the two files',
+    link: 'https://evlog.dev/cli/config',
+    tags: ['config'],
+  },
+  CONFIG_EXTENDS_STRING: {
+    status: 400,
+    message: ({ specifier, at }: { specifier: string, at: string }) =>
+      `extends in ${at} is the path '${specifier}', not a config`,
+    why: 'extends takes the config itself, the same value the app merges at runtime, so a path is never resolved',
+    fix: 'Import the config from that path as base, then set extends: base',
+    link: 'https://evlog.dev/cli/config',
+    tags: ['config'],
+  },
 })
 
 declare module 'evlog' {
