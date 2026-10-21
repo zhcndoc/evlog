@@ -499,7 +499,7 @@ void main() {
 
 /**
  * Final composite: lens, bloom, exposure, tonemap, grade, vignette,
- * grain, and an ordered dither on the way out.
+ * grain, and an ordered dither on the way out, all inside the matte.
  */
 export const COMPOSITE_FRAG = `#version 300 es
 precision highp float;
@@ -527,6 +527,10 @@ uniform float uExposure;
 uniform float uContrast;
 uniform float uSaturation;
 uniform float uVignette;
+uniform float uVignetteSize;
+uniform float uVignetteOval;
+uniform float uVignetteHardness;
+uniform vec2 uMatte;
 uniform float uGrain;
 uniform float uDuotone;
 uniform vec3 uDuotoneShadow;
@@ -663,6 +667,13 @@ vec3 lensGhosts(vec2 uv) {
 }
 
 void main() {
+  // The matte belongs to the delivery, not to the picture: nothing reaches it,
+  // not the glow, not the grain, not the dither, or the bars would shimmer.
+  if (any(lessThan(vUv, uMatte)) || any(greaterThan(vUv, 1.0 - uMatte))) {
+    fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    return;
+  }
+
   vec2 centred = vUv - 0.5;
   float aspect = uResolution.x / uResolution.y;
 
@@ -779,9 +790,20 @@ void main() {
    * Tying it to the field of view is the point: a wide lens darkens its corners
    * hard and a long one barely at all, so the vignette now tightens when the
    * lens is opened instead of staying the same ring at every focal length.
+   * Size divides that angle, so a long lens can still close in on its subject.
+   *
+   * Measured on the picture the matte leaves rather than on the frame behind
+   * it: a scope shot is composed in its strip, and that is where it darkens.
+   * Hardness reshapes the distance and leaves the corners where they were, so
+   * it changes how the falloff arrives rather than how far it goes.
    */
-  vec2 vig = centred * vec2(aspect, 1.0);
-  float tangent = length(vig) * 2.0 * uTanHalfFov;
+  vec2 open = 1.0 - 2.0 * uMatte;
+  vec2 picture = centred / open;
+  float pictureAspect = aspect * open.x / open.y;
+  vec2 shape = mix(vec2(pictureAspect, 1.0), vec2(min(pictureAspect, 1.0)), uVignetteOval);
+  float corner = length(0.5 * shape);
+  float reach = pow(length(picture * shape) / corner, uVignetteHardness) * corner;
+  float tangent = reach * 2.0 * uTanHalfFov / uVignetteSize;
   float natural = 1.0 / ((1.0 + tangent * tangent) * (1.0 + tangent * tangent));
   colour *= mix(1.0, natural, uVignette);
 

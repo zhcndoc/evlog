@@ -254,6 +254,12 @@ const landingItems = [
         to: '/integrate/adapters/hybrid/hyperdx'
       },
       {
+        label: 'Sazabi',
+        icon: 'i-custom-sazabi',
+        description: '通过 OTLP 将日志发送到 Sazabi',
+        to: '/integrate/adapters/cloud/sazabi'
+      },
+      {
         label: 'PostHog',
         icon: 'i-simple-icons-posthog',
         description: '将日志发送到 PostHog',
@@ -276,6 +282,19 @@ const landingItems = [
         icon: 'i-simple-icons-datadog',
         description: '将日志发送到 Datadog',
         to: '/integrate/adapters/cloud/datadog'
+      },
+      {
+        label: '文件系统',
+        label: 'Grafana Loki',
+        icon: 'i-simple-icons-grafana',
+        description: '将日志推送到 Grafana Loki',
+        to: '/integrate/adapters/hybrid/loki'
+      },
+      {
+        label: 'ClickHouse',
+        icon: 'i-simple-icons-clickhouse',
+        description: '将事件写入 ClickHouse',
+        to: '/integrate/adapters/hybrid/clickhouse'
       },
       {
         label: '文件系统',

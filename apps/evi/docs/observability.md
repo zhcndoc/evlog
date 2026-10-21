@@ -9,25 +9,12 @@ Evi 目前记录的内容、无法记录的内容，以及值得在上游弥补�
 `ai.{calls,steps,inputTokens,outputTokens,cacheReadTokens,costUsd,model,tools[],finishReason}`、
 `channel.kind`、`status`、`durationMs`，以及 `service` 和 `environment`。
 
-仅凭日志，这些信息足以回答：一轮运行花费了多少、调用了哪些工具以及每个工具是否成功、
-上下文中有多少由缓存提供，以及它来自哪个界面。本项目中的所有成本声明都来自这些事件的实际测量，
-而不是估算。
+仅凭日志就能回答：一轮运行调用了哪些工具、每个工具是否成功、上下文中有多少来自缓存，以及该轮来自哪个界面。只有网关为调用计费时，事件才会记录轮次成本：BYOK 流量中没有 `ai.costUsd`（见下方提案），成本报告是唯一的成本来源。
 
-工具执行会把结果写入同一事件，遵循 `tools/memory.ts` 中的模式：每个领域使用独立命名空间，
-记录计数、原因代码和由 Evi 生成的标识符。不会记录原始错误字符串、工具负载或不受信任的 URL，
-因此符合 PostHog 仅元数据策略。命名空间包括：
-`git.{branch,pushed,sha,reason,exitCode}`、
-`git.checkout.{repository,done,sha,reason,exitCode}`、
-`git.install.{repository,done,reason,exitCode}`、
-`capture.{published,viewport,target,beforeHost,afterHost,reason}`、
-`blob.{uploaded,bytes,reason}`、`turbo.{remoteCache,reason}`、
-`vercel.{env,key,project,target,reason,status}`、
-`gateway.report.{mode,groupBy,matchedRows}`、
-`content.{scanned,candidates,eligible,targets,group,surface,reason}`、
-`image.{host,fetched,bytes,mediaType,reason}`，以及
-`memory.{saved,refused,searched,hits}`。仅凭轮次事件，就能绘制一次完整保留内容的内容处理，
-或一次被拒绝的推送。`useLogger()` 在契约上只保证可用于工具执行（见下方调用方差距）；hooks
-和子代理仍没有埋点，而轮次外运行的两项工作会各自发出事件。
+成本报告按 gateway tag 分组，每个标签对应一个维度：`evi:env:*`、`evi:surface:*`（频道，或子 agent 的 `content` / `simplification`）以及 `evi:agent:*`（根 agent 为 `evi`，子 agent 使用各自的目录名）。报告无法按 session 分组或过滤：eve 会通过 `providerOptions.gateway.sessionId` 在每次调用中标注根 session ID，但 `/v1/report` 会忽略 `session_id` 参数，因此单次运行的成本只能从轮次事件中获取，否则就无法获取。
+
+工具执行会将结果写入同一事件，模式与 `tools/git.ts` 相同：每个领域使用独立命名空间，记录计数、原因代码和由 Evi 创建的标识符。不会记录原始错误字符串、工具负载或不可信 URL，因此符合 PostHog 仅元数据策略。命名空间包括：`git.{branch,pushed,sha,reason,exitCode}`、`git.checkout.{repository,done,sha,reason,exitCode}`、`git.install.{repository,done,reason,exitCode}`、`capture.{published,viewport,target,beforeHost,afterHost,reason}`、`blob.{uploaded,bytes,reason}`、`turbo.{remoteCache,reason}`、`vercel.{env,key,project,target,reason,status}`、`gateway.report.{mode,groupBy,matchedRows}`、`content.{scanned,candidates,eligible,targets,group,surface,reason}` 和 `image.{host,fetched,bytes,mediaType,reason}`。内容审查全部保留或推送被拒绝，都能仅凭轮次事件绘制出来。工具执行是契约上保证可使用 `useLogger()` 的唯一位置（见下方调用方缺口）；hooks 和子 agent 仍未埋点，而轮次外运行的两项工作会各自发出事件。
+
 
 `environment` 来自 `agent/lib/environment.ts`，也就是构建 gateway spend 标签的同一个函数。
 这是有意为之：一次按 `eval` 计费的运行也会记录为 `eval`，因此两个视图能够对应起来。此前，宽事件会将
@@ -48,7 +35,11 @@ Evi 生成的错误都来自 `agent/lib/errors.ts` 中的目录（`defineErrorCa
 
 
 
+## 谁触发了本轮：调用方信息
 
+轮次事件记录发生了什么以及成本。`evlog/eve` 还会通过 `eve.caller` 记录**是谁发起了请求**。对于仓库机器人，这是最值得分组的维度：每位用户的成本、调用量、拒绝次数，以及完成[授权](./authorization.md)中的分级工作后，本轮使用的等级。
+
+在 `enrichTurn` 发布前（见“提案”），enrichment 没有受支持的方式访问 eve session：`enrich` 面向 HTTP，形状为 `{ event, request, headers, response }`，因此无法从中访问 `session.auth`。曾尝试三种方式，都是在自定义 eve hook 中调用 `useLogger().set({ caller })`：
 
 
 fs drain 只会在存在持久磁盘的环境中挂载。在 Vercel 上，`/tmp` 之外的所有位置都是只读的，
@@ -95,35 +86,10 @@ AsyncLocalStorage 已绑定。Hook 位于其外部，而 evlog hook 会在 `turn
 
 ## 提案
 
-### evlog/eve：让 `defineEvlogInstrumentation` 接受 `events`
+### eve + evlog/eve：为 BYOK 流量记录每轮成本
 
-在有人着手处理前就已被取代：受支持的组合方式已经发布。`evlogRuntimeContext(input)` 从 `evlog/eve` 导出；
-不只使用 evlog instrumentation 的调用方可以舍弃包装器，并将其展开到自己的 `defineInstrumentation` 中。
-提案所需的合并由调用方完成，相关说明位于
-`packages/evlog/src/eve/index.ts` 的 `defineEvlogInstrumentation` 文档中。
+eve 的 `extractGatewayCostUsd` 会读取 `providerMetadata.gateway.cost`，也就是网关实际收取的费用。BYOK 流量中的该值只有网关费用，因此一次生产轮次虽然输入了 120 万 token，却没有记录 `ai.costUsd`；而报告显示当天的 `market_cost` 为 3.88 美元，`total_cost` 为 0.06 美元。备用方案 evlog 的 `cost` 定价表会按未缓存费率计算每个输入 token，且没有分级价格，因此在缓存占比较高的 agent 上会高估一个数量级。若 eve 能公开每步的市场成本，或 evlog 能按 `cacheReadTokens` 和分级价格计费，轮次事件就能再次作为成本来源。
 
-### evlog/eve：让 enrichment 访问 eve session
-
-已落地：`defineEvlogHook()` 提供 `enrichTurn`。这是一个轮次级回调，在创建轮次 logger 时运行，并可访问 eve session：
-
-```ts
-defineEvlogHook({
-  enrichTurn: (ctx) => ({ caller: ctx.session.auth.current?.principalId }),
-})
-```
-
-返回字段会合并到轮次事件中，并覆盖内置字段；它们不会传递到同一会话的后续轮次。`enrich` 保持 HTTP 形态，
-因为它属于所有框架集成共享的 `BaseEvlogOptions`。如果扩展它来携带 eve session，就会把 eve session
-加入每种 HTTP 集成的契约。将轮次级选项放在 eve hook 中，可以把能力限制在 eve 集成内，并免去对 hook
-执行顺序的猜测。
-
-### evlog/eve：将输入 token 归因给产生它们的工具
-
-已落地（#622，EVL-289）：`ai.tools[]` 条目现在携带 `inputTokens`，这是在提供模型输入的工具之间拆分的步骤增量。
-
-### evlog/eve：记录解析后的 provider
-
-已落地（#622）：提供该调用的 deployment 会在事件中以 `ai.provider` 记录。
 
 ### eve：在工具结果和 `turn.failed` 中保留抛出错误的 `code`
 
@@ -133,11 +99,8 @@ defineEvlogHook({
 `details.code`，`evlog/eve` 就可以将其写入 `ai.tools[]`，频道中的失败评论也能打印应用自己的代码，
 而不是 `EVENT_HANDLER_FAILED`。在此之前，Evi 的错误目录只能通过 refusal 结果和 `reason` 字段查看。
 
-### github-tools：在工具结果中展示 GitHub 速率限制状态
-
-已在 github-tools extension 上游落地（EVL-343，2026-08-27）：工具的结果界面现在公开速率限制状态，eve extension 也会记录该状态。
-
 ### github-tools：按 session 限定工具范围
+
 
 这在 [authorization.md](./authorization.md) 中被描述为一项安全修复。它同样也是一项可观测性改进：通过依赖调用方的工具范围，日志可以记录某个等级实际拥有的工具，因此“Evi 拒绝了”和“Evi 从未拥有该工具”不再看起来完全相同。
 

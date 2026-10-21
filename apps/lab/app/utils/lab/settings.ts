@@ -55,6 +55,13 @@ export interface LabSettings {
    */
   tail: number
 
+  /**
+   * Cinema ratio the picture is matted to inside the output frame, or 0 for
+   * none. Wider than the frame gives bars top and bottom, narrower gives them
+   * at the sides.
+   */
+  matte: number
+
   /** Container for the exported video. */
   container: string
   /**
@@ -173,6 +180,20 @@ export interface LabSettings {
   saturation: number
   tonemap: boolean
   vignette: number
+  /**
+   * Divides the field of view the falloff is computed against. Below 1 the
+   * darkening closes in on the middle without changing the lens that frames
+   * the shot, which on a long lens is the only way to get a heavy one.
+   */
+  vignetteSize: number
+  /** 0 is the circle a lens draws; 1 stretches it to the frame's proportions. */
+  vignetteOval: number
+  /**
+   * Exponent on the distance from the middle, normalised so the corners stay
+   * as dark as they were. Above 1 the middle stays clean longer and the edge
+   * falls away faster.
+   */
+  vignetteHardness: number
   grain: number
   attenuation: number
   background: string
@@ -221,6 +242,7 @@ export const DEFAULT_SETTINGS: LabSettings = {
   stageHeight: 720,
   outputWidth: 1920,
   outputHeight: 1080,
+  matte: 0,
   fps: 30,
   timelineLength: 6000,
   tail: 0,
@@ -270,6 +292,9 @@ export const DEFAULT_SETTINGS: LabSettings = {
   saturation: 1,
   tonemap: true,
   vignette: 0.35,
+  vignetteSize: 1,
+  vignetteOval: 0,
+  vignetteHardness: 1,
   grain: 0.015,
   attenuation: 0,
   background: '#000000',
@@ -329,6 +354,10 @@ export const HINTS: Partial<Record<string, string>> = {
   spinBlur: 'Smears it along arcs instead — the same gesture, turned rather than racked.',
   duotone: 'Maps the picture onto two colours by brightness. The grade still applies on top.',
   bleed: 'Diffuses the whole picture, not only what is bright enough to glow. Halation.',
+  vignetteSize: 'How far in the darkening reaches. Smaller closes it around the middle; the field of view still scales it.',
+  vignetteOval: 'Stretches the falloff to the frame\'s proportions instead of the circle a lens draws. Nothing changes on a square frame.',
+  vignetteHardness: 'Higher keeps the middle clean and drops the edge late and fast. Lower lets the darkening creep in.',
+  matte: 'Bars cut the picture to a cinema ratio inside the delivered frame. Overlays stay on top of them.',
   stylizeScale: 'Cell size of the screen, measured on a 1080p frame.',
   stylizeLevels: 'Steps the brightness is quantized to before the screen draws it.',
   stylizeColour: 'Zero draws in brightness alone; one keeps the colour underneath.',
@@ -385,6 +414,9 @@ export const RANGES = {
   spinBlur: { min: 0, max: 1, step: 0.005 },
 
   vignette: { min: 0, max: 1, step: 0.005 },
+  vignetteSize: { min: 0.2, max: 2, step: 0.005 },
+  vignetteOval: { min: 0, max: 1, step: 0.005 },
+  vignetteHardness: { min: 0.4, max: 4, step: 0.01 },
   grain: { min: 0, max: 0.12, step: 0.001 },
   attenuation: { min: 0, max: 1, step: 0.005 },
 
@@ -406,6 +438,8 @@ export const RANGES = {
   // aspect ratio of a shot, which is worse than allowing a small frame.
   outputWidth: { min: 240, max: 3840, step: 2, unit: 'px' },
   outputHeight: { min: 240, max: 2160, step: 2, unit: 'px' },
+  // Only reachable from a link: the panel offers the ratios in `MATTES`.
+  matte: { min: 0, max: 3, step: 0.01 },
   tail: { min: 0, max: 10000, step: 50, unit: 'ms' },
   fps: { min: 12, max: 60, step: 1, unit: 'fps' },
   speed: { min: 0.1, max: 2, step: 0.05, unit: '×' },
@@ -451,6 +485,32 @@ export const VIEWPORTS = [
   { id: 'tablet', label: 'Tablet', width: 834, height: 1112 },
   { id: 'phone', label: 'Phone', width: 390, height: 844 },
 ] as const
+
+/**
+ * Ratios a shot can be matted to, with 0 for the full frame.
+ *
+ * The three that cinema actually projects at, rather than a slider: a matte is
+ * read as cinematic because it is a ratio people have seen in a theatre, and
+ * 2.17 is just a crop.
+ */
+export const MATTES = [
+  { value: 0, label: 'Full', note: 'The whole frame' },
+  { value: 1.85, label: '1.85', note: 'Flat' },
+  { value: 2, label: '2.00', note: 'Univisium' },
+  { value: 2.39, label: '2.39', note: 'Scope' },
+] as const
+
+/**
+ * How far the matte cuts in from each edge, as fractions of the frame.
+ *
+ * Rounded to whole pixels of the buffer being drawn, so a bar ends on a pixel
+ * boundary instead of leaving a half-lit row along the picture.
+ */
+export function matteInset(matte: number, width: number, height: number): [number, number] {
+  if (matte <= 0) return [0, 0]
+  if (matte > width / height) return [0, Math.round((height - width / matte) / 2) / height]
+  return [Math.round((width - height * matte) / 2) / width, 0]
+}
 
 /**
  * The rates anyone actually delivers at.

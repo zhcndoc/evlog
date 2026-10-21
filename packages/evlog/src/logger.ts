@@ -8,8 +8,10 @@ import { buildErrorEntries, compactStackForStorage, PRETTY_ERROR_TREE_SPACER } f
 import { resolveDevTerminal } from './shared/dev-terminal'
 import { globalConfig } from './shared/globalRegistry'
 import { publishWideEvent } from './shared/wideEventChannel'
-import { EvlogError } from './error'
+import { createErrorSerializer } from './shared/serialize-error'
 import { colors, cssColors, detectEnvironment, elapsedMs, escapeFormatString, formatDuration, formatMessage, getConsoleMethod, getCssLevelColor, getLevelColor, hasMessageSpecifiers, isBrowser, isDev, isLevelEnabled, isoNow, matchesPattern } from './utils'
+
+const { serializeError, serializeErrorsIn } = createErrorSerializer(stack => isDev() ? compactStackForStorage(stack) : stack)
 
 const nativeStdoutWrite =
   typeof process !== 'undefined' && typeof process.stdout?.write === 'function'
@@ -36,6 +38,12 @@ function isPlainObject(val: unknown): val is Record<string, unknown> {
   return val !== null && typeof val === 'object' && !Array.isArray(val)
 }
 
+function isPlainRecord(val: unknown): val is Record<string, unknown> {
+  if (!isPlainObject(val)) return false
+  const proto = Object.getPrototypeOf(val)
+  return proto === Object.prototype || proto === null
+}
+
 /** Shown after post-emit warnings so users can fix fire-and-forget / ALS continuations. */
 const POST_EMIT_FORK_HINT =
   'For intentional background work tied to this request, use log.fork(\'label\', fn) when your integration supports it (see https://evlog.dev).'
@@ -46,30 +54,56 @@ function warnPostEmit(method: string, detail: string): void {
   )
 }
 
+// A plain write to `__proto__` replaces the prototype instead of storing a field.
+function setField(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === '__proto__') {
+    Reflect.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true })
+  } else {
+    Reflect.set(target, key, value)
+  }
+}
+
+// Objects are stored by reference and copied only when a merge writes into
+// them, so evlog never writes into an object the caller still holds.
+function writableChild(target: Record<string, unknown>, key: string): Record<string, unknown> {
+  const child = target[key] as Record<string, unknown>
+  const copy: Record<string, unknown> = { ...child }
+  // A spread drops a non-enumerable toJSON, the method that hides a field from
+  // the serialized form. Keep it, or a second merge would expose what it hid.
+  const { toJSON } = child as { toJSON?: unknown }
+  if (typeof toJSON === 'function' && !Object.hasOwn(copy, 'toJSON')) {
+    Object.defineProperty(copy, 'toJSON', { value: toJSON, enumerable: false, writable: true, configurable: true })
+  }
+  setField(target, key, copy)
+  return copy
+}
+
 function mergeInto(target: Record<string, unknown>, source: Record<string, unknown>): void {
   for (const key in source) {
     const sourceVal = source[key]
     if (sourceVal === undefined || sourceVal === null) continue
-    const targetVal = target[key]
+    const targetVal = key === '__proto__' && !Object.hasOwn(target, key) ? undefined : target[key]
     // Same reference on both sides — recording the same error twice, which every
     // integration does when a handler logs the error it then throws. Merging an
     // object into itself changes nothing, but walking into it would write to the
     // caller's own object and throw on any read-only field it carries (#457).
     if (sourceVal === targetVal) continue
-    if (isPlainObject(sourceVal) && isPlainObject(targetVal)) {
-      mergeInto(targetVal, sourceVal)
+    // Only plain objects are merged. A class instance or a Date is a value: the
+    // next one replaces it, and the caller's object is never written into.
+    if (isPlainRecord(sourceVal) && isPlainRecord(targetVal)) {
+      mergeInto(writableChild(target, key), sourceVal)
     } else if (Array.isArray(targetVal) && Array.isArray(sourceVal)) {
-      target[key] = [...targetVal, ...sourceVal]
+      setField(target, key, [...targetVal, ...sourceVal])
     } else {
       // Context can hold objects evlog does not own; a field that refuses the
       // write must not abort the merge and lose the rest of the event.
-      Reflect.set(target, key, sourceVal)
+      setField(target, key, sourceVal)
     }
   }
 }
 
 function mergeFields(target: Record<string, unknown>, fields: Record<string, unknown>): void {
-  mergeInto(target, removeErrorCycles(fields, new WeakSet()) as Record<string, unknown>)
+  mergeInto(target, serializeErrorsIn(fields) as Record<string, unknown>)
 }
 
 const pendingDrainState = new WeakMap<WideEvent, { drainStarted: boolean }>()
@@ -795,111 +829,6 @@ function prettyPrintWideEvent(event: Record<string, unknown>): void {
   }
 }
 
-function removeErrorCycles(value: unknown, ancestors: WeakSet<object>): unknown {
-  if (value === null || typeof value !== 'object') return value
-  if (ancestors.has(value)) return '[Circular]'
-  if (value instanceof Error) return serializeError(value, ancestors)
-
-  ancestors.add(value)
-  let changed = false
-  const visit = (item: unknown): unknown => {
-    const result = removeErrorCycles(item, ancestors)
-    if (!Object.is(result, item)) changed = true
-    return result
-  }
-  const copy = Array.isArray(value)
-    ? value.map(visit)
-    : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, visit(item)]))
-  ancestors.delete(value)
-
-  return changed ? copy : value
-}
-
-/**
- * h3 wraps a thrown error in an H3Error that keeps the original as `cause` and
- * reads its stack from it, so the pair describe the same failure. Serializing
- * both repeats the message, the stack and the payload.
- */
-function isWrapperOf(err: Error, cause: unknown): cause is Error {
-  return cause instanceof Error
-    && cause !== err
-    && cause.message === err.message
-    && cause.stack === err.stack
-}
-
-const H3_INPUT_FIELDS: Record<string, string> = {
-  message: 'message',
-  stack: 'stack',
-  statusCode: 'statusCode',
-  status: 'statusCode',
-  statusMessage: 'statusMessage',
-  statusText: 'statusMessage',
-  data: 'data',
-  fatal: 'fatal',
-  unhandled: 'unhandled',
-}
-
-/**
- * h3's `createError({ statusCode, message })` keeps the options object itself
- * as `cause`. It only restates fields the error already carries, so it counts
- * as a copy when every key is one h3 reads and every value matches the error.
- */
-function isH3InputOf(err: Error, cause: unknown): boolean {
-  if (typeof cause !== 'object' || cause === null || cause instanceof Error || Array.isArray(cause)) return false
-  const keys = Object.keys(cause)
-  if (keys.length === 0) return false
-  const errRecord = err as unknown as Record<string, unknown>
-  const causeRecord = cause as Record<string, unknown>
-  return keys.every((key) => {
-    const target = H3_INPUT_FIELDS[key]
-    if (!target) return false
-    const value = causeRecord[key]
-    if (value === undefined || value === errRecord[target]) return true
-    return target === 'statusCode' && Number(value) === errRecord.statusCode
-  })
-}
-
-function serializeError(err: Error, ancestors = new WeakSet<object>()): Record<string, unknown> {
-  if (isWrapperOf(err, err.cause) && !ancestors.has(err.cause)) {
-    ancestors.add(err)
-    const errorObj = serializeError(err.cause, ancestors)
-    ancestors.delete(err)
-    const wrapper = err as unknown as Record<string, unknown>
-    for (const k of ['statusCode', 'statusMessage', 'data'] as const) {
-      if (wrapper[k] !== undefined) errorObj[k] = removeErrorCycles(wrapper[k], ancestors)
-    }
-    return errorObj
-  }
-
-  const errorObj: Record<string, unknown> = {
-    name: err.name,
-    message: err.message,
-    stack: isDev() ? compactStackForStorage(err.stack) : err.stack,
-  }
-  const errRecord = err as unknown as Record<string, unknown>
-  ancestors.add(err)
-  for (const k of ['code', 'status', 'statusText', 'statusCode', 'statusMessage', 'data', 'cause', 'internal'] as const) {
-    if (k === 'cause' && isH3InputOf(err, err.cause)) {
-      const cause = err.cause as Record<string, unknown>
-      for (const flag of ['fatal', 'unhandled'] as const) {
-        if (cause[flag] !== undefined) errorObj[flag] = cause[flag]
-      }
-      continue
-    }
-    if (k in err) errorObj[k] = removeErrorCycles(errRecord[k], ancestors)
-  }
-  ancestors.delete(err)
-
-  if (EvlogError.isEvlogError(err)) {
-    if (err.code) errorObj.code = err.code
-    if (err.why) errorObj.why = err.why
-    if (err.fix) errorObj.fix = err.fix
-    if (err.link) errorObj.link = err.link
-    if (err.status) errorObj.status = err.status
-  }
-  return errorObj
-}
-
 function createLogMethod(level: LogLevel) {
   return function logMethod(tagOrEvent: string | Error | Record<string, unknown>, message?: string, ...args: unknown[]): void {
     if (typeof tagOrEvent === 'string') {
@@ -915,7 +844,7 @@ function createLogMethod(level: LogLevel) {
     } else if (tagOrEvent instanceof Error) {
       emitWideEvent(level, { error: serializeError(tagOrEvent) })
     } else if (typeof tagOrEvent === 'object') {
-      emitWideEvent(level, removeErrorCycles(tagOrEvent, new WeakSet()) as Record<string, unknown>)
+      emitWideEvent(level, serializeErrorsIn(tagOrEvent) as Record<string, unknown>)
     } else {
       emitTaggedLog(level, 'log', String(tagOrEvent))
     }
@@ -1008,7 +937,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
   const deferDrain = internalOptions?._deferDrain ?? false
   const waitUntil = internalOptions?.waitUntil
   const startTime = Date.now()
-  const context: Record<string, unknown> = { ...initialContext }
+  const context: Record<string, unknown> = { ...(serializeErrorsIn(initialContext) as Record<string, unknown>) }
   let hasError = false
   let hasFatal = false
   let hasWarn = false
@@ -1033,10 +962,10 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       return
     }
     const fields = buildAuditFields(input)
-    if (!isPlainObject(context.audit)) {
+    if (!isPlainRecord(context.audit)) {
       context.audit = fields as unknown as Record<string, unknown>
     } else {
-      mergeInto(context.audit as Record<string, unknown>, fields as unknown as Record<string, unknown>)
+      mergeInto(writableChild(context, 'audit'), fields as unknown as Record<string, unknown>)
     }
     context._auditForceKeep = true
   } as AuditMethod<T>
@@ -1092,8 +1021,8 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
 
       const errorObj = serializeError(err)
 
-      if (isPlainObject(context.error)) {
-        mergeInto(context.error as Record<string, unknown>, errorObj)
+      if (isPlainRecord(context.error)) {
+        mergeInto(writableChild(context, 'error'), errorObj)
       } else {
         context.error = errorObj
       }
@@ -1209,7 +1138,7 @@ export function createLogger<T extends object = Record<string, unknown>>(initial
       }
 
       if (overrides) {
-        const obj = overrides as Record<string, unknown>
+        const obj = serializeErrorsIn(overrides) as Record<string, unknown>
         for (const key in obj) {
           if (key !== '_forceKeep' && key !== '_durationMs') context[key] = obj[key]
         }

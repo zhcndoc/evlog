@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WideEvent } from '../../src/types'
-import { sendBatchToSentry, sendToSentry, toSentryLog, createSentryDrain } from '../../src/adapters/sentry'
+import { defined } from '../helpers/defined'
+import { EVLOG_VERSION } from '../../src/shared/http'
+import { sendBatchToSentry, sendToSentry, toSentryErrorEvent, toSentryLog, createSentryDrain } from '../../src/adapters/sentry'
 
 describe('sentry adapter', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>
@@ -145,6 +147,25 @@ describe('sentry adapter', () => {
       expect(result.attributes?.traceId).toBeUndefined()
       expect(result.attributes?.spanId).toBeUndefined()
     })
+
+    it('attaches the SDK identity to every log', () => {
+      const result = toSentryLog(createTestEvent(), { dsn: 'https://public@o0.ingest.sentry.io/123' })
+
+      expect(result.attributes?.['sentry.sdk.name']).toEqual({ value: 'evlog', type: 'string' })
+      expect(result.attributes?.['sentry.sdk.version']).toEqual({ value: EVLOG_VERSION, type: 'string' })
+    })
+
+    it('sets span_id from the event span', () => {
+      const result = toSentryLog(createTestEvent({ traceId: 'a'.repeat(32), spanId: 'b'.repeat(16) }), { dsn: 'https://public@o0.ingest.sentry.io/123' })
+
+      expect(result.span_id).toBe('b'.repeat(16))
+    })
+
+    it('omits span_id when the event has no span', () => {
+      const result = toSentryLog(createTestEvent(), { dsn: 'https://public@o0.ingest.sentry.io/123' })
+
+      expect(result).not.toHaveProperty('span_id')
+    })
   })
 
   describe('sendToSentry', () => {
@@ -227,6 +248,16 @@ describe('sentry adapter', () => {
       expect(log.timestamp).toBeGreaterThan(0)
     })
 
+    it('identifies the SDK in the envelope header', async () => {
+      await sendToSentry(createTestEvent({ level: 'info' }), {
+        dsn: 'https://public@o123.ingest.sentry.io/456',
+      })
+
+      const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit]
+      const envelopeHeader = JSON.parse(String(options.body).split('\n')[0] ?? '')
+      expect(envelopeHeader.sdk).toEqual({ name: 'evlog', version: EVLOG_VERSION })
+    })
+
     it('throws error on non-OK response', async () => {
       fetchSpy.mockResolvedValueOnce(
         new Response('Bad Request', { status: 400, statusText: 'Bad Request' }),
@@ -264,6 +295,21 @@ describe('sentry adapter', () => {
       expect(itemPayload.items).toHaveLength(3)
     })
 
+    it('splits more than 100 logs into several envelopes', async () => {
+      const events = Array.from({ length: 250 }, (_, index) => createTestEvent({ requestId: String(index) }))
+
+      await sendBatchToSentry(events, {
+        dsn: 'https://public@o123.ingest.sentry.io/456',
+      })
+
+      const counts = fetchSpy.mock.calls.map((call) => {
+        const [, options] = call as [string, RequestInit]
+        const lines = (options.body as string).split('\n').filter(line => line.length > 0)
+        return JSON.parse(lines[1]).item_count
+      })
+      expect(counts).toEqual([100, 100, 50])
+    })
+
     it('does not send request for empty events array', async () => {
       await sendBatchToSentry([], {
         dsn: 'https://public@o123.ingest.sentry.io/456',
@@ -295,6 +341,192 @@ describe('sentry adapter', () => {
       })
 
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10000)
+    })
+  })
+
+  describe('issues', () => {
+    const dsn = 'https://public@o0.ingest.sentry.io/123'
+    const traceId = '4bf92f3577b34da6a3ce929d0e0e4736'
+
+    function envelopes() {
+      return fetchSpy.mock.calls.map((call) => {
+        const [, init] = call as [string, RequestInit]
+        const [header, item, payload] = String(init.body).split('\n')
+        return { header: JSON.parse(header ?? ''), item: JSON.parse(item ?? ''), payload: JSON.parse(payload ?? '') }
+      })
+    }
+
+    it('identifies the SDK in the error event envelope header', async () => {
+      await sendBatchToSentry([createTestEvent({ level: 'error', traceId, error: { name: 'Error', message: 'boom' } })], { dsn, issues: true })
+
+      const issue = envelopes().find(e => e.item.type === 'event')
+      expect(defined(issue, 'issue envelope').header.sdk).toEqual({ name: 'evlog', version: EVLOG_VERSION })
+    })
+
+    it('maps an error wide event to a Sentry error event in its trace', () => {
+      const result = toSentryErrorEvent(createTestEvent({
+        level: 'error',
+        method: 'POST',
+        path: '/api/checkout',
+        traceId,
+        spanId: '00f067aa0ba902b7',
+        parentSpanId: 'b7ad6b7169203331',
+        version: '1.2.0',
+        error: { name: 'PaymentError', message: 'Card declined' },
+      }), { dsn, tags: { team: 'payments' } })
+
+      expect(result).toMatchObject({
+        level: 'error',
+        logger: 'evlog',
+        environment: 'test',
+        release: '1.2.0',
+        transaction: 'POST /api/checkout',
+        exception: { values: [{ type: 'PaymentError', value: 'Card declined' }] },
+        contexts: { trace: { trace_id: traceId, span_id: '00f067aa0ba902b7', parent_span_id: 'b7ad6b7169203331' } },
+        tags: { service: 'test-service', team: 'payments' },
+      })
+      expect(result.event_id).toMatch(/^[a-f0-9]{32}$/)
+    })
+
+    it('sends only the log envelope when issues are off', async () => {
+      await sendBatchToSentry([createTestEvent({ level: 'error', traceId })], { dsn })
+
+      expect(envelopes().map(e => e.item.type)).toEqual(['log'])
+    })
+
+    it('opens an issue for error and fatal events, sharing the log trace id', async () => {
+      await sendBatchToSentry([
+        createTestEvent({ level: 'info', traceId: 'a'.repeat(32) }),
+        createTestEvent({ level: 'error', traceId, error: { name: 'Error', message: 'boom' } }),
+        createTestEvent({ level: 'fatal' }),
+      ], { dsn, issues: true })
+
+      const [logs, ...issues] = envelopes()
+      expect(defined(logs, 'log envelope').item.type).toBe('log')
+      expect(issues.map(e => e.item.type)).toEqual(['event', 'event'])
+      const [errorIssue, fatalIssue] = issues.map(e => e.payload)
+      expect(errorIssue.contexts.trace.trace_id).toBe(traceId)
+      expect(logs?.payload.items[1].trace_id).toBe(traceId)
+      expect(fatalIssue.level).toBe('fatal')
+      expect(fatalIssue.contexts.trace.trace_id).toBe(logs?.payload.items[2].trace_id)
+      expect(issues[0]?.header.event_id).toBe(errorIssue.event_id)
+    })
+
+    it('resends a retried batch with the same issue event id and trace id', async () => {
+      const batch = [createTestEvent({ level: 'error' })]
+      await sendBatchToSentry(batch, { dsn, issues: true })
+      await sendBatchToSentry(batch, { dsn, issues: true })
+
+      const [firstLogs, firstIssue, retryLogs, retryIssue] = envelopes()
+      expect(retryIssue?.payload.event_id).toBe(firstIssue?.payload.event_id)
+      expect(retryIssue?.payload.contexts.trace.trace_id).toBe(firstIssue?.payload.contexts.trace.trace_id)
+      expect(retryIssue?.payload.contexts.trace.span_id).toBe(firstIssue?.payload.contexts.trace.span_id)
+      expect(retryLogs?.payload.items[0].trace_id).toBe(firstLogs?.payload.items[0].trace_id)
+    })
+
+    it('reads `status` before the legacy `statusCode` when they disagree', async () => {
+      await sendBatchToSentry([
+        createTestEvent({ level: 'error', error: { name: 'EvlogError', message: 'User 8231 not found', status: 404, statusCode: 500 } }),
+        createTestEvent({ level: 'error', error: { name: 'EvlogError', message: 'Database down', status: 503 } }),
+      ], { dsn, issues: true })
+
+      const [, ...issues] = envelopes()
+      expect(issues.map(e => e.payload.exception.values[0].value)).toEqual(['Database down'])
+    })
+
+    it('does not open issues for 4xx errors', async () => {
+      await sendBatchToSentry([
+        createTestEvent({ level: 'error', status: 404, error: { name: 'EvlogError', message: 'User 8231 not found', status: 404 } }),
+        createTestEvent({ level: 'error', error: { name: 'H3Error', message: 'Unauthorized', statusCode: 401 } }),
+        createTestEvent({ level: 'error', status: 400, error: { name: 'Error', message: 'Invalid body' } }),
+        createTestEvent({ level: 'error', status: 500, error: { name: 'TypeError', message: 'boom' } }),
+        createTestEvent({ level: 'error', error: { name: 'Error', message: 'job failed' } }),
+      ], { dsn, issues: true })
+
+      const [logs, ...issues] = envelopes()
+      expect(logs?.payload.items).toHaveLength(5)
+      expect(issues.map(e => e.payload.exception.values[0].value)).toEqual(['boom', 'job failed'])
+    })
+
+    it('sends the error stack as frames, oldest call first', () => {
+      const stack = [
+        'TypeError: Cannot read properties of undefined',
+        '    at getUser (/app/server/api/user.ts:12:5)',
+        '    at async handler (/app/server/api/user.ts:30:3)',
+        '    at callHandler (/app/node_modules/h3/dist/index.mjs:100:9)',
+      ].join('\n')
+      const result = toSentryErrorEvent(createTestEvent({ level: 'error', error: { name: 'TypeError', message: 'x', stack } }), { dsn })
+
+      expect(result.exception.values[0]?.stacktrace?.frames).toEqual([
+        { filename: '/app/node_modules/h3/dist/index.mjs', abs_path: '/app/node_modules/h3/dist/index.mjs', function: 'callHandler', lineno: 100, colno: 9, in_app: false },
+        { filename: '/app/server/api/user.ts', abs_path: '/app/server/api/user.ts', function: 'async handler', lineno: 30, colno: 3, in_app: true },
+        { filename: '/app/server/api/user.ts', abs_path: '/app/server/api/user.ts', function: 'getUser', lineno: 12, colno: 5, in_app: true },
+      ])
+      expect(result.fingerprint).toBeUndefined()
+    })
+
+    it('groups a stackless error by type and transaction, not by message', () => {
+      const result = toSentryErrorEvent(createTestEvent({
+        level: 'error',
+        method: 'GET',
+        path: '/api/users/8231',
+        error: { name: 'NotFoundError', message: 'User 8231 not found' },
+      }), { dsn })
+
+      expect(result.exception.values[0]?.stacktrace).toBeUndefined()
+      expect(result.fingerprint).toEqual(['NotFoundError', 'GET /api/users/8231'])
+    })
+
+    it('attaches the user id', () => {
+      expect(toSentryErrorEvent(createTestEvent({ level: 'error', userId: 'u_1' }), { dsn }).user).toEqual({ id: 'u_1' })
+      expect(toSentryErrorEvent(createTestEvent({ level: 'error', user: { id: 'u_2' } }), { dsn }).user).toEqual({ id: 'u_2' })
+      expect(toSentryErrorEvent(createTestEvent({ level: 'error' }), { dsn }).user).toBeUndefined()
+    })
+
+    it('resolves when an issue request fails, so a batch retry does not resend the logs', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      fetchSpy
+        .mockResolvedValueOnce(new Response(null, { status: 200 }))
+        .mockResolvedValueOnce(new Response('Too Many Requests', { status: 429, statusText: 'Too Many Requests' }))
+
+      await expect(sendBatchToSentry([
+        createTestEvent({ level: 'error', error: { name: 'Error', message: 'first' } }),
+        createTestEvent({ level: 'error', error: { name: 'Error', message: 'second' } }),
+      ], { dsn, issues: true, retries: 0 })).resolves.toBeUndefined()
+
+      expect(envelopes().map(e => e.item.type)).toEqual(['log', 'event'])
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('skipped 1 more'), expect.any(Error))
+    })
+
+    it('rejects without sending issues when the log request fails', async () => {
+      fetchSpy.mockResolvedValueOnce(new Response('Bad Gateway', { status: 502, statusText: 'Bad Gateway' }))
+
+      await expect(sendBatchToSentry([createTestEvent({ level: 'error' })], { dsn, issues: true, retries: 0 }))
+        .rejects.toThrow('Sentry API error: 502')
+      expect(fetchSpy).toHaveBeenCalledOnce()
+    })
+
+    it('sends issue requests one at a time', async () => {
+      const inFlight: Array<() => void> = []
+      fetchSpy.mockImplementation(() => new Promise<Response>((resolve) => {
+        inFlight.push(() => resolve(new Response(null, { status: 200 })))
+      }))
+
+      const sending = sendBatchToSentry(Array.from({ length: 5 }, () => createTestEvent({ level: 'error' })), { dsn, issues: true })
+      for (let call = 0; call < 6; call++) {
+        await vi.waitFor(() => expect(inFlight).toHaveLength(1))
+        defined(inFlight.shift(), 'pending request')()
+      }
+      await sending
+
+      expect(fetchSpy).toHaveBeenCalledTimes(6)
+    })
+
+    it('reads issues from the drain config', async () => {
+      const drain = createSentryDrain({ dsn, issues: true })
+      await drain({ event: createTestEvent({ level: 'error', traceId }) })
+
+      expect(envelopes().map(e => e.item.type)).toEqual(['log', 'event'])
     })
   })
 

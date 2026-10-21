@@ -30,6 +30,8 @@
 **iMessage 附件永远不会到达模型。**Photon 适配器的聊天映射会保留 name/mimeType/size，而 eve 的 `messageToUserContent` 只读取 `attachment.url`，但 Photon 从未提供该属性。在已连接的（pump）路径中，带有经过身份验证的 `read()` 的已解析内容节点会保留在 `message.raw.content` 上；在 webhook 路径中，`raw` 是投递 JSON，其中从不包含这些节点。通过 `adapter.fetchMessage()` 重新解析可以恢复它们，但这是 eve 需要完成的工作：上游修复方案是使用 chat-sdk 的 `data`/`fetchData` 附件契约。在此之前，图片会通过 Slack 发送。
 
 
+**会话限制默认允许 4000 万输入 token，且不限制输出 token**，按当前价格计算，一个失控的会话可能花费近 8 美元。Evi 保留 4000 万输入 token 上限，并将输出上限设为 100 万。输出 token 包含推理 token；每次模型步骤中，eve 会把父级剩余窗口平均分给子任务。因此，一个内容任务跨多个审阅器累计消耗约 46 万推理 token 时，25 万上限会反复中止任务：子任务只分到约 1.4 万 token，并向一个无人查看的线程请求批准。批准后会获得同样大小的新窗口，因此上限决定的是提示频率，而非总支出。
+
 
 
 
@@ -64,22 +66,8 @@ eve 的打包器转换只有在动态工具的 `execute` 函数以内联形式�
 06:00 触发，在冬季（GMT）则变为 05:00。`eve dev` 永远不会触发 cron；
 `POST /eve/v1/dev/schedules/digest` 可在本地触发一次。
 
+**报告中的 `group_by: tag` 会按每个标签值返回一行。** 限定为 `evi:env:*` 时，结果包括环境总计行、每个表面一行 `evi:surface:*`，以及每个 agent 一行 `evi:agent:*`；每行都包含费用、token 和 `request_count` 列。因此，只需再调用两次即可获得表面和 agent 明细，以及按模型划分的构成（`group_by: model`）。不同维度的行会相互重叠：只能在同一前缀内求和，不能跨前缀求和。成本监控 skill 会读取两类明细；表面和 agent 集合必须从返回行中获取，不能自行假定。报告不支持 session 维度：`group_by` 会拒绝 `session_id`，而 `session_id` 过滤器会被静默忽略。
 
-
-## AI 网关
-
-**`sort: 'cost'` 优于硬编码的提供商顺序。** 路由请求落到了
-$0.20/$0.40 的部署上，而更便宜的 1M 上下文部署也能提供同一个模型。一轮基于事实的对话从 $0.084 降至 $0.006。排序会随着部署和促销活动的变化持续遵循价格。
-
-**`zeroDataRetention` 会裁剪池，而且裁剪的是便宜的一端。**在 GLM 5.3 Flash 上，两个价格为当前行情一半的部署会保留数据，因此 ZDR 会将它们移除，而 Evi 能达到的价格下限就会上升到下一档。设置 ZDR 的 `only: ['<provider>']` 会按提供商给出结果：不符合条件的提供商会返回 ZDR 错误，而不是转由其他地方路由。手写的 `order` 无法修复这一点——如果它指定的提供商已被 ZDR 移除，就会被静默跳过，看起来像经过审核，实际上却没有执行任何操作。
-
-**`GET /v1/models` 返回真实的费率表**，包括 `input_cache_read`。从中重建一次观测到的轮次后，结果与 eve 报告的 `costUsd` 精确到小数点后四位，这正是发现超支的方式。
-
-**报告中的 `group_by: tag` 会针对每个标签值返回一行。** 对于限定为
-`evi:env:*` 的结果，它会返回环境总计行，以及每个表面对应的一行
-`evi:surface:*`，每行都包含费用、token 和 `request_count` 列，因此只需再调用两次，
-即可获得表面细分和按模型划分的构成（`group_by: model`）。成本监控技能会读取这两者；
-表面集合必须从这些行中获取，绝不能自行假定。
 
 ## github-tools
 
@@ -125,6 +113,4 @@ Gists API 会拒绝安装令牌——此外还包括仓库创建和合并功能�
 
 ## 待处理
 
-- `toTelemetry(output)` 作为 `toModelOutput` 的镜像，可让工具携带不消耗上下文 token 的诊断信息。EVL-366 已关闭，但该能力尚未实现，是否继续处理仍待决定，因此保留此项。
-
-自撰写此列表以来已完成：`ai.tools[]` 中的每个工具输入 token（#622）、作为 `ai.provider` 的已解析提供商（#622），以及工具结果中的 GitHub 速率限制状态（EVL-343，位于 github-tools 扩展中）。
+- `toTelemetry(output)` 作为 `toModelOutput` 的镜像，让工具可以携带不会消耗上下文 token 的诊断信息（由 EVL-509 跟踪；EVL-366 已关闭，但该能力尚未实现，因此保留此项）。

@@ -20,6 +20,7 @@ import {
   clearAsyncLocalStorage,
   createSharedEnterWithStorage,
 } from '../shared/asyncStorageScope'
+import { warnDeprecated } from '../shared/deprecate'
 
 const DEFAULT_MAX_SESSIONS = 256
 
@@ -61,8 +62,8 @@ export interface EvlogEveOptions extends Omit<EvlogConfig, 'extends' | 'map' | '
   /** Max characters kept in `'preview'` mode. Default `500`. */
   messagePreviewLength?: number
   /**
-   * @deprecated Use {@link EvlogEveOptions.message}. `true` maps to `'omit'`,
-   * `false` to `'preview'`.
+   * @deprecated Removed in evlog v3. Use {@link EvlogEveOptions.message}.
+   * `true` maps to `'omit'`, `false` to `'preview'`.
    */
   redactMessage?: boolean
   /**
@@ -111,8 +112,10 @@ export interface EvlogEveOptions extends Omit<EvlogConfig, 'extends' | 'map' | '
    */
   enrichTurn?: (ctx: EveEnrichTurnContext) => Record<string, unknown> | void
   /**
-   * Subscribe to subagent lifecycle events and add them to the parent turn.
-   * Default `true`. Disable this when the event source has no hook session context.
+   * Subscribe to the `subagent.*` lifecycle events emitted by older eve
+   * versions and add them to the parent turn. Default `true`. Disable this
+   * when the event source has no hook session context. Subagent calls
+   * requested through `actions.requested` are recorded either way.
    */
   subagentEvents?: boolean
 }
@@ -174,8 +177,10 @@ interface EveSubagentRecord {
   name: string
   toolName?: string
   childSessionId?: string
-  status: 'called' | 'started' | 'completed'
+  remote?: true
+  status: 'called' | 'started' | 'completed' | 'failed'
   output?: string
+  error?: string
   startedAt?: number
   durationMs?: number
 }
@@ -218,6 +223,8 @@ interface TurnAccumulator {
   result?: unknown
   pausedForInput: boolean
   stepStartedAt?: number
+  /** Model of the latest step, so a gateway fallback is reported over the configured model. */
+  stepModel?: string
   costMap?: Record<string, ModelCost>
   /**
    * The resolved provider (deployment) that served the model call.
@@ -354,7 +361,8 @@ function buildAiField(state: TurnAccumulator): AIEventData {
     totalTokens,
     steps: state.steps,
   }
-  if (state.costModel) data.model = state.costModel
+  const model = state.stepModel ?? state.costModel
+  if (model) data.model = model
   if (state.lastProvider) data.provider = state.lastProvider
   if (state.cacheReadTokens > 0) data.cacheReadTokens = state.cacheReadTokens
   if (state.cacheWriteTokens > 0) data.cacheWriteTokens = state.cacheWriteTokens
@@ -721,6 +729,20 @@ function trackPendingAction(
   })
 }
 
+/**
+ * Older eve reports a subagent call both as a `subagent-call` action and as
+ * `subagent.called`, so the second report fills in what the first lacked.
+ */
+function recordSubagentCall(acc: TurnAccumulator, record: EveSubagentRecord): void {
+  const existing = acc.subagents.find(s => s.callId === record.callId)
+  if (!existing) {
+    acc.subagents.push(record)
+    return
+  }
+  existing.toolName ??= record.toolName
+  existing.childSessionId ??= record.childSessionId
+}
+
 function resolveToolDurationMs(
   state: TurnState,
   callId: string | undefined,
@@ -963,7 +985,7 @@ function flushAi(state: TurnState): void {
     if (model) ai.model = model
   }
   if (!ai.provider) {
-    const modelId = sessionRuntimes().get(state.sessionId)?.model
+    const modelId = state.accumulator.stepModel ?? sessionRuntimes().get(state.sessionId)?.model
     if (modelId) {
       const slashIndex = modelId.indexOf('/')
       if (slashIndex !== -1) {
@@ -1160,8 +1182,13 @@ function getTurnState(sessionId: string, turnId: string): TurnState | undefined 
  * ```ts
  * export default defineEvlogHook({ ...config, message: 'preview' })
  * ```
+ *
+ * @deprecated Removed in evlog v3. Use the `evlog()` lifecycle provider.
  */
 export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
+  if (options.redactMessage !== undefined) {
+    warnDeprecated('eve:redactMessage', '[evlog/eve] redactMessage is deprecated and removed in v3. Use message: \'omit\' (was true) or \'preview\' (was false).')
+  }
   const messageMode = resolveMessageMode(options)
   const previewLength = options.messagePreviewLength ?? DEFAULT_MESSAGE_PREVIEW_LENGTH
 
@@ -1221,6 +1248,9 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
           const state = getTurnState(ctx.session.id, event.data.turnId)
           if (!state) return
           state.accumulator.stepStartedAt = Date.now()
+          // Newer eve reports the model per step; the eve typings evlog builds against predate it.
+          const { modelId } = event.data as typeof event.data & { modelId?: string }
+          if (modelId) state.accumulator.stepModel = modelId
         })
       },
 
@@ -1374,6 +1404,22 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
                 toolName: action.toolName,
                 startedAt,
               })
+            } else if (action.kind === 'subagent-call' || action.kind === 'remote-agent-call') {
+              const remote = action.kind === 'remote-agent-call'
+              const name = remote ? action.remoteAgentName : action.subagentName
+              trackPendingAction(ctx.session.id, event.data.turnId, {
+                callId: action.callId,
+                toolName: name,
+                startedAt,
+              })
+              recordSubagentCall(state.accumulator, {
+                callId: action.callId,
+                name,
+                toolName: action.name,
+                ...(remote ? { remote: true } : {}),
+                status: 'called',
+                startedAt,
+              })
             }
           }
         })
@@ -1437,6 +1483,16 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
           } else if (event.data.error) {
             execution.error = event.data.error.message
           }
+          const subagent = callId
+            ? state.accumulator.subagents.find(s => s.callId === callId)
+            : undefined
+          if (subagent) {
+            const { result } = event.data
+            const failed = !success || (result.kind === 'subagent-result' && result.isError === true)
+            subagent.status = failed ? 'failed' : 'completed'
+            subagent.durationMs = durationMs
+            if (execution.error) subagent.error = execution.error
+          }
           state.accumulator.toolExecutions.push(execution)
           if (!rejected) state.accumulator.pendingToolAttribution.push(execution)
         })
@@ -1446,7 +1502,7 @@ export function defineEvlogHook(options: EvlogEveOptions = {}): HookDefinition {
         runSafe(() => {
           const state = getTurnState(ctx.session.id, event.data.turnId)
           if (!state) return
-          state.accumulator.subagents.push({
+          recordSubagentCall(state.accumulator, {
             callId: event.data.callId,
             name: event.data.name,
             toolName: event.data.toolName,
@@ -1682,6 +1738,8 @@ function buildInstrumentationContext(
  * owns the file's `events` slot, so once another integration needs it — PostHog
  * links spans to the initiating user there — drop the wrapper and spread
  * {@link evlogRuntimeContext} into your own `defineInstrumentation` instead.
+ *
+ * @deprecated Removed in evlog v3. Use the `evlog()` lifecycle provider.
  */
 export function defineEvlogInstrumentation(
   options: EvlogEveInstrumentationOptions = {},

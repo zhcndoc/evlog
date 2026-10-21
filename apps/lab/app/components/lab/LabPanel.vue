@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { LabMenuAction } from './LabMenu.vue'
-import { DEFAULT_SETTINGS, FRAME_RATES, HINTS, OUTPUT_PRESETS, RANGES, SPEEDS, VIEWPORTS, frameCountFor, outputDuration } from '~/utils/lab/settings'
+import { DEFAULT_SETTINGS, FRAME_RATES, HINTS, MATTES, OUTPUT_PRESETS, RANGES, SPEEDS, VIEWPORTS, frameCountFor, outputDuration } from '~/utils/lab/settings'
 import type { AsciiSet, LabSettings, RangedKey, StylizeMode } from '~/utils/lab/settings'
 import { ASCII_MIN_CELL } from '~/utils/lab/ascii'
 import type { LabMode } from '~/utils/lab/storage'
@@ -657,6 +657,11 @@ const CONTAINERS = [
         <LabNumber v-model="settings.saturation" label="Saturation" v-bind="range('saturation')" />
         <LabNumber v-model="settings.attenuation" label="Distance falloff" v-bind="range('attenuation')" />
         <LabNumber v-model="settings.vignette" label="Vignette" v-bind="range('vignette')" />
+        <template v-if="settings.vignette > 0">
+          <LabNumber v-model="settings.vignetteSize" label="Vignette size" v-bind="range('vignetteSize')" />
+          <LabNumber v-model="settings.vignetteOval" label="Fit to frame" v-bind="range('vignetteOval')" />
+          <LabNumber v-model="settings.vignetteHardness" label="Vignette hardness" v-bind="range('vignetteHardness')" />
+        </template>
         <LabNumber v-model="settings.grain" label="Grain" v-bind="range('grain')" />
         <LabToggle v-model="settings.tonemap" label="Filmic tonemap" />
 
@@ -747,6 +752,15 @@ const CONTAINERS = [
           :model-value="activeOutput"
           cards
           @update:model-value="setOutput(String($event))"
+        />
+
+        <LabChoice
+          label="Matte"
+          :hint="HINTS.matte"
+          :options="MATTES"
+          :model-value="settings.matte"
+          cards
+          @update:model-value="settings.matte = Number($event)"
         />
 
         <!--

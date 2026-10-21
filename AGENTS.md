@@ -18,9 +18,10 @@ pnpm telemetry:cli <command>       # run this repo's CLI into that local dashboa
 pnpm cli:sandbox                   # disposable per-framework apps under .sandbox/ to test the CLI by hand (--reset restores them, --smoke runs the feature matrix)
 pnpm content:lint [path]           # rank the written corpus by content findings (see scripts/content-lint/README.md)
 pnpm content:lint:test             # the scanner's own tests, including its two calibration fixtures
+pnpm release-notes:test            # tests for scripts/release-notes, which rewrites GitHub release bodies and pins Latest to evlog
 ```
 
-Publishing is automated: changesets + `.github/workflows/release.yml`. Never run `pnpm release` or `changeset publish` manually.
+Publishing is automated: changesets + `.github/workflows/release.yml`. Never run `pnpm release` or `changeset publish` manually. CI publishes with npm Trusted Publishing, so a new package needs GitHub Actions (`evloghq/evlog`, `release.yml`) added as its Trusted Publisher on npmjs.com before the first release that includes it; without it npm answers `E404` on the publish.
 
 > Use `corepack enable` once so the `packageManager` field in `package.json` pins the right pnpm version automatically.
 >
@@ -35,7 +36,7 @@ packages/evlog/            Main package
   src/vite/                Vite plugin (evlog/vite)
   src/shared/              Toolkit — exposed as evlog/toolkit (NOT evlog/shared)
   src/ai/                  AI SDK integration (evlog/ai)
-  src/adapters/            Drain adapters (Axiom, OTLP, HyperDX, PostHog, Sentry, Better Stack, Datadog, Loki, ClickHouse, fs, memory)
+  src/adapters/            Drain adapters (Axiom, OTLP, HyperDX, Sazabi, PostHog, Sentry, Better Stack, Datadog, Loki, ClickHouse, fs, memory)
   src/enrichers/           Built-in enrichers (UserAgent, Geo, RequestSize, TraceContext)
   src/runtime/             Runtime code (client/, server/, utils/)
   src/<framework>/         One dir per framework integration (hono/, next/, sveltekit/, nestjs/, express/, fastify/, elysia/, orpc/, react-router/, workers/, eve/, better-auth/)
@@ -62,7 +63,7 @@ skills/                     Published skills (analyze-logs, build-audit-logs, re
 - `evlog/toolkit` is the public entrypoint for `src/shared/`. Never use `evlog/shared`.
 - `evlog/browser` is deprecated, use `evlog/http` instead.
 - Every framework integration exposes the **same contract**: `evlog()` middleware, `useLogger()`, `log.fork()`, and the full `BaseEvlogOptions` surface. Framework-native accessors (`c.get('log')`, `req.log`, `event.locals.log`, `context.get(loggerContext)`) stay alongside it. They are the idiomatic path inside handlers, `useLogger()` is for the layers underneath. When adding an integration, provide both.
-- `useLogger()` is backed by `AsyncLocalStorage`. On Cloudflare Workers that needs the `nodejs_compat` / `nodejs_als` flag, so `evlog/workers` deliberately has no `useLogger()` and passes the logger as the handler's fourth argument instead.
+- `useLogger()` is backed by `AsyncLocalStorage`. On Cloudflare Workers that needs the `nodejs_compat` / `nodejs_als` flag, so `evlog/workers` deliberately has no `useLogger()` and passes the logger as the handler's fourth argument instead. `evlog/effect` has no ALS `useLogger()` either: the logger travels in the Effect context as the `EvlogLogger` service (`yield* EvlogLogger`, `useLogger<T>()` as an Effect), and background work is a nested `withLogger` rather than `log.fork()`.
 - New export? Update `packages/evlog/package.json` exports, its `typesVersions`, and `packages/evlog/tsdown.config.ts`. A subpath missing from `typesVersions` resolves at runtime and fails to type-check. `packages/evlog/test/toolkit/entrypoint-registry.test.ts` catches the mismatch without a build.
 - Creating a new adapter, enricher, or framework integration? Read the matching skill at `.agents/skills/` **before starting**:
   - `.agents/skills/create-adapter/SKILL.md`
@@ -101,6 +102,14 @@ PR titles and commits follow [Conventional Commits](https://conventionalcommits.
 - **Omit the scope when the change is cross-cutting** (touches multiple subsystems, or is repo-wide). Don't use `evlog` as a scope: the whole monorepo *is* evlog, so a no-scope title already means "evlog itself".
 - **Use a scope only to point at one subsystem.** Adapters get their own scope (one per entrypoint, e.g. `axiom`, `datadog`, `fs`); framework integrations get the framework's name (`nuxt`, `next`, `hono`, ...); core internals (logger, pipeline, error, redact, catalog) go under `core`.
 - **When you add a new subsystem** (adapter, integration, top-level entrypoint), add its scope to **both** the workflow and the template. Keep both lists alphabetically sorted. Because title validation reads the base branch's scope list, either register the scope in a preceding PR or omit the scope from the subsystem PR title.
+
+### v3 branch
+
+Work for evlog 3.0 goes to the `v3` branch, not `main`: breaking changes, removals of deprecated APIs, the Node 22 floor, `evlog upgrade`, `@evlog/cli` 1.0. Branch from `origin/v3` and open the PR with `--base v3`. Fixes and features for 2.x go to `main` as before.
+
+- `v3` is in changesets pre mode (`.changeset/pre.json`) and publishes `3.0.0-beta.N` on the `beta` dist-tag. `main` keeps publishing 2.x on `latest`. A PR into `v3` needs a changeset exactly like one into `main`.
+- Never open a PR from `v3` into `main` before 3.0 GA. The `ci` check fails it.
+- Never run `changeset pre enter` or `changeset pre exit`. Entering and leaving pre mode is a maintainer decision.
 
 ### Docs app
 
@@ -175,7 +184,7 @@ Default: anything that stays on the local clone is fine, anything that touches t
 **OK when the maintainer explicitly asks (in the current task):**
 - `git push -u origin <feature-branch>`: push a feature branch you just prepared
 - `git push --force-with-lease origin <feature-branch>`: only on a feature branch you authored, after a clean rebase
-- `gh pr create --base main --head <feature-branch>`: open a PR
+- `gh pr create --base main --head <feature-branch>`: open a PR (`--base v3` for 3.0 work, see [v3 branch](#v3-branch))
 - Write a **PR title** (Conventional Commits, see above) and a **PR body**: keep the body factual, mirror the changeset, reference the issue (`Closes #X`); no marketing copy
 - Show the change in the PR body: a code snippet or captured output is evidence, not filler. A new API gets a usage snippet, a bug fix its before/after output, a CLI change its real terminal output, a rendered change a capture. Keep the prose short, not the proof
 - `gh pr merge <number>`: only for PRs the maintainer named in the current task, after reading the diff and confirming CI is green and there is no unresolved review thread. Use `--squash`. Never merge a PR the maintainer did not point at, and never merge `changeset-release/*` (the version-packages PR) or a PR that deletes tests without the maintainer saying so for that PR

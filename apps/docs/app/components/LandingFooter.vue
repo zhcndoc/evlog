@@ -51,6 +51,7 @@ const footerColumns: FooterColumn[] = [
       { label: '对比 Pino', to: '/compare/pino' },
       { label: '对比 Winston', to: '/compare/winston' },
       { label: '对比 LogTape', to: '/compare/logtape' },
+      { label: '对比 LogLayer', to: '/compare/loglayer' },
       { label: '对比 Consola', to: '/compare/consola' },
       { label: 'OpenTelemetry', to: '/compare/opentelemetry' },
       { label: '所有日志器', to: '/reference/vs-other-loggers' },

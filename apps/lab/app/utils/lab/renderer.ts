@@ -27,7 +27,7 @@ import {
   STREAK_FRAG,
   STYLIZE_FRAG,
 } from './shaders'
-import { bloomKneeFor, dofSamplesFor, hexToLinearRgb } from './settings'
+import { bloomKneeFor, dofSamplesFor, hexToLinearRgb, matteInset } from './settings'
 import type { LabSettings, StylizeMode } from './settings'
 import { asciiCellAspect } from './ascii'
 
@@ -725,6 +725,10 @@ export class LabRenderer {
     this.composite.set('uContrast', settings.contrast)
     this.composite.set('uSaturation', settings.saturation)
     this.composite.set('uVignette', settings.vignette)
+    this.composite.set('uVignetteSize', settings.vignetteSize)
+    this.composite.set('uVignetteOval', settings.vignetteOval)
+    this.composite.set('uVignetteHardness', settings.vignetteHardness)
+    this.composite.set('uMatte', matteInset(settings.matte, this.width, this.height))
     this.composite.set('uGrain', settings.grain)
     // Wrapped into 0..1 before it reaches the shader. The hash only needs the
     // frames to differ, and keeping the magnitude small is what stops the grain

@@ -90,7 +90,8 @@ try {
 
 TypeScript 优先的日志记录器，无处不在。框架钩子在请求边界自动创建并自动发射日志记录器。对于脚本、任务和工作流，你创建一个日志记录器，积累上下文，完成后发射。
 
-它也可以在 **任何** TypeScript 场景中直接替代 `console.log`、`pino` 或 `consola`——CLI 工具、一次性迁移、已发布库、BullMQ / Inngest 任务、Cloudflare Workers、AWS Lambda，以及 Astro 端点。相同的 `log.info` / `log.error` API 可在所有地方运行，具有相同的 drains、相同的脱敏，以及相同的类型。你不需要在“HTTP 用 evlog，其他地方用别的”之间做选择——它就是你随代码一起交付的那个日志记录器。
+它也可以在 **任何** TypeScript 场景中直接替代 `console.log`、`pino` 或 `consola`：CLI 工具、一次性迁移、已发布库、BullMQ / Inngest 任务、Cloudflare Workers、AWS Lambda，以及 Astro 端点。相同的 `log.info` / `log.error` API 可在所有地方运行，具有相同的 drains、相同的脱敏，以及相同的类型。你不需要在“HTTP 用 evlog，其他地方用别的”之间做选择。它就是你随代码一起交付的那个日志器。
+
 
 ::code-group
 
@@ -229,7 +230,8 @@ export async function action({ context }: Route.ActionArgs) {
 
 ### 一个 API，两种形态
 
-当你只需要一行日志时，像 pino 或 consola 一样发出单个结构化事件。当你想要完整故事时，为每次操作累积一个宽事件。相同的 drains，相同的脱敏，相同的类型——按调用选择。宽事件不是你要单独切换的模式；它们存在于你用来替代 `console.log` 的同一个日志记录器中。
+当你只需要一行日志时，像 pino 或 consola 一样发出单个结构化事件。当你想要完整故事时，为每次操作累积一个宽事件。相同的 drains、相同的脱敏、相同的类型：按调用选择。宽事件不是你要单独切换的模式；它们存在于你用来替代 `console.log` 的同一个日志记录器中。
+
 
 ### 0 个传递依赖
 
@@ -239,13 +241,15 @@ export async function action({ context }: Route.ActionArgs) {
 
 Nuxt、Next.js、SvelteKit、Nitro、Express、Fastify、Hono、Elysia、NestJS、React Router、TanStack Start、Cloudflare Workers。添加中间件，获得宽事件。切换框架，保持相同的 `log.set()` 模式。
 
-### 8 个输出适配器，即插即用
+### 12 个输出适配器，即插即用
 
-Axiom、OTLP（Grafana、Honeycomb）、Datadog、Sentry、PostHog、Better Stack、HyperDX、文件系统。两行配置。异步、批量、带外。你的用户不需要等待你的日志管道。
+Axiom、OTLP（Grafana、Honeycomb）、Datadog、Sentry、PostHog、Better Stack、HyperDX、Sazabi、Loki、ClickHouse、文件系统、内存。两行配置。异步、批量、带外。你的用户不需要等待你的日志管道。
+
 
 ### AI SDK 集成，内置
 
-包装模型一次。Token 用量、工具调用、流式指标、成本估算、多步代理、缓存命中、推理 token——全部落入 **同一个** 宽事件。添加工具执行耗时和总生成实际耗时的遥测集成。
+包装模型一次。Token 使用量、工具调用、流式指标、成本估算、多步代理、缓存命中、推理 token：全部落入 **同一个** 宽事件。添加工具执行耗时和总生成实际耗时的遥测集成。
+
 
 ```ts [server/api/chat.post.ts]
 const ai = createAILogger(log, {
@@ -258,11 +262,13 @@ const result = streamText({
 })
 ```
 
-多步代理、嵌入、成本估算——零额外代码。无回调冲突。无需单独的 AI 可观测性管道。
+多步代理、嵌入、成本估算：零额外代码。无回调冲突。无需单独的 AI 可观测性管道。
+
 
 ### PII 自动脱敏，零配置
 
-生产环境默认启用。信用卡变成 `****1111`，邮箱变成 `a***@***.com`，IP、电话号码、JWT、IBAN——全部在你的控制台或输出端看到之前智能掩码。无需记住标志，无需手动清理辅助函数，无需遗忘的字段泄露到 Axiom。GDPR 合规不应该需要一个冲刺阶段。
+生产环境默认启用。信用卡变成 `****1111`，邮箱变成 `a***@***.com`，IP、电话号码、JWT、IBAN：全部在你的控制台或输出端看到之前智能掩码。无需记住标志，无需手动清理辅助函数，无需遗忘的字段泄露到 Axiom。GDPR 合规不应该需要一个冲刺阶段。
+
 
 ### 头部 + 尾部采样
 
@@ -300,7 +306,8 @@ throw billingErrors.INSUFFICIENT_FUNDS({ available: 5, required: 100 })
 
 ### “我已经在用 pino 了。”
 
-pino 给你快速的逐行 JSON。evlog 给你那个 **加上** 宽事件，带有 `why`/`fix`/`link` 的结构化错误，头部 + 尾部采样，八个输出适配器，带有完整 o11y 的 AI SDK 集成，以及十二个框架的自动插桩。零传递依赖，更轻的安装，同样的工作做得更好。pino 是标准。evlog 是下一代。
+pino 给你快速的逐行 JSON。evlog 给你那个 **加上** 宽事件，带有 `why`/`fix`/`link` 的结构化错误，头部 + 尾部采样，十二个输出适配器，带有完整 o11y 的 AI SDK 集成，以及十二个框架的自动插桩。零传递依赖，更轻的安装，同样的工作做得更好。pino 是标准。evlog 是下一代。
+
 
 ### “我已经有 Sentry / Datadog 了。”
 

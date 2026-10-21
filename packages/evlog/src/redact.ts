@@ -232,8 +232,25 @@ export function redactValueByPaths(
 /**
  * Built-in PII detection patterns with smart masking.
  * Each builtin preserves just enough signal for debugging while scrubbing PII.
+ * They run on every string of every wide event, so each must stay linear in the input length.
+ * They run in this order. Bearer comes first so its token is masked whole before
+ * a shorter pattern rewrites part of it. IBAN comes before credit cards, whose pattern
+ * matches the digits inside a spaced IBAN and would leave the rest of it in the clear.
  */
 export const builtinPatterns = {
+  /** Bearer tokens → Bearer *** */
+  bearer: {
+    pattern: /\bBearer\s+[\w\-.~+/]{8,}=*/gi,
+    mask: () => 'Bearer ***',
+  },
+  /** IBAN → FR76****189 (country + check digits + last 3) */
+  iban: {
+    pattern: /\b[A-Z]{2}\d{2}[\s-]?[\dA-Z]{4}[\s-]?[\dA-Z]{4}[\s-]?[\dA-Z]{4}[\s-]?[\dA-Z]{0,4}[\s-]?[\dA-Z]{0,4}[\s-]?[\dA-Z]{0,4}\b/g,
+    mask: (m: string) => {
+      const clean = m.replace(/[\s-]/g, '')
+      return `${clean.slice(0, 4)}****${clean.slice(-3)}`
+    },
+  },
   /** Credit card numbers → ****1111 (PCI DSS: last 4 allowed) */
   creditCard: {
     pattern: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
@@ -242,7 +259,8 @@ export const builtinPatterns = {
   /** Email addresses → a***@***.com */
   email: {
     // Letters-only TLD, so pnpm store segments like `name@1.2.3` are not treated as addresses.
-    pattern: /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-zA-Z]{2,}\b/g,
+    // RFC 5321 lengths bound the scan from each start position.
+    pattern: /[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})*\.[a-zA-Z]{2,63}\b/g,
     mask: (m: string) => {
       const at = m.indexOf('@')
       if (at < 1) return '***@***'
@@ -282,21 +300,9 @@ export const builtinPatterns = {
   },
   /** JWT tokens → eyJ***.*** */
   jwt: {
-    pattern: /\beyJ[\w-]*\.[\w-]*\.[\w-]*\b/g,
+    // The header stops at the next `-eyJ`, where another match could start, so no start rescans it.
+    pattern: /\beyJ(?:(?!-eyJ)[\w-])*\.[\w-]*\.[\w-]*\b/g,
     mask: () => 'eyJ***.***',
-  },
-  /** Bearer tokens → Bearer *** */
-  bearer: {
-    pattern: /\bBearer\s+[\w\-.~+/]{8,}=*/gi,
-    mask: () => 'Bearer ***',
-  },
-  /** IBAN → FR76****189 (country + check digits + last 3) */
-  iban: {
-    pattern: /\b[A-Z]{2}\d{2}[\s-]?[\dA-Z]{4}[\s-]?[\dA-Z]{4}[\s-]?[\dA-Z]{4}[\s-]?[\dA-Z]{0,4}[\s-]?[\dA-Z]{0,4}[\s-]?[\dA-Z]{0,4}\b/g,
-    mask: (m: string) => {
-      const clean = m.replace(/[\s-]/g, '')
-      return `${clean.slice(0, 4)}****${clean.slice(-3)}`
-    },
   },
 } as const
 
@@ -360,9 +366,10 @@ export function resolveRedactConfig(input: boolean | RedactConfig | undefined): 
     }
   }
 
-  const maskers = Array.isArray(input.builtins)
-    ? input.builtins
-      .filter((name): name is BuiltinPatternName => name in builtinPatterns)
+  const { builtins } = input
+  const maskers = Array.isArray(builtins)
+    ? (Object.keys(builtinPatterns) as BuiltinPatternName[])
+      .filter(name => builtins.includes(name))
       .map(name => builtinPatterns[name])
       .map(b => [cloneRegex(b.pattern), b.mask] as Masker)
     : allBuiltinMaskers()

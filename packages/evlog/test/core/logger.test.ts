@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createError as h3CreateError } from 'h3'
-import { createError } from '../../src/error'
+import { EvlogError, createError } from '../../src/error'
 import { createLogger, createRequestLogger, getEnvironment, initLogger, isEnabled, log } from '../../src/logger'
 import { withFakeTimers } from '../helpers/timers'
 import { defined } from '../helpers/defined'
@@ -108,6 +108,15 @@ describe('log', () => {
       name: 'Error', message: 'Database unavailable', code: 'DB_UNAVAILABLE', status: 503,
     })
     expect(event.error?.stack).toContain('Database unavailable')
+  })
+
+  it('keeps why, fix and link on any error, as the client logger does', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ silent: true, redact: false, drain })
+    log.error(Object.assign(new Error('Quota exceeded'), { why: 'Plan limit reached', fix: 'Upgrade the plan', link: 'https://example.com/plans' }))
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error).toMatchObject({ why: 'Plan limit reached', fix: 'Upgrade the plan', link: 'https://example.com/plans' })
   })
 
   it('preserves EvlogError guidance and redacts internal fields in the global drain', () => {
@@ -227,6 +236,51 @@ describe('log', () => {
     expect(serialized.message).toBe('Job failed')
   })
 
+  it('leaves an object that defines toJSON to it', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ pretty: false, redact: false, drain })
+    class Card {
+      constructor(readonly number: string, readonly error: Error) {}
+      toJSON() {
+        return { last4: this.number.slice(-4) }
+      }
+    }
+    log.error({ action: 'checkout', card: new Card('4242424242424242', new Error('Declined')) })
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(JSON.parse(JSON.stringify(event)).card).toEqual({ last4: '4242' })
+  })
+
+  it.each([
+    ['an Error', (error: Error) => log.error(error)],
+    ['an object event', (error: Error) => log.error({ action: 'checkout', error })],
+  ])('drops the data and internal fields an error\'s own toJSON leaves out (%s)', (_name, logIt) => {
+    const { drain } = createPipelineSpies()
+    initLogger({ pretty: false, redact: false, drain })
+    class PaymentError extends Error {
+      data = { cardNumber: '4242424242424242' }
+      internal = { token: 'tok_secret' }
+      toJSON() {
+        return { name: this.name, message: this.message }
+      }
+    }
+    logIt(new PaymentError('Declined'))
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error).toMatchObject({ name: 'Error', message: 'Declined', stack: expect.any(String) })
+    expect(JSON.stringify(event)).not.toContain('4242424242424242')
+    expect(JSON.stringify(event)).not.toContain('tok_secret')
+  })
+
+  it('keeps the data an h3 error carries', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ pretty: false, redact: false, drain })
+    log.error({ action: 'checkout', error: h3CreateError({ statusCode: 502, message: 'Upstream failed', data: { provider: 'stripe' } }) })
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error).toMatchObject({ statusCode: 502, data: { provider: 'stripe' }, stack: expect.any(String) })
+  })
+
   it('serializes an h3 wrapper once, keeping its status and the original error', () => {
     const { drain } = createPipelineSpies()
     initLogger({ pretty: false, drain })
@@ -248,6 +302,30 @@ describe('log', () => {
       data: { why: 'Card declined by the issuer', fix: 'Use a different payment method' },
     })
     expect(serialized).not.toHaveProperty('cause')
+  })
+
+  it('serializes an EvlogError without reading its legacy status getters', () => {
+    const legacyGetters = ['statusCode', 'statusText', 'statusMessage'] as const
+    const spies = legacyGetters.map(name => vi.spyOn(EvlogError.prototype, name, 'get'))
+    const { drain } = createPipelineSpies()
+    initLogger({ pretty: false, drain })
+    log.error({ action: 'checkout', error: createError({ message: 'Payment failed', status: 402 }) })
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error).toMatchObject({ status: 402, statusCode: 402, statusText: 'Payment failed', statusMessage: 'Payment failed' })
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled()
+    spies.forEach(spy => spy.mockRestore())
+  })
+
+  it('marks the data of an h3 wrapper that points back at it as circular', () => {
+    const { drain } = createPipelineSpies()
+    initLogger({ pretty: false, redact: false, drain })
+    const wrapper = h3CreateError(new Error('kaboom') as any) as any
+    wrapper.data = { self: wrapper }
+    log.error(wrapper)
+
+    const event = defined(findEventViaDrain(drain, event => event.level === 'error'))
+    expect(event.error).toMatchObject({ message: 'kaboom', data: { self: '[Circular]' } })
   })
 
   it('serializes a plain error wrapped by h3 once, keeping the h3 status code', () => {
@@ -434,6 +512,144 @@ describe('createLogger', () => {
       message: 'Upstream request failed',
       internal: { code: 'UPSTREAM_TIMEOUT' },
     })
+  })
+
+  it('does not write into a payload logged as context and then thrown as error data', () => {
+    const data = { reason: 'refresh token rejected' }
+    const logger = createLogger()
+
+    logger.warn('refresh failed', { error: data })
+    logger.error(h3CreateError({ status: 401, message: 'Unauthorized', data }))
+
+    expect(data).toEqual({ reason: 'refresh token rejected' })
+    const event = defined(logger.emit(), 'emitted event')
+    expect(() => JSON.stringify(event)).not.toThrow()
+  })
+
+  it('does not write into a nested object when a later set merges into its key', () => {
+    const user = { id: '123' }
+    const logger = createLogger()
+
+    logger.set({ user })
+    logger.set({ user: { plan: 'pro' } })
+
+    expect(user).toEqual({ id: '123' })
+    expect(logger.getContext().user).toEqual({ id: '123', plan: 'pro' })
+  })
+
+  it('keeps null fields and a non-enumerable toJSON on a nested record', () => {
+    const payload = { status: null, visible: 1, hidden: 2 }
+    Object.defineProperty(payload, 'toJSON', { value: () => ({ visible: 1 }), enumerable: false })
+    const logger = createLogger()
+
+    logger.set({ payload, other: { status: null } })
+
+    const context = logger.getContext()
+    expect(context.other).toEqual({ status: null })
+    expect(JSON.stringify(context.payload)).toBe('{"visible":1}')
+  })
+
+  it('keeps a non-enumerable toJSON when a nested record is set twice under the same key', () => {
+    const payload = { visible: 1, secret: 'hunter2' }
+    Object.defineProperty(payload, 'toJSON', { value: () => ({ visible: 1 }), enumerable: false })
+    const logger = createLogger()
+
+    logger.set({ payload })
+    logger.set({ payload: { extra: 2 } })
+
+    expect(JSON.stringify(logger.getContext().payload)).toBe('{"visible":1}')
+  })
+
+  it('stores a __proto__ key as a field instead of writing to Object.prototype', () => {
+    const logger = createLogger()
+
+    logger.set(JSON.parse('{"__proto__":{"polluted":true},"nested":{"__proto__":{"polluted":true}}}'))
+
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
+  it('stores a __proto__ key as a field when merging into a field that already exists', () => {
+    const logger = createLogger({ user: { id: '1' } })
+
+    logger.info('payload', JSON.parse('{"user":{"__proto__":{"polluted":true},"plan":"pro"}}'))
+
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+    const user = logger.getContext().user as Record<string, unknown>
+    expect(user).toMatchObject({ id: '1', plan: 'pro' })
+    expect(Object.getOwnPropertyDescriptor(user, '__proto__')?.value).toEqual({ polluted: true })
+  })
+
+  it('cuts a cycle in the initial context instead of overflowing the stack', () => {
+    initLogger({ pretty: false, redact: true })
+    const context: Record<string, unknown> = { jobId: 'job-1' }
+    context.self = context
+    const event = defined(createLogger(context).emit(), 'emitted event')
+    expect(event.self).toBe('[Circular]')
+    expect(() => JSON.stringify(event)).not.toThrow()
+  })
+
+  it('cuts a cycle passed to emit()', () => {
+    initLogger({ pretty: false, redact: true })
+    const extra: Record<string, unknown> = { a: 1 }
+    extra.self = extra
+    const event = defined(createLogger().emit({ extra }), 'emitted event')
+    expect(event.extra).toEqual({ a: 1, self: '[Circular]' })
+  })
+
+  it('serializes an error in the initial context like one passed to set()', () => {
+    const event = defined(createLogger({ cause: new Error('upstream down') }).emit(), 'emitted event')
+    expect(event.cause).not.toBeInstanceOf(Error)
+    expect(JSON.parse(JSON.stringify(event)).cause).toMatchObject({ name: 'Error', message: 'upstream down' })
+  })
+
+  it('replaces a class instance instead of writing into the caller\'s object', () => {
+    class Account {
+      constructor(public id: string) {}
+    }
+    const account = new Account('acc_1')
+    const logger = createLogger()
+    logger.set({ account })
+    logger.set({ account: { plan: 'pro' } })
+
+    expect(account).toEqual(new Account('acc_1'))
+    expect(logger.getContext().account).toEqual({ plan: 'pro' })
+  })
+
+  it.each(['set()', 'the initial context'])('replaces a class instance holding an error, passed to %s', (via) => {
+    class Account {
+      constructor(public id: string, public lastError: Error) {}
+    }
+    const account = new Account('acc_1', new Error('card declined'))
+    const logger = via === 'set()' ? createLogger() : createLogger({ account })
+    if (via === 'set()') logger.set({ account })
+    logger.set({ account: { plan: 'pro' } })
+    expect(logger.getContext().account).toEqual({ plan: 'pro' })
+  })
+
+  it('replaces a Date with the next value set on the same key', () => {
+    const first = new Date(0)
+    const second = new Date(86_400_000)
+    const logger = createLogger()
+    logger.set({ at: first })
+    logger.set({ at: second })
+    expect(logger.getContext().at).toBe(second)
+
+    logger.set({ at: { tz: 'UTC' } })
+    expect(logger.getContext().at).toEqual({ tz: 'UTC' })
+    expect(Object.hasOwn(second, 'tz')).toBe(false)
+  })
+
+  it('keeps a class instance in the error field untouched when error() records an error', () => {
+    class Failure {
+      constructor(public reason: string) {}
+    }
+    const failure = new Failure('declined')
+    const logger = createLogger()
+    logger.set({ error: failure })
+    logger.error(new Error('Payment failed'))
+
+    expect(failure).toEqual(new Failure('declined'))
+    expect(logger.getContext().error).toMatchObject({ name: 'Error', message: 'Payment failed' })
   })
 
   it('creates logger with empty context by default', () => {
