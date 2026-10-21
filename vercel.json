@@ -1,6 +1,0 @@
-{
-  "buildCommand": "pnpm build:docs",
-  "framework": null,
-  "installCommand": "npm install -g pnpm && pnpm install",
-  "outputDirectory": ".output/server"
-}

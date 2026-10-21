@@ -1,0 +1,30 @@
+FROM node:24-bookworm AS build
+
+RUN npm install --global pnpm@11.28.3
+
+WORKDIR /app
+
+COPY --exclude=node_modules \
+    --exclude=.git \
+    --exclude=.env* \
+    --exclude=.turbo \
+    --exclude=apps/docs/.nuxt \
+    --exclude=apps/docs/.output \
+    . .
+
+RUN pnpm install --frozen-lockfile
+COPY .git ./.git
+RUN NITRO_PRESET=node-server pnpm build:docs
+
+FROM node:24-bookworm-slim
+
+ENV NODE_ENV=production \
+    NITRO_HOST=0.0.0.0
+
+WORKDIR /app
+
+COPY --from=build /app/apps/docs/.output ./.output
+
+EXPOSE 3000
+
+CMD ["node", ".output/server/index.mjs"]
