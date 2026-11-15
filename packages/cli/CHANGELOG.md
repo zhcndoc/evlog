@@ -1,5 +1,21 @@
 # @evlog/cli
 
+## 0.11.2
+
+### Patch Changes
+
+- [#990](https://github.com/evloghq/evlog/pull/990) [`b4c170f`](https://github.com/evloghq/evlog/commit/b4c170fb0ae178ab1e5bb63369d365882877c61e) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Escape control characters in `evlog logs` output. Before, a logged value such as a request path containing `\r\x1b[2K` was printed to the terminal as is, so it could erase the line it was on and print a fake log line in its place. The one-line view, the full view of one event, its `FIELDS` block and the `stats` table now print control characters as `\r`, `\n` and `\u001b`, the way evlog's pretty output does since its last patch. Tabs are kept. `--json` output is unchanged.
+
+- [#992](https://github.com/evloghq/evlog/pull/992) [`6f6e9db`](https://github.com/evloghq/evlog/commit/6f6e9dba09776f7491d5330aa1371a820b426dc6) Thanks [@HugoRCD](https://github.com/HugoRCD)! - `evlog map` now reads a Vue route file whose `<script>` block closes with `</script >` or another closing tag that has whitespace before `>`. Before, it found no script in that file and skipped it.
+
+## 0.11.1
+
+### Patch Changes
+
+- [#945](https://github.com/evloghq/evlog/pull/945) [`17b0411`](https://github.com/evloghq/evlog/commit/17b04119f4a162f5103512eaa90dc03dfb1cc117) Thanks [@evlogai](https://github.com/apps/evlogai)! - `evlog init` now writes `evlog.config.ts` with `process.env.NODE_ENV` in place of `import.meta.dev` for Nuxt, Nitro and TanStack Start, the same condition Next, Hono, Express and Fastify already used. The generated file no longer reports `Property 'dev' does not exist on type 'ImportMeta'` in a fresh Nuxt project before `nuxi prepare` has run. The production drain is still selected in a Nuxt production build, because Nitro inlines `NODE_ENV` there. Existing `evlog.config.ts` files are not rewritten; change the condition by hand to pick this up.
+
+- [#949](https://github.com/evloghq/evlog/pull/949) [`20aaa2c`](https://github.com/evloghq/evlog/commit/20aaa2c271721e195c13d083ee0ee92d030bd9a2) Thanks [@evlogai](https://github.com/apps/evlogai)! - `evlog logs` and the NuxtHub log viewer now show the HTTP status of an error from `error.status`, falling back to `error.statusCode` for files written before v3. Before, a v3 error event rendered no status, and a 2.x error created with only `status` (for example a plain h3 error) rendered none either.
+
 ## 0.11.0
 
 ### Minor Changes

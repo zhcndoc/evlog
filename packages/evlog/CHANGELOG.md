@@ -1,5 +1,45 @@
 # evlog
 
+## 2.35.1
+
+### Patch Changes
+
+- [#1007](https://github.com/evloghq/evlog/pull/1007) [`b9a6239`](https://github.com/evloghq/evlog/commit/b9a6239d6196b2db647ea86adbac2ef0a27aa380) Thanks [@danielroe](https://github.com/danielroe)! - Register the Nitro v3 error handler and plugin in the Nuxt module when running on Nitro 3, so error responses keep their status code and JSON content type under Nuxt 5.
+
+## 2.35.0
+
+### Minor Changes
+
+- [#999](https://github.com/evloghq/evlog/pull/999) [`b69c86e`](https://github.com/evloghq/evlog/commit/b69c86e6815741b0f34fbea4dd0db32702358374) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Add three opt-in redaction built-ins that detect credentials by value, under any key and inside longer strings. `apiKeys` masks GitHub, npm, Anthropic, OpenAI, Stripe and Slack tokens and AWS access key IDs to their prefix (`ghp_***`), `privateKey` masks a PEM private key block after its header, and `urlPassword` masks the password in a URL (`postgres://app:***@db`). They are off by default, so `redact: true` logs what it did before. `builtins` runs only the names it lists, so add them next to the defaults:
+
+  ```ts
+  redact: {
+    builtins: ['creditCard', 'email', 'ipv4', 'phone', 'jwt', 'bearer', 'iban', 'secrets', 'apiKeys', 'privateKey', 'urlPassword'],
+  }
+  ```
+
+### Patch Changes
+
+- [#974](https://github.com/evloghq/evlog/pull/974) [`75389a3`](https://github.com/evloghq/evlog/commit/75389a3c2415aee4bbc003e766a3318b785bab64) Thanks [@evlogai](https://github.com/apps/evlogai)! - Widen the optional `nitro` peer range so that `nitro@3.0.261029-rc` installs without a peer conflict. Before, npm failed with ERESOLVE and pnpm printed a peer warning when a project used the Nitro release candidate with evlog 2.x.
+
+- [#988](https://github.com/evloghq/evlog/pull/988) [`8a0aef6`](https://github.com/evloghq/evlog/commit/8a0aef6c79b20afbcefa074e4b552ce1ccbd72ec) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Parse stack frames in linear time. A stack line that starts with `at ` and repeats ` (`, which an error message containing a newline puts in the stack, took time that grew with the square of its length: close to 400 ms for a 40,000-character message, and twice that when the line starts with `at async`. The Sentry drain parses stacks in production, and error serialization and pretty output parse them in development, so an error message built from request input could block the event loop. Frames are parsed the same way as before.
+
+- [#981](https://github.com/evloghq/evlog/pull/981) [`3446e4a`](https://github.com/evloghq/evlog/commit/3446e4a30477bd149f41d9e27e0450e9484714d4) Thanks [@HugoRCD](https://github.com/HugoRCD)! - Escape control characters in pretty output on Node. Before, a value such as a user agent containing `\r\x1b[2K` was written to the terminal as is, so it could erase the line it was printed on and write a fake log line in its place. Field keys and values, the request method and path, error messages and guidance, AI fields and tagged logs now print control characters as `\r`, `\n` and `\u001b`, the way JSON output already shows them, so a multi-line value now prints on one line. Tabs are kept. JSON output is unchanged.
+
+- [#963](https://github.com/evloghq/evlog/pull/963) [`15b833e`](https://github.com/evloghq/evlog/commit/15b833eca6b799dbc0bdfa2a7bbdcc2c256b3630) Thanks [@onmax](https://github.com/onmax)! - Keep request errors in Nitro 3 wide events when an earlier async error hook delays evlog's hook. Emit once without late-write warnings.
+
+## 2.34.0
+
+### Minor Changes
+
+- [#918](https://github.com/evloghq/evlog/pull/918) [`e3b6ab2`](https://github.com/evloghq/evlog/commit/e3b6ab259a44c7b037056b19e4c41ced153731fa) Thanks [@evlogai](https://github.com/apps/evlogai)! - The `evlog/vite` plugin now reads `evlog.config.ts` from the Vite root, the same file the CLI, Nuxt and Nitro read, so Vite-based apps (TanStack Start, React Router, SvelteKit, Astro) can keep their settings in the shared file. The file is the base and plugin options override it key by key. Only the serializable settings (`service`, `environment`, `enabled`, `pretty`, `silent`, `sampling`, `minLevel`, `stringify`) are read from the file; its functions (`drain`, `enrich`, `keep`, `plugins`) are not injected by the plugin. Without a file, the plugin output is unchanged. A file that fails to load fails the build with its path in the error.
+
+### Patch Changes
+
+- [#946](https://github.com/evloghq/evlog/pull/946) [`c7c5d8c`](https://github.com/evloghq/evlog/commit/c7c5d8c2d611ec1dfdf99998d650db2df1eb6892) Thanks [@evlogai](https://github.com/apps/evlogai)! - `pnpm dlx evlog <command>` and `pnpm dlx @evlog/cli <command>` work on pnpm 11 instead of hanging. pnpm 11 links packages from its global store, so the `evlog` bin in a dlx install could not find the `@evlog/cli` installed next to it and fetched it again, forever. The bin now also looks for `@evlog/cli` from the `node_modules/.bin` folder that launched it. If a fetch it started still lands back on it, it exits with status 1 and suggests `npx --yes @evlog/cli <command>` instead of fetching a third time.
+
+- [#927](https://github.com/evloghq/evlog/pull/927) [`b395334`](https://github.com/evloghq/evlog/commit/b395334d68b5737a0c08b7d4477194c4f140af86) Thanks [@nathanchase](https://github.com/nathanchase)! - The Nitro plugin and the client ingest route no longer throw `Cannot read properties of undefined (reading 'catch')` on every request under Nitro 3. hookable 6 returns `undefined` from `callHook` when no `evlog:drain` hook is registered or every registered hook is synchronous, and evlog now accepts that.
+
 ## 2.33.1
 
 ### Patch Changes

@@ -1,8 +1,8 @@
-# 适配器源码模板
+# Adapter Source Template
 
-适用于 `packages/evlog/src/adapters/{name}.ts` 的完整 TypeScript 模板，使用公共工具包原语 `defineHttpDrain` + `resolveAdapterConfig`。参考最新的适配器（`loki.ts`、`clickhouse.ts`）。
+Complete TypeScript template for `packages/evlog/src/adapters/{name}.ts` using the public toolkit primitives `defineHttpDrain` + `resolveAdapterConfig`. Modeled on the most recent adapters (`loki.ts`, `clickhouse.ts`).
 
-将 `{Name}`、`{name}` 和 `{NAME}` 替换为实际的服务名称。
+Replace `{Name}`, `{name}`, and `{NAME}` with the actual service name.
 
 ```typescript
 import type { WideEvent } from '../types'
@@ -11,24 +11,24 @@ import { formatPublicEnvKeys, resolveAdapterConfig } from '../shared/config'
 import type { HttpDrainRequest } from '../shared/drain'
 import { defineHttpDrain, sendEncodedDrainRequest } from '../shared/drain'
 
-// --- 1. 配置接口 ---------------------------------------------------------
-// 服务专用字段。标准名称：apiKey、endpoint、serviceName、
-// timeout、retries。
+// --- 1. Config Interface -------------------------------------------------
+// Service-specific fields. Standard names: apiKey, endpoint, serviceName,
+// timeout, retries.
 
 export interface {Name}Config {
-  /** {Name} API 密钥 */
+  /** {Name} API key */
   apiKey: string
-  /** {Name} API 端点。默认值：https://api.{name}.com */
+  /** {Name} API endpoint. Default: https://api.{name}.com */
   endpoint?: string
-  /** 请求超时时间（毫秒）。默认值：5000 */
+  /** Request timeout in milliseconds. Default: 5000 */
   timeout?: number
-  /** 发生临时故障时的重试次数。默认值：2 */
+  /** Number of retry attempts on transient failures. Default: 2 */
   retries?: number
-  // 在此处添加服务专用字段（dataset、project、region 等）
+  // Add service-specific fields here (dataset, project, region, etc.)
 }
 
-// 字段清单——驱动 resolveAdapterConfig（覆盖项 → runtimeConfig.evlog.{name}
-// → runtimeConfig.{name} → 环境变量）。优先使用 NUXT_-前缀的键，以便静默兼容 Nuxt。
+// Field manifest — drives resolveAdapterConfig (overrides → runtimeConfig.evlog.{name}
+// → runtimeConfig.{name} → env). NUXT_-prefixed keys first for silent Nuxt compat.
 const {NAME}_FIELDS: ConfigField<{Name}Config>[] = [
   { key: 'apiKey', env: ['NUXT_{NAME}_API_KEY', '{NAME}_API_KEY'] },
   { key: 'endpoint', env: ['NUXT_{NAME}_ENDPOINT', '{NAME}_ENDPOINT'] },
@@ -36,11 +36,12 @@ const {NAME}_FIELDS: ConfigField<{Name}Config>[] = [
   { key: 'retries' },
 ]
 
-// --- 2. 事件转换（条件性内容——当服务接受任意 JSON 时删除整个部分）----
-// 如果服务需要特定的数据结构，请导出一个转换器，以便单独进行测试。
-// 如果删除此部分，编码器主体将变为
-// `JSON.stringify(events)`，并且 test-template.md 中的转换器测试也会被删除——
-// 不要为了保持对称性而保留一个透传转换器。
+// --- 2. Event Transformation (CONDITIONAL — delete this whole section when
+// the service accepts arbitrary JSON) ------------------------------------
+// If the service needs a specific shape, export a converter so it's testable
+// independently. If you delete it, the encoder body becomes
+// `JSON.stringify(events)` and the converter tests in test-template.md are
+// dropped too — don't keep a pass-through converter for symmetry.
 
 export interface {Name}Event {
   timestamp: string
@@ -48,16 +49,16 @@ export interface {Name}Event {
   data: Record<string, unknown>
 }
 
-/** 将 WideEvent 转换为 {Name} 的事件格式。 */
+/** Convert a WideEvent to {Name}'s event format. */
 export function to{Name}Event(event: WideEvent): {Name}Event {
   const { timestamp, level, ...rest } = event
   return { timestamp, level, data: rest }
 }
 
-// --- 3. 编码器（私有，由 drain 和直接发送辅助函数共享）-----------------
-// 包含请求所需的一切内容，不执行 I/O。这个单一函数确保
-// createXDrain() 和 sendBatchToX() 始终保持一致——编码一致性由
-// test/adapters/encode-parity.test.ts 固定测试。
+// --- 3. Encoder (private, shared by drain and direct-send helpers) --------
+// Everything the request needs, no I/O. This single function is what keeps
+// createXDrain() and sendBatchToX() in lockstep — encode parity is pinned by
+// test/adapters/encode-parity.test.ts.
 
 function encode{Name}Request(events: WideEvent[], config: {Name}Config): HttpDrainRequest {
   const endpoint = (config.endpoint ?? 'https://api.{name}.com').replace(/\/+$/, '')
@@ -71,24 +72,24 @@ function encode{Name}Request(events: WideEvent[], config: {Name}Config): HttpDra
   }
 }
 
-// --- 4. 基于 `defineHttpDrain` 构建工厂函数 ------------------------------
+// --- 4. Factory built on `defineHttpDrain` ------------------------------
 /**
- * 创建一个将宽事件发送到 [{Name}](https://{name}.com/docs) 的 drain。
+ * Create a drain that sends wide events to [{Name}](https://{name}.com/docs).
  *
- * 配置优先级（从高到低）：
- * 1. 传递给 create{Name}Drain() 的覆盖项
+ * Configuration priority (highest to lowest):
+ * 1. Overrides passed to create{Name}Drain()
  * 2. runtimeConfig.evlog.{name}
  * 3. runtimeConfig.{name}
- * 4. 环境变量：{NAME}_*
+ * 4. Environment variables: {NAME}_*
  *
  * @example
  * ```ts
  * import { create{Name}Drain } from 'evlog/{name}'
  *
- * // 零配置——设置 {NAME}_API_KEY 环境变量
+ * // Zero config — set {NAME}_API_KEY env var
  * initLogger({ drain: create{Name}Drain() })
  *
- * // 使用覆盖项
+ * // With overrides
  * initLogger({ drain: create{Name}Drain({ apiKey: 'my-key' }) })
  * ```
  */
@@ -99,8 +100,8 @@ export function create{Name}Drain(overrides?: Partial<{Name}Config>) {
     resolve: async () => {
       const config = await resolveAdapterConfig<{Name}Config>('{name}', {NAME}_FIELDS, overrides)
       if (!config.apiKey) {
-        // 返回 null 会跳过此批次：不发送请求，也不会抛出异常——但会记录
-        // 缺失信息，以便在控制台中发现配置错误的部署。
+        // Returning null skips the batch: no request, no throw — but the miss
+        // is logged so a misconfigured deploy is visible in the console.
         console.error(`[evlog/{name}] Missing apiKey. Set ${formatPublicEnvKeys(['NUXT_{NAME}_API_KEY', '{NAME}_API_KEY'])} env var or pass apiKey to create{Name}Drain()`)
         return null
       }
@@ -110,15 +111,15 @@ export function create{Name}Drain(overrides?: Partial<{Name}Config>) {
   })
 }
 
-// --- 5. 直接发送辅助函数 ----------------------------------------------
-// 使用相同的编码器和传输包装器——绝不能使用单独的 fetch 路径。
+// --- 5. Direct send helpers ----------------------------------------------
+// Same encoder, same transport wrapper — never a separate fetch path.
 
-/** 向 {Name} 发送单个宽事件。 */
+/** Send a single wide event to {Name}. */
 export async function sendTo{Name}(event: WideEvent, config: {Name}Config): Promise<void> {
   await sendBatchTo{Name}([event], config)
 }
 
-/** 在一个请求中向 {Name} 发送一批宽事件。 */
+/** Send a batch of wide events to {Name} in one request. */
 export async function sendBatchTo{Name}(events: WideEvent[], config: {Name}Config): Promise<void> {
   if (events.length === 0) return
   await sendEncodedDrainRequest(encode{Name}Request(events, config), {
@@ -130,18 +131,19 @@ export async function sendBatchTo{Name}(events: WideEvent[], config: {Name}Confi
 }
 ```
 
-## `defineHttpDrain` / `sendEncodedDrainRequest` 为你处理的事项
+## What `defineHttpDrain` / `sendEncodedDrainRequest` handle for you
 
-- 规范化 `DrainContext | DrainContext[]`，并在批次为空时提前返回
-- 当 `resolve()` 返回 `null` 时静默跳过
-- 通过 `httpPost`（`../shared/http`）进行传输：超时时间（默认 5000ms）、重试次数（默认 2）、evlog 身份标头（`User-Agent: evlog/x.y.z`、`X-Evlog-Source`）
-- 错误日志（`[evlog/{name}] Failed to send events:`）不会向请求管道抛出异常
-- 返回的 drain 上提供一个 `raw` 变体，该变体在失败时拒绝，并只执行一次尝试（除非在配置中设置了 `retries`）。`createDrainPipeline` 使用它来处理自身的重试和 `onDropped` 失败；绝不要在 `encode` 或自定义 `send` 中吞掉错误
+- Normalizing `DrainContext | DrainContext[]` and early-return on empty batches
+- Skipping silently when `resolve()` returns `null`
+- Transport via `httpPost` (`../shared/http`): timeout (default 5000ms), retries (default 2), evlog identity headers (`User-Agent: evlog/x.y.z`, `X-Evlog-Source`)
+- Error logging (`[evlog/{name}] Failed to send events:`) that never throws into the request pipeline
+- A `raw` variant on the returned drain that rejects on failure and performs a single attempt (unless `retries` is set on the config). `createDrainPipeline` uses it so its retry/`onDropped` own failures; never swallow errors inside `encode` or a custom `send`
 
-## 自定义说明
+## Customization Notes
 
-- **身份验证方式**：某些服务使用 `Authorization: Bearer`，其他服务使用自定义标头（`X-API-Key`、ClickHouse 的 `X-ClickHouse-User`/`X-ClickHouse-Key`）或 HTTP Basic（Loki + Grafana Cloud）。调整 `encode{Name}Request`，优先使用标头而不是查询参数，以确保凭据不会出现在服务器端查询日志中。
-- **负载格式**：原始 JSON 数组（Axiom）、包装对象（PostHog `{ api_key, batch }`）、协议结构（OTLP）、NDJSON 风格的请求体（ClickHouse `JSONEachRow`）。调整编码器；当转换并不简单时，导出中间构建器（`build{Name}Payload`）。
-- **非 HTTP 传输**：如果服务无法适配 `defineHttpDrain`，请使用 `defineDrain<TConfig>({ name, resolve, send })`，参见 `fs.ts` 和 `memory.ts`。
-- **已弃用的别名**：重命名配置字段（例如 `token` → `apiKey`）时，保留两个 `ConfigField` 条目，并通过 `../shared/config` 中的 `applyDeprecatedAlias(config, { adapter, from, to })` 进行映射。参见 `axiom.ts` 和 `better-stack.ts`。
-- **边缘环境安全性**：不要使用 `Buffer`（使用 `TextEncoder` + `btoa` 进行 Basic 身份验证，参见 `loki.ts` 中的 `toBasicCredentials`），不要导入仅限 Node 的模块。如果某个运行时确实无法支持，请在 `resolve()` 中返回 `null` 并发出一次性警告（参见 `fs.ts` 中的 `isEdgeRuntime()`）。
+- **Auth style**: Some services use `Authorization: Bearer`, others a custom header (`X-API-Key`, ClickHouse's `X-ClickHouse-User`/`X-ClickHouse-Key`) or HTTP Basic (Loki + Grafana Cloud). Adjust `encode{Name}Request`, and prefer headers over query params so credentials never land in server-side query logs.
+- **Payload format**: Raw JSON arrays (Axiom), wrapper objects (PostHog `{ api_key, batch }`), protocol structures (OTLP), NDJSON-style bodies (ClickHouse `JSONEachRow`). Adapt the encoder; export intermediate builders (`build{Name}Payload`) when the transformation is non-trivial.
+- **Non-HTTP transport**: If the service cannot fit `defineHttpDrain`, use `defineDrain<TConfig>({ name, resolve, send })`, see `fs.ts` and `memory.ts`.
+- **Per-request caps**: This template sends a batch as one request. If the provider documents a cap on entries or bytes per request, `sendBatchTo{Name}` splits the batch with `chunkSerialized` from `../shared/chunk` and sends one request per chunk, and the factory switches to `defineDrain` with `send: sendBatchTo{Name}` and `rawSend` forcing `retries: config.retries ?? 0`. Follow the per-request limits rule in Step 1 of `SKILL.md`, and copy `datadog.ts` or `sentry.ts`.
+- **Deprecated aliases**: When renaming a config field (e.g. `token` → `apiKey`), keep both as `ConfigField` entries and map via `applyDeprecatedAlias(config, { adapter, from, to })` from `../shared/config`. See `axiom.ts` and `better-stack.ts`.
+- **Edge safety**: no `Buffer` (use `TextEncoder` + `btoa` for Basic auth, see `toBasicCredentials` in `loki.ts`), no Node-only imports. If a runtime genuinely can't be supported, return `null` from `resolve()` with a one-time warning (see `isEdgeRuntime()` in `fs.ts`).

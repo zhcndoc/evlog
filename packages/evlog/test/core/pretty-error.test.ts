@@ -16,6 +16,7 @@ import {
 import { readCodeSnippetFromDisk } from '../../src/shared/pretty-error-snippet.node'
 import { enrichErrorStackForDev } from '../../src/shared/enrich-error-stack.node'
 import { prependNitroErrorHandler } from '../../src/nitro'
+import { expectLinearTime } from '../helpers/timers'
 
 const SAMPLE_STACK = `Error: Payment processing failed
     at Object.handler (file:///Users/dev/project/server/api/test.get.ts:100:0)
@@ -80,6 +81,33 @@ describe('parseStackFrames', () => {
     const primary = pickPrimaryFrame(frames)
     expect(primary?.file).toContain('server/api/test.get.ts')
     expect(primary?.line).toBe(100)
+  })
+
+  it('reads the function name up to the first ` (` and the location from the end of the line', () => {
+    const frames = parseStackFrames(`Error: x
+    at handler (/Users/dev/My Project (copy)/server/api/a.ts:3:7)
+    at async Object.run (file:///Users/dev/project/server/run.ts:12:5)
+    at eval (eval at compile (file:///Users/dev/project/lib/tpl.js:4:9), <anonymous>:1:2)
+    at file:///Users/dev/project/server/b.ts:8:1
+    at new Promise (<anonymous>)`)
+
+    expect(frames.map(({ fn, file, line, column }) => ({ fn, file, line, column }))).toEqual([
+      { fn: 'handler', file: '/Users/dev/My Project (copy)/server/api/a.ts', line: 3, column: 7 },
+      { fn: 'async Object.run', file: 'file:///Users/dev/project/server/run.ts', line: 12, column: 5 },
+      { fn: 'eval', file: 'eval at compile (file:///Users/dev/project/lib/tpl.js:4:9), <anonymous>', line: 1, column: 2 },
+      { fn: undefined, file: 'file:///Users/dev/project/server/b.ts', line: 8, column: 1 },
+    ])
+  })
+
+  it('parses attacker-shaped frame lines in linear time', () => {
+    const lines = [
+      (n: number) => `at a${' ('.repeat(4_096 * n)}`,
+      (n: number) => `at async a${' ('.repeat(4_096 * n)}`,
+      (n: number) => `at a (${'1:'.repeat(4_096 * n)})`,
+    ]
+    for (const line of lines) {
+      expectLinearTime(frame => parseStackFrames(`Error: invalid value\n    ${frame}`), line, line(1).slice(0, 16))
+    }
   })
 
   it('skips evlog internal frames from createError throws', () => {
@@ -215,6 +243,28 @@ describe('buildErrorEntries', () => {
     expect(children.some(line => line.includes('Fix:'))).toBe(true)
     expect(children.some(line => line.includes('More:'))).toBe(true)
     expect(children.some(line => line.includes('hidden in node_modules'))).toBe(true)
+  })
+
+  it('keeps the frames of a stack with CRLF line endings', () => {
+    const lf = buildErrorEntries({ message: 'Payment failed', stack: SAMPLE_STACK }, { snippet: false, stackDepth: 2, compact: false })
+    const crlf = buildErrorEntries({ message: 'Payment failed', stack: SAMPLE_STACK.replaceAll('\n', '\r\n') }, { snippet: false, stackDepth: 2, compact: false })
+
+    expect(crlf[0]?.children).toEqual(lf[0]?.children)
+    expect(crlf[0]?.children?.some(line => line.includes('server/api/test.get.ts:100'))).toBe(true)
+  })
+
+  it('reads the snippet from the frame path as written and escapes it only for display', () => {
+    const reader = vi.fn(() => null)
+    registerPrettyErrorSnippetReader(reader)
+    try {
+      const file = '/Users/dev/project/server/api/te\x07st.get.ts'
+      const entries = buildErrorEntries({ message: 'x', stack: `Error: x\n    at handler (${file}:10:5)` }, { snippet: true, cwd: '/Users/dev/project' })
+
+      expect(reader).toHaveBeenCalledWith(file, 10, expect.any(Number))
+      expect(entries[0]?.children).toContain('\x1B[2m   at handler (server/api/te\\u0007st.get.ts:10)\x1B[0m')
+    } finally {
+      registerPrettyErrorSnippetReader(null)
+    }
   })
 
   it('omits redundant caused-by when it matches the message', () => {

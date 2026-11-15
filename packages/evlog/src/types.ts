@@ -130,8 +130,9 @@ export type RedactReplacement =
  * Auto-redaction configuration for PII protection.
  * Scrubs sensitive data from wide events before console output and draining.
  *
- * Built-in patterns are included by default. Opt out with `builtins: false`
- * or select specific ones with `builtins: ['email', 'creditCard']`.
+ * Built-in patterns are included by default, except the credential ones
+ * (`apiKeys`, `privateKey`, `urlPassword`), which run only when listed. Opt out
+ * with `builtins: false` or select specific ones with `builtins: ['email', 'creditCard']`.
  */
 export interface RedactConfig {
   /**
@@ -146,17 +147,24 @@ export interface RedactConfig {
   patterns?: RegExp[]
   /**
    * Control built-in PII patterns.
-   * - `undefined` / omitted → all built-ins enabled (default)
+   * - `undefined` / omitted → every built-in except `apiKeys`, `privateKey` and `urlPassword` (default)
    * - `false` → no built-ins, only custom `paths` and `patterns`
    * - `['email', 'creditCard', ...]` → only the listed built-ins
    *
-   * Available: `'creditCard'`, `'email'`, `'ipv4'`, `'phone'`, `'jwt'`, `'bearer'`, `'iban'`, `'secrets'`
+   * Available: `'creditCard'`, `'email'`, `'ipv4'`, `'phone'`, `'jwt'`, `'bearer'`, `'iban'`, `'secrets'`,
+   * and the opt-in `'apiKeys'`, `'privateKey'`, `'urlPassword'`
    *
    * `'secrets'` matches key names instead of values: any key ending in `password`,
    * `passwd`, `secret` or `token` (case-insensitive) has its value replaced with
    * `replacement`. Booleans and `null` are kept.
+   *
+   * The opt-in names match credentials by value, under any key and inside longer
+   * strings, and keep the part that is safe to read: `apiKeys` masks GitHub, npm,
+   * Anthropic, OpenAI, Stripe and Slack tokens and AWS key IDs to their prefix
+   * (`ghp_***`), `privateKey` masks a PEM private key block after its header, and
+   * `urlPassword` masks the password in a URL (`postgres://user:***@host`).
    */
-  builtins?: false | Array<'creditCard' | 'email' | 'ipv4' | 'phone' | 'jwt' | 'bearer' | 'iban' | 'secrets'>
+  builtins?: false | Array<'creditCard' | 'email' | 'ipv4' | 'phone' | 'jwt' | 'bearer' | 'apiKeys' | 'privateKey' | 'urlPassword' | 'iban' | 'secrets'>
   /**
    * Replacement used for path- and custom pattern redaction.
    * Built-in patterns use smart partial masking instead (e.g. `****1111` for credit cards).
@@ -205,7 +213,7 @@ export interface RedactConfig {
    */
   transform?: (event: WideEvent) => void
   /** @internal Resolved masker functions from built-in patterns. Not user-facing. */
-  _maskers?: Array<[RegExp, (match: string) => string]>
+  _maskers?: Array<[pattern: RegExp, mask: (match: string) => string, minLength: number, signals: number]>
   /** @internal Whether the `secrets` built-in is on, set by `resolveRedactConfig`. Not user-facing. */
   _secretKeys?: boolean
   /** @internal Precompiled matchers for `paths`, built once by `resolveRedactConfig`. Not user-facing. */
@@ -423,7 +431,7 @@ export interface LoggerConfig {
    * Auto-redaction configuration for PII protection.
    * Scrubs sensitive data from wide events before console output and before any drain.
    *
-   * - `true` → enable with all built-in patterns (email, credit card, IPv4, phone, JWT, Bearer, IBAN)
+   * - `true` → enable with the default built-in patterns (email, credit card, IPv4, phone, JWT, Bearer, IBAN, secret key names)
    * - `{ paths, patterns, builtins }` → fine-grained control
    * - `false` → explicitly disable redaction
    *
@@ -840,7 +848,8 @@ export interface RequestLogger<T extends object = Record<string, unknown>> {
    * resolves to the child logger while `fn` runs. The child emits its own wide event
    * when `fn` settles, with `operation` and `_parentRequestId` set for correlation.
    * Only available on integrations that attach this method (Express, Fastify, NestJS,
-   * SvelteKit, React Router, Next.js `withEvlog`, Elysia — see docs).
+   * SvelteKit, React Router, Next.js `withEvlog`, Elysia, Hono, oRPC — see docs).
+   * Their framework-native accessors are typed `ForkableLogger`, where `fork` is required.
    *
    * @param label - Value stored as `operation` on the child wide event.
    * @param fn - Function to run; may return a Promise. Errors are captured on the

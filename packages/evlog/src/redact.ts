@@ -3,7 +3,32 @@ import { globToRegExp } from './utils'
 
 const DEFAULT_REPLACEMENT = '[REDACTED]'
 
-export type Masker = [RegExp, (match: string) => string]
+/**
+ * A pattern, its mask, and its gate: the shortest string the pattern can match
+ * and the {@link probeSignals} bits a matching string always carries. A string
+ * that fails the gate cannot match and skips the pattern.
+ */
+export type Masker = [pattern: RegExp, mask: (match: string) => string, minLength: number, signals: number]
+
+/** Literal prefixes of the `apiKeys` built-in, longest match first where one prefix extends another. */
+const API_KEY_PREFIXES = [
+  'github_pat_',
+  'ghp_',
+  'gho_',
+  'ghu_',
+  'ghs_',
+  'ghr_',
+  'npm_',
+  'sk-ant-',
+  'sk-proj-',
+  'sk_live_',
+  'rk_live_',
+  'xoxb-',
+  'xoxp-',
+  'xapp-',
+  'AKIA',
+  'ASIA',
+]
 
 /** Compiled matchers for {@link RedactConfig.paths} glob patterns. */
 export interface RedactPathMatchers {
@@ -234,14 +259,34 @@ export function redactValueByPaths(
  * Each builtin preserves just enough signal for debugging while scrubbing PII.
  * They run on every string of every wide event, so each must stay linear in the input length.
  * They run in this order. Bearer comes first so its token is masked whole before
- * a shorter pattern rewrites part of it. IBAN comes before credit cards, whose pattern
- * matches the digits inside a spaced IBAN and would leave the rest of it in the clear.
+ * a shorter pattern rewrites part of it. The credential patterns follow for the same
+ * reason: `email` would otherwise rewrite the `pass@host` part of a URL first.
+ * IBAN comes before credit cards, whose pattern matches the digits inside a spaced
+ * IBAN and would leave the rest of it in the clear.
  */
 export const builtinPatterns = {
   /** Bearer tokens → Bearer *** */
   bearer: {
     pattern: /\bBearer\s+[\w\-.~+/]{8,}=*/gi,
     mask: () => 'Bearer ***',
+  },
+  /** Provider API keys and tokens by fixed prefix → ghp_*** (GitHub, npm, Anthropic, OpenAI, Stripe, Slack, AWS) */
+  apiKeys: {
+    // Every alternative starts with a literal prefix, so the scan stays linear.
+    pattern: /github_pat_[A-Za-z0-9_]{22,}|gh[pousr]_[A-Za-z0-9]{36,}|npm_[A-Za-z0-9]{36,}|sk-ant-[A-Za-z0-9_-]{32,}|sk-proj-[A-Za-z0-9_-]{32,}|[sr]k_live_[A-Za-z0-9]{24,}|xox[bp]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
+    mask: (m: string) => `${API_KEY_PREFIXES.find(prefix => m.startsWith(prefix)) ?? ''}***`,
+  },
+  /** PEM private key blocks → -----BEGIN RSA PRIVATE KEY-----*** */
+  privateKey: {
+    // A block with no END runs to the end of the value. The scan never restarts inside it, so the cost stays linear, and text after a stray BEGIN is masked too.
+    pattern: /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|$)/g,
+    mask: (m: string) => `${m.slice(0, m.indexOf('-----', 5) + 5)}***`,
+  },
+  /** URLs with a password → postgres://user:***@host, redis://:***@host */
+  urlPassword: {
+    // The password may hold `@`, `?` or `#` and ends at the last `@` before the path or a query. Digits followed by `?` or `#` are a port and a query, not a password.
+    pattern: /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s:/?#@]{0,256}:(?!\d{1,5}[?#])[^\s/@]+(?:@[^\s/?#@]*)*@/gi,
+    mask: (m: string) => `${m.slice(0, m.indexOf(':', m.indexOf('://') + 3) + 1)}***@`,
   },
   /** IBAN → FR76****189 (country + check digits + last 3) */
   iban: {
@@ -308,6 +353,56 @@ export const builtinPatterns = {
 
 export type BuiltinPatternName = keyof typeof builtinPatterns
 
+const DIGIT = 1
+const DIGIT_RUN = 2
+const AT = 4
+const DOT = 8
+const PHONE_LEAD = 16
+const JWT_HEAD = 32
+const BEARER = 64
+const URL_SCHEME = 128
+const PEM_HEAD = 256
+
+const HAS_DIGIT = /\d/
+const HAS_DIGIT_RUN = /\d{4}/
+const HAS_BEARER = /bearer\s/i
+
+/** Which of the `wanted` signal bits `value` carries. */
+function probeSignals(value: string, wanted: number): number {
+  let found = 0
+  if ((wanted & DIGIT) !== 0 && HAS_DIGIT.test(value)) found |= DIGIT
+  if ((wanted & DIGIT_RUN) !== 0 && HAS_DIGIT_RUN.test(value)) found |= DIGIT_RUN
+  if ((wanted & AT) !== 0 && value.includes('@')) found |= AT
+  if ((wanted & DOT) !== 0 && value.includes('.')) found |= DOT
+  if ((wanted & PHONE_LEAD) !== 0 && (value.includes('+') || value.includes('('))) found |= PHONE_LEAD
+  if ((wanted & JWT_HEAD) !== 0 && value.includes('eyJ')) found |= JWT_HEAD
+  if ((wanted & BEARER) !== 0 && HAS_BEARER.test(value)) found |= BEARER
+  if ((wanted & URL_SCHEME) !== 0 && value.includes('://')) found |= URL_SCHEME
+  if ((wanted & PEM_HEAD) !== 0 && value.includes('-----BEGIN ')) found |= PEM_HEAD
+  return found
+}
+
+/**
+ * Necessary condition for each built-in to match, checked before its pattern runs.
+ * A gate may let a non-matching string through, never reject a matching one:
+ * tighten a pattern and its gate together.
+ */
+const builtinGates: Record<BuiltinPatternName, [minLength: number, signals: number]> = {
+  bearer: [15, BEARER],
+  apiKeys: [15, 0],
+  privateKey: [27, PEM_HEAD],
+  urlPassword: [7, URL_SCHEME],
+  iban: [16, DIGIT],
+  creditCard: [16, DIGIT_RUN],
+  email: [6, AT],
+  ipv4: [7, DIGIT | DOT],
+  phone: [7, DIGIT | PHONE_LEAD],
+  jwt: [5, JWT_HEAD],
+}
+
+/** Built-ins that run only when listed in `builtins`: `redact: true` and a config without `builtins` leave them off. */
+const OPT_IN_BUILTINS: ReadonlySet<BuiltinPatternName> = new Set(['apiKeys', 'privateKey', 'urlPassword'])
+
 /** Every name accepted by `RedactConfig.builtins`: the value patterns plus key-based `secrets`. */
 export type BuiltinRedactName = BuiltinPatternName | 'secrets'
 
@@ -348,15 +443,18 @@ function redactSecretKeys(obj: unknown, replacement: RedactReplacement, prefix =
 /**
  * Resolve a `redact` option (boolean or object) into a concrete `RedactConfig`.
  *
- * - `true` → all built-in patterns with smart masking, no custom paths
+ * - `true` → the default built-in patterns with smart masking, no custom paths
  * - `{ ... }` → built-in maskers merged with user config (opt-out: `builtins: false`)
  * - `false` / `undefined` → `undefined` (no redaction)
+ *
+ * The default built-ins are every pattern except `apiKeys`, `privateKey` and
+ * `urlPassword`, which run only when `builtins` lists them.
  */
 export function resolveRedactConfig(input: boolean | RedactConfig | undefined): RedactConfig | undefined {
   if (input === undefined || input === false) return undefined
 
   if (input === true) {
-    return { _maskers: allBuiltinMaskers(), _secretKeys: true }
+    return { _maskers: builtinMaskers(isDefaultBuiltin), _secretKeys: true }
   }
 
   if (input.builtins === false) {
@@ -368,11 +466,8 @@ export function resolveRedactConfig(input: boolean | RedactConfig | undefined): 
 
   const { builtins } = input
   const maskers = Array.isArray(builtins)
-    ? (Object.keys(builtinPatterns) as BuiltinPatternName[])
-      .filter(name => builtins.includes(name))
-      .map(name => builtinPatterns[name])
-      .map(b => [cloneRegex(b.pattern), b.mask] as Masker)
-    : allBuiltinMaskers()
+    ? builtinMaskers(name => builtins.includes(name))
+    : builtinMaskers(isDefaultBuiltin)
 
   return {
     ...input,
@@ -382,8 +477,15 @@ export function resolveRedactConfig(input: boolean | RedactConfig | undefined): 
   }
 }
 
-function allBuiltinMaskers(): Masker[] {
-  return Object.values(builtinPatterns).map(b => [cloneRegex(b.pattern), b.mask] as Masker)
+function isDefaultBuiltin(name: BuiltinPatternName): boolean {
+  return !OPT_IN_BUILTINS.has(name)
+}
+
+/** Fresh maskers for the selected built-ins, in {@link builtinPatterns} order. */
+function builtinMaskers(include: (name: BuiltinPatternName) => boolean): Masker[] {
+  return (Object.keys(builtinPatterns) as BuiltinPatternName[])
+    .filter(include)
+    .map(name => [cloneRegex(builtinPatterns[name].pattern), builtinPatterns[name].mask, ...builtinGates[name]])
 }
 
 function cloneRegex(re: RegExp): RegExp {
@@ -403,11 +505,69 @@ export function isGloballyRedacted(event: Record<string, unknown>): boolean {
   return Reflect.has(event, globallyRedacted)
 }
 
+const NOT_PLAIN = Symbol('evlog.notPlain')
+
+/**
+ * Deep-copy a tree of primitives, plain objects and dense arrays. Returns
+ * `NOT_PLAIN` for anything `structuredClone` treats differently (class
+ * instances, `Date`, `Map`, functions, shared or circular references), so the
+ * caller can hand the whole event to it instead.
+ */
+function clonePlainValue(value: unknown, seen: Set<object>): unknown {
+  if (value === null) return value
+  const type = typeof value
+  if (type !== 'object') {
+    return type === 'function' || type === 'symbol' ? NOT_PLAIN : value
+  }
+
+  const source = value as object
+  if (seen.has(source)) return NOT_PLAIN
+  seen.add(source)
+
+  if (Array.isArray(source)) {
+    const { length } = source
+    if (Object.keys(source).length !== length) return NOT_PLAIN
+    const out = new Array<unknown>(length)
+    for (let i = 0; i < length; i++) {
+      if (!(i in source)) return NOT_PLAIN
+      const copy = clonePlainValue(source[i], seen)
+      if (copy === NOT_PLAIN) return NOT_PLAIN
+      out[i] = copy
+    }
+    return out
+  }
+
+  if (Object.getPrototypeOf(source) !== Object.prototype) return NOT_PLAIN
+
+  const record = source as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(record)) {
+    // Assigning `__proto__` would set the prototype of the copy instead of a field.
+    if (key === '__proto__') return NOT_PLAIN
+    const copy = clonePlainValue(record[key], seen)
+    if (copy === NOT_PLAIN) return NOT_PLAIN
+    out[key] = copy
+  }
+  return out
+}
+
+function clonePlainEvent(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  try {
+    const copy = clonePlainValue(event, new Set())
+    return copy === NOT_PLAIN ? undefined : copy as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Clone before redaction. Wide events are JSON-shaped; fall back when
  * `structuredClone` rejects non-cloneable values (functions, symbols, etc.).
  */
 function cloneForRedaction(event: Record<string, unknown>): Record<string, unknown> {
+  const plain = clonePlainEvent(event)
+  if (plain !== undefined) return plain
+
   try {
     return structuredClone(event)
   } catch {
@@ -552,7 +712,8 @@ function applyMaskersToTree(obj: unknown, maskers: Masker[]): void {
     for (const key of redactableKeys(record)) {
       const val = record[key]
       if (typeof val === 'string') {
-        setRedacted(record, key, applyMaskers(val, maskers), key)
+        const masked = applyMaskers(val, maskers)
+        if (masked !== val) setRedacted(record, key, masked, key)
       } else if (typeof val === 'object') {
         applyMaskersToTree(val, maskers)
       }
@@ -562,8 +723,23 @@ function applyMaskersToTree(obj: unknown, maskers: Masker[]): void {
 
 function applyMaskers(value: string, maskers: Masker[]): string {
   let result = value
-  for (const [pattern, mask] of maskers) {
+  let probed = 0
+  let found = 0
+  for (const [pattern, mask, minLength, signals] of maskers) {
+    if (result.length < minLength) continue
+
+    const unprobed = signals & ~probed
+    if (unprobed !== 0) {
+      found |= probeSignals(result, unprobed)
+      probed |= unprobed
+    }
+    if ((found & signals) !== signals) continue
+
+    // `replace` with a mask function costs more than `test` on a string that does not match.
+    if (!pattern.test(result)) continue
     result = result.replace(pattern, mask)
+    probed = 0
+    found = 0
   }
   return result
 }
